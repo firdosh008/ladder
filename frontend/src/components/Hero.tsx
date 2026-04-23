@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowUpRight, PlayCircle } from "@phosphor-icons/react";
+import { Link } from "react-router-dom";
 import ExcalidrawMotif from "./ExcalidrawMotif";
 import { fadeUp, stagger } from "../lib/motion";
 
@@ -83,15 +84,15 @@ export default function Hero() {
           </motion.p>
 
           <motion.div variants={fadeUp} className="mt-10 flex flex-wrap gap-3">
-            <a
-              href="#cta"
+            <Link
+              to="/auth"
               className="group inline-flex items-center gap-2 pl-5 pr-1.5 py-1.5 rounded-full bg-cinnabar text-night text-[14px] font-medium shadow-cinnabar transition-all duration-500 ease-spring active:scale-[0.98] hover:bg-[#F05434]"
             >
               <span className="pl-1 pr-1">Start a studio session</span>
               <span className="flex items-center justify-center w-8 h-8 rounded-full bg-night/15 transition-transform duration-500 ease-spring group-hover:translate-x-0.5 group-hover:-translate-y-[1px]">
                 <ArrowUpRight size={14} weight="bold" />
               </span>
-            </a>
+            </Link>
 
             <a
               href="#tour"

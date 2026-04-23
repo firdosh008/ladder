@@ -1,6 +1,9 @@
 import { motion, useMotionValue, useTransform } from "framer-motion";
 import { ArrowUpRight } from "@phosphor-icons/react";
 import type { MouseEvent } from "react";
+import { Link } from "react-router-dom";
+
+const MotionLink = motion(Link);
 
 const links = [
   { label: "Studio", href: "#studio" },
@@ -91,8 +94,8 @@ function MagneticCTA() {
   }
 
   return (
-    <motion.a
-      href="#cta"
+    <MotionLink
+      to="/auth"
       onMouseMove={onMove}
       onMouseLeave={onLeave}
       style={{ x: tx, y: ty }}
@@ -102,6 +105,6 @@ function MagneticCTA() {
       <span className="flex items-center justify-center w-7 h-7 rounded-full bg-night/15 transition-transform duration-500 ease-spring group-hover:translate-x-0.5 group-hover:-translate-y-px">
         <ArrowUpRight size={13} weight="bold" />
       </span>
-    </motion.a>
+    </MotionLink>
   );
 }
