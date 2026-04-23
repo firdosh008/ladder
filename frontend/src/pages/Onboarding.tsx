@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, ArrowLeft, Check } from "@phosphor-icons/react";
+import { ArrowRight, ArrowLeft, Check, Warning } from "@phosphor-icons/react";
 import { Button } from "../components/ui/Button";
 import { Input, Textarea, FieldLabel } from "../components/ui/Input";
 import { cn } from "../lib/cn";
+import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 
 const STEPS = [
   { id: 1, title: "Who are you?", hint: "identity" },
@@ -11,9 +13,78 @@ const STEPS = [
   { id: 3, title: "Pick your first brand.", hint: "brand" },
 ];
 
+type FormState = {
+  display_name: string;
+  positioning: string;
+  audience: string;
+  voice: string;
+  creators_followed: string;
+  things_to_avoid: string;
+};
+
+const INITIAL: FormState = {
+  display_name: "",
+  positioning: "",
+  audience: "",
+  voice: "",
+  creators_followed: "",
+  things_to_avoid: "",
+};
+
+// TODO: wire to /brands endpoint once built
+type BrandState = {
+  name: string;
+  context: string;
+  accent: string;
+};
+
+const INITIAL_BRAND: BrandState = {
+  name: "",
+  context: "",
+  accent: "#E8442A",
+};
+
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
+  const [form, setForm] = useState<FormState>(INITIAL);
+  const [brand, setBrand] = useState<BrandState>(INITIAL_BRAND);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const auth = useAuth() as ReturnType<typeof useAuth> & {
+    refreshProfile?: () => Promise<void>;
+  };
+
+  async function submit() {
+    if (!form.display_name || !form.positioning || !form.voice) {
+      setError("Name, positioning, and voice are required.");
+      setStep(1);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post("/auth/onboard", {
+        display_name: form.display_name,
+        positioning: form.positioning,
+        audience: form.audience,
+        voice: form.voice,
+        creators_followed: form.creators_followed
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        things_to_avoid: form.things_to_avoid,
+      });
+      if (typeof auth.refreshProfile === "function") {
+        await auth.refreshProfile();
+      }
+      navigate("/make", { replace: true });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not save profile.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="min-h-[100dvh] bg-night text-white">
@@ -84,15 +155,26 @@ export default function OnboardingPage() {
             "You can add more brands later. One now gets you into the studio in under a minute."}
         </p>
 
-        {step === 1 && <StepOne />}
-        {step === 2 && <StepTwo />}
-        {step === 3 && <StepThree />}
+        {step === 1 && <StepOne form={form} setForm={setForm} />}
+        {step === 2 && <StepTwo form={form} setForm={setForm} />}
+        {step === 3 && <StepThree brand={brand} setBrand={setBrand} />}
+
+        {error ? (
+          <div className="mt-4 flex items-start gap-2 rounded-md border border-sienna/40 bg-sienna/10 px-3 py-2 text-[12.5px] text-white/90">
+            <Warning
+              size={13}
+              weight="fill"
+              className="text-sienna shrink-0 mt-0.5"
+            />
+            <span className="leading-[1.45]">{error}</span>
+          </div>
+        ) : null}
 
         <div className="flex items-center justify-between mt-12 pt-6 border-t border-hairline">
           <Button
             variant="ghost"
             onClick={() => setStep((s) => Math.max(1, s - 1))}
-            disabled={step === 1}
+            disabled={step === 1 || busy}
           >
             <ArrowLeft size={13} weight="bold" />
             Back
@@ -106,9 +188,9 @@ export default function OnboardingPage() {
               <ArrowRight size={13} weight="bold" />
             </Button>
           ) : (
-            <Button onClick={() => navigate("/make")}>
+            <Button onClick={submit} disabled={busy}>
               <Check size={13} weight="bold" />
-              Enter studio
+              {busy ? "· saving ·" : "Enter studio"}
             </Button>
           )}
         </div>
@@ -117,67 +199,117 @@ export default function OnboardingPage() {
   );
 }
 
-function StepOne() {
+type StepProps = {
+  form: FormState;
+  setForm: React.Dispatch<React.SetStateAction<FormState>>;
+};
+
+function StepOne({ form, setForm }: StepProps) {
   return (
     <div className="space-y-5">
       <div>
         <FieldLabel htmlFor="name">Your name</FieldLabel>
-        <Input id="name" placeholder="Alex Kim" autoFocus />
+        <Input
+          id="name"
+          placeholder="e.g. your name"
+          autoFocus
+          value={form.display_name}
+          onChange={(e) => setForm({ ...form, display_name: e.target.value })}
+        />
       </div>
       <div>
         <FieldLabel htmlFor="pos">What do you make and for whom?</FieldLabel>
         <Textarea
           id="pos"
           rows={3}
-          placeholder="I build AI agents and ship videos about it for founder-operators at 1–20 person companies."
+          placeholder="e.g. I build AI agents and ship videos about it."
+          value={form.positioning}
+          onChange={(e) => setForm({ ...form, positioning: e.target.value })}
+        />
+      </div>
+      <div>
+        <FieldLabel htmlFor="aud">Who's it for?</FieldLabel>
+        <Input
+          id="aud"
+          placeholder="e.g. Founder-operators at 1–20 person companies."
+          value={form.audience}
+          onChange={(e) => setForm({ ...form, audience: e.target.value })}
         />
       </div>
     </div>
   );
 }
 
-function StepTwo() {
+function StepTwo({ form, setForm }: StepProps) {
   return (
     <div className="space-y-5">
       <div>
-        <FieldLabel htmlFor="voice">How would a friend describe your voice?</FieldLabel>
+        <FieldLabel htmlFor="voice">
+          How would a friend describe your voice?
+        </FieldLabel>
         <Textarea
           id="voice"
           rows={2}
-          placeholder="Dry, structural, low-ceremony. Concrete over clever."
+          placeholder="e.g. Dry, structural, low-ceremony. Concrete over clever."
+          value={form.voice}
+          onChange={(e) => setForm({ ...form, voice: e.target.value })}
         />
       </div>
       <div>
         <FieldLabel htmlFor="creators" hint="comma separated">
           Creators you sound closest to
         </FieldLabel>
-        <Input id="creators" placeholder="Packy McCormick, Ben Thompson, Lenny Rachitsky" />
+        <Input
+          id="creators"
+          placeholder="e.g. Packy McCormick, Ben Thompson, Lenny Rachitsky"
+          value={form.creators_followed}
+          onChange={(e) =>
+            setForm({ ...form, creators_followed: e.target.value })
+          }
+        />
       </div>
       <div>
         <FieldLabel htmlFor="avoid">Never do this</FieldLabel>
         <Textarea
           id="avoid"
           rows={2}
-          placeholder="Filler words. Over-capitalised Frameworks. Fake urgency."
+          placeholder="e.g. Filler words. Over-capitalised Frameworks. Fake urgency."
+          value={form.things_to_avoid}
+          onChange={(e) =>
+            setForm({ ...form, things_to_avoid: e.target.value })
+          }
         />
       </div>
     </div>
   );
 }
 
-function StepThree() {
+type BrandStepProps = {
+  brand: BrandState;
+  setBrand: React.Dispatch<React.SetStateAction<BrandState>>;
+};
+
+function StepThree({ brand, setBrand }: BrandStepProps) {
   return (
     <div className="space-y-5">
       <div>
         <FieldLabel htmlFor="brand">Brand name</FieldLabel>
-        <Input id="brand" placeholder="Ladder" autoFocus />
+        <Input
+          id="brand"
+          placeholder="e.g. Ladder"
+          autoFocus
+          value={brand.name}
+          onChange={(e) => setBrand({ ...brand, name: e.target.value })}
+        />
       </div>
       <div>
         <FieldLabel htmlFor="ctx">One-paragraph brand context</FieldLabel>
         <Textarea
           id="ctx"
           rows={3}
-          placeholder="Ladder is a video production OS for founder-operators who ship videos next to shipping product. We value density, precision, and not-wasting-your-time."
+          placeholder="e.g. A video production OS for founder-operators who ship videos next to shipping product."
+          value={brand.context}
+          onChange={(e) => setBrand({ ...brand, context: e.target.value })}
         />
       </div>
       <div>
@@ -185,8 +317,16 @@ function StepThree() {
           Brand accent
         </FieldLabel>
         <div className="flex items-center gap-3">
-          <Input id="color" defaultValue="#E8442A" className="max-w-[160px] font-mono" />
-          <div className="h-9 w-9 rounded-md bg-cinnabar" />
+          <Input
+            id="color"
+            className="max-w-[160px] font-mono"
+            value={brand.accent}
+            onChange={(e) => setBrand({ ...brand, accent: e.target.value })}
+          />
+          <div
+            className="h-9 w-9 rounded-md"
+            style={{ backgroundColor: brand.accent || "#E8442A" }}
+          />
         </div>
       </div>
     </div>

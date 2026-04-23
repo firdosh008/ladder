@@ -1,10 +1,21 @@
+import { useEffect, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { User, Palette, Cpu, FileMd, LinkSimple } from "@phosphor-icons/react";
+import {
+  User,
+  Palette,
+  Cpu,
+  FileMd,
+  LinkSimple,
+  Check,
+  Warning,
+} from "@phosphor-icons/react";
 import { Shell, PageHeader, PageContainer } from "../components/app/Shell";
 import { Input, FieldLabel, Textarea } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { cn } from "../lib/cn";
+import { useAuth } from "../lib/auth";
+import { api, ApiError } from "../lib/api";
 
 const TABS = [
   { id: "profile", label: "Profile", icon: User },
@@ -78,31 +89,111 @@ export default function SettingsPage() {
 }
 
 function ProfileTab() {
+  const { profile, refreshProfile, loading } = useAuth();
+  const [form, setForm] = useState({
+    display_name: "",
+    positioning: "",
+    audience: "",
+    voice: "",
+    things_to_avoid: "",
+    creators_followed: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!profile) {
+      if (!loading) refreshProfile();
+      return;
+    }
+    setForm({
+      display_name: profile.display_name ?? "",
+      positioning: profile.positioning ?? "",
+      audience: profile.audience ?? "",
+      voice: profile.voice ?? "",
+      things_to_avoid: profile.things_to_avoid ?? "",
+      creators_followed: (profile.creators_followed ?? []).join(", "),
+    });
+  }, [profile, loading, refreshProfile]);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post("/auth/onboard", {
+        display_name: form.display_name,
+        positioning: form.positioning,
+        audience: form.audience,
+        voice: form.voice,
+        things_to_avoid: form.things_to_avoid,
+        creators_followed: form.creators_followed
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      });
+      await refreshProfile();
+      setSavedAt(Date.now());
+      setTimeout(
+        () => setSavedAt((t) => (t && Date.now() - t >= 2000 ? null : t)),
+        2100,
+      );
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not save.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const showSaved = savedAt !== null && Date.now() - savedAt < 2000;
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-[1100px]">
       <div className="space-y-5">
         <div>
           <FieldLabel htmlFor="name">Name</FieldLabel>
-          <Input id="name" defaultValue="Alex Kim" />
+          <Input
+            id="name"
+            value={form.display_name}
+            onChange={(e) => setForm({ ...form, display_name: e.target.value })}
+          />
         </div>
         <div>
           <FieldLabel htmlFor="pos">Positioning</FieldLabel>
           <Textarea
             id="pos"
             rows={2}
-            defaultValue="I build AI agents and ship videos about it for founder-operators."
+            value={form.positioning}
+            onChange={(e) => setForm({ ...form, positioning: e.target.value })}
           />
         </div>
         <div>
           <FieldLabel htmlFor="aud">Audience</FieldLabel>
-          <Input id="aud" defaultValue="Founder-operators at 1–20 person companies" />
+          <Input
+            id="aud"
+            value={form.audience}
+            onChange={(e) => setForm({ ...form, audience: e.target.value })}
+          />
         </div>
         <div>
           <FieldLabel htmlFor="voice">Voice</FieldLabel>
           <Textarea
             id="voice"
             rows={2}
-            defaultValue="Dry, structural, low-ceremony. Concrete over clever."
+            value={form.voice}
+            onChange={(e) => setForm({ ...form, voice: e.target.value })}
+          />
+        </div>
+        <div>
+          <FieldLabel htmlFor="creators" hint="comma separated">
+            Creators you sound closest to
+          </FieldLabel>
+          <Input
+            id="creators"
+            value={form.creators_followed}
+            onChange={(e) =>
+              setForm({ ...form, creators_followed: e.target.value })
+            }
           />
         </div>
         <div>
@@ -112,10 +203,31 @@ function ProfileTab() {
           <Textarea
             id="avoid"
             rows={2}
-            defaultValue="Filler words (elevate, seamless, unleash). Over-capitalised Frameworks."
+            value={form.things_to_avoid}
+            onChange={(e) =>
+              setForm({ ...form, things_to_avoid: e.target.value })
+            }
           />
         </div>
-        <Button>Save profile</Button>
+
+        {error ? (
+          <div className="flex items-start gap-2 rounded-md border border-sienna/40 bg-sienna/10 px-3 py-2 text-[12.5px] text-sienna">
+            <Warning size={13} weight="bold" className="mt-[2px] shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        <div className="flex items-center gap-3">
+          <Button onClick={save} disabled={busy}>
+            {busy ? "· saving ·" : "Save profile"}
+          </Button>
+          {showSaved ? (
+            <Badge tone="cinnabar">
+              <Check size={10} weight="bold" />
+              saved
+            </Badge>
+          ) : null}
+        </div>
       </div>
 
       <div className="rounded-xl border border-hairline bg-surface p-5 h-fit sticky top-6">

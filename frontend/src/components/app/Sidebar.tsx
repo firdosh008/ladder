@@ -1,4 +1,4 @@
-import { NavLink, Link } from "react-router-dom";
+import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
   PlusCircle,
   Stack,
@@ -7,8 +7,10 @@ import {
   Sparkle,
   CaretUpDown,
   Lightning,
+  SignOut,
 } from "@phosphor-icons/react";
 import { cn } from "../../lib/cn";
+import { useAuth } from "../../lib/auth";
 
 const nav = [
   { to: "/make", label: "Make a video", icon: PlusCircle, hint: "M" },
@@ -24,6 +26,22 @@ const topIdeas = [
 ];
 
 export function Sidebar() {
+  const auth = useAuth() as {
+    user: { email?: string } | null;
+    profile?: { display_name?: string | null } | null;
+    signOut: () => Promise<void>;
+  };
+  const navigate = useNavigate();
+  const displayName = auth.profile?.display_name ?? auth.user?.email ?? "—";
+  const subLabel =
+    auth.profile?.display_name && auth.user?.email ? auth.user.email : "signed in";
+  const avatarLetter = (displayName[0] ?? "?").toUpperCase();
+
+  const handleSignOut = async () => {
+    await auth.signOut();
+    navigate("/auth", { replace: true });
+  };
+
   return (
     <aside className="hidden md:flex w-[224px] shrink-0 flex-col border-r border-hairline bg-night">
       {/* Brand + workspace switcher */}
@@ -62,10 +80,10 @@ export function Sidebar() {
         >
           <div className="flex items-center gap-2 min-w-0">
             <span className="h-5 w-5 rounded bg-cinnabar/[0.15] border border-cinnabar/25 grid place-items-center text-cinnabar font-mono text-[10px] font-bold">
-              A
+              {avatarLetter}
             </span>
             <span className="text-[12.5px] text-white/90 font-medium truncate">
-              Alex Kim
+              {displayName}
             </span>
           </div>
           <CaretUpDown size={12} className="text-mist shrink-0 opacity-70" />
@@ -169,23 +187,34 @@ export function Sidebar() {
 
       {/* User / seat info */}
       <div className="border-t border-hairline p-2">
-        <button
-          type="button"
-          className="w-full flex items-center gap-2.5 h-10 px-2 rounded-md hover:bg-white/[0.04] transition-colors"
-        >
-          <span className="h-7 w-7 rounded-full bg-cinnabar/[0.15] border border-cinnabar/30 grid place-items-center text-cinnabar text-[11px] font-mono font-bold">
-            AK
-          </span>
-          <div className="flex flex-col min-w-0 leading-tight text-left">
-            <span className="text-[12.5px] text-white font-medium truncate">
-              Alex Kim
+        <div className="w-full flex items-center gap-1.5">
+          <button
+            type="button"
+            className="flex-1 min-w-0 flex items-center gap-2.5 h-10 px-2 rounded-md hover:bg-white/[0.04] transition-colors"
+          >
+            <span className="h-7 w-7 rounded-full bg-cinnabar/[0.15] border border-cinnabar/30 grid place-items-center text-cinnabar text-[11px] font-mono font-bold">
+              {avatarLetter}
             </span>
-            <span className="text-[10.5px] text-mist font-mono truncate flex items-center gap-1">
-              <Lightning size={9} weight="fill" className="text-cinnabar" />
-              pilot · seat 3/9
-            </span>
-          </div>
-        </button>
+            <div className="flex flex-col min-w-0 leading-tight text-left">
+              <span className="text-[12.5px] text-white font-medium truncate">
+                {displayName}
+              </span>
+              <span className="text-[10.5px] text-mist font-mono truncate flex items-center gap-1">
+                <Lightning size={9} weight="fill" className="text-cinnabar" />
+                {subLabel}
+              </span>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="text-mist hover:text-white transition-colors p-1.5 rounded-md hover:bg-white/[0.04] shrink-0"
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            <SignOut size={14} />
+          </button>
+        </div>
       </div>
     </aside>
   );
