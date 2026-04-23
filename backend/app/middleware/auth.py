@@ -4,6 +4,7 @@ from uuid import UUID
 import httpx
 from fastapi import Header, HTTPException, status
 from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError
 
 from app.config import settings
 
@@ -74,6 +75,8 @@ async def current_user(authorization: str = Header(...)) -> tuple[UUID, str]:
             algorithms=[alg],
             audience="authenticated",
         )
+    except ExpiredSignatureError as e:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token expired") from e
     except JWTError as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Invalid token: {e}") from e
 
@@ -81,4 +84,11 @@ async def current_user(authorization: str = Header(...)) -> tuple[UUID, str]:
     if not sub:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token missing sub claim")
 
-    return UUID(sub), token
+    try:
+        user_id = UUID(sub)
+    except ValueError as e:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Token sub is not a valid UUID"
+        ) from e
+
+    return user_id, token
