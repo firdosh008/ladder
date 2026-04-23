@@ -31,5 +31,5 @@ async def user_client(jwt: str) -> AsyncClient:
         settings.SUPABASE_URL,
         settings.SUPABASE_ANON_KEY,
     )
-    await client.postgrest.auth(jwt)
+    client.postgrest.auth(jwt)
     return client
