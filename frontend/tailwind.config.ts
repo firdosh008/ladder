@@ -76,12 +76,32 @@ export default {
           from: { strokeDashoffset: "1000" },
           to: { strokeDashoffset: "0" },
         },
+        "slide-in-right": {
+          from: { transform: "translateX(100%)" },
+          to: { transform: "translateX(0)" },
+        },
+        "slide-out-right": {
+          from: { transform: "translateX(0)" },
+          to: { transform: "translateX(100%)" },
+        },
+        "fade-in": {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
+        "fade-out": {
+          from: { opacity: "1" },
+          to: { opacity: "0" },
+        },
       },
       animation: {
         float: "float 6s cubic-bezier(0.45, 0, 0.55, 1) infinite",
         shimmer: "shimmer 2.5s linear infinite",
         "pulse-dot": "pulse-dot 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite",
         draw: "draw 2.5s cubic-bezier(0.65, 0, 0.35, 1) forwards",
+        "slide-in-right": "slide-in-right 220ms cubic-bezier(0.32, 0.72, 0, 1)",
+        "slide-out-right": "slide-out-right 180ms cubic-bezier(0.4, 0, 1, 1)",
+        "fade-in": "fade-in 180ms ease-out",
+        "fade-out": "fade-out 150ms ease-in",
       },
     },
   },

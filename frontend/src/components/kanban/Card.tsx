@@ -1,0 +1,103 @@
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import type { CSSProperties } from "react";
+import { Badge } from "../ui/Badge";
+import { cn } from "../../lib/cn";
+import type { KanbanCard as KanbanCardType } from "./types";
+
+type Props = {
+  card: KanbanCardType;
+  onClick?: (id: string) => void;
+};
+
+export function KanbanCardView({ card, onClick }: Props) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: card.id });
+
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={(e) => {
+        if (isDragging) return;
+        if (e.detail !== 1) return;
+        onClick?.(card.id);
+      }}
+      className={cn(
+        "group relative rounded-lg border border-hairline bg-surface px-3.5 py-3",
+        "cursor-grab active:cursor-grabbing select-none",
+        "transition-all duration-200 ease-spring",
+        "hover:border-hairline-strong hover:-translate-y-[1px]",
+        "hover:shadow-[0_4px_18px_-10px_rgba(0,0,0,0.6)]",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cinnabar",
+        isDragging && "opacity-30",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2 mb-2.5">
+        <span className="text-[13.5px] text-white leading-[1.35] font-medium line-clamp-2 tracking-[-0.005em]">
+          {card.title}
+        </span>
+        {card.score != null ? (
+          <Badge
+            tone={card.score >= 90 ? "cinnabar" : "neutral"}
+            className="shrink-0"
+          >
+            {card.score}
+          </Badge>
+        ) : null}
+      </div>
+      {(card.subtitle || card.meta) ? (
+        <div className="flex items-center justify-between font-mono text-[10.5px] text-mist/80">
+          <span className="truncate">{card.subtitle ?? ""}</span>
+          <span className="shrink-0">{card.meta ?? ""}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Non-sortable render used inside <DragOverlay>. */
+export function KanbanCardOverlay({ card }: { card: KanbanCardType }) {
+  return (
+    <div
+      className={cn(
+        "w-full rounded-lg border border-hairline-strong bg-surface-raised px-3.5 py-3",
+        "shadow-[0_18px_40px_-12px_rgba(0,0,0,0.8),0_6px_14px_-6px_rgba(232,68,42,0.18)]",
+        "rotate-[1.5deg] cursor-grabbing",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2 mb-2.5">
+        <span className="text-[13.5px] text-white leading-[1.35] font-medium line-clamp-2 tracking-[-0.005em]">
+          {card.title}
+        </span>
+        {card.score != null ? (
+          <Badge
+            tone={card.score >= 90 ? "cinnabar" : "neutral"}
+            className="shrink-0"
+          >
+            {card.score}
+          </Badge>
+        ) : null}
+      </div>
+      {(card.subtitle || card.meta) ? (
+        <div className="flex items-center justify-between font-mono text-[10.5px] text-mist/80">
+          <span className="truncate">{card.subtitle ?? ""}</span>
+          <span className="shrink-0">{card.meta ?? ""}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}

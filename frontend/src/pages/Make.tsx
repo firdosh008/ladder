@@ -6,30 +6,27 @@ import {
   FileText,
   ArrowRight,
   Sparkle,
-  Clock,
   TrendUp,
 } from "@phosphor-icons/react";
 import { Shell, PageHeader, PageContainer } from "../components/app/Shell";
 import { Button } from "../components/ui/Button";
 import { Input, Textarea } from "../components/ui/Input";
 import { Badge } from "../components/ui/Badge";
+import { useIdeas } from "../lib/useIdeas";
 import { cn } from "../lib/cn";
 
 type Option = "ideas" | "research" | "content";
-
-const STATE = {
-  ideasCount: 7,
-  lastSessionAgo: "2h ago",
-  topScore: 91,
-};
 
 export default function MakePage() {
   const [active, setActive] = useState<Option>("research");
   const [topic, setTopic] = useState("");
   const [content, setContent] = useState("");
   const navigate = useNavigate();
+  const { ideas, loading: ideasLoading } = useIdeas();
 
-  const ideasDimmed = STATE.ideasCount === 0;
+  const ideasCount = ideas.length;
+  const ideasDimmed = !ideasLoading && ideasCount === 0;
+  const topIdeas = ideas.slice(0, 3);
 
   return (
     <Shell>
@@ -40,13 +37,9 @@ export default function MakePage() {
           description="Pick a starting point. The studio loads instantly — no queue, no generate button."
           right={
             <div className="flex items-center gap-2">
-              <Badge tone="neutral">
-                <Clock size={10} weight="bold" className="text-mist" />
-                {STATE.lastSessionAgo}
-              </Badge>
               <Badge tone="cinnabar">
                 <TrendUp size={10} weight="bold" />
-                {STATE.ideasCount} ready
+                {ideasLoading ? "…" : `${ideasCount} ready`}
               </Badge>
             </div>
           }
@@ -61,29 +54,39 @@ export default function MakePage() {
             index="01"
             title="Pick from your ideas"
             subtitle={
-              STATE.ideasCount === 0
-                ? "No ideas yet — try research"
-                : `${STATE.ideasCount} ideas · sorted by score`
+              ideasLoading
+                ? "Loading…"
+                : ideasCount === 0
+                  ? "No ideas yet — add one in /videos"
+                  : `${ideasCount} idea${ideasCount === 1 ? "" : "s"} · sorted by score`
             }
             dimmed={ideasDimmed}
           >
-            <ul className="space-y-1.5 pt-1">
-              {SAMPLE_IDEAS.slice(0, 3).map((idea) => (
-                <li
-                  key={idea.title}
-                  className="flex items-center gap-2.5 text-[12.5px] text-white/75"
-                >
-                  <span
-                    className={cn(
-                      "font-mono mono-tab shrink-0 tabular-nums text-[10.5px]",
-                      idea.score >= 90 ? "text-cinnabar" : "text-mist",
-                    )}
-                  >
-                    {idea.score}
-                  </span>
-                  <span className="truncate">{idea.title}</span>
+            <ul className="space-y-1.5 pt-1 min-h-[66px]">
+              {topIdeas.length === 0 && !ideasLoading ? (
+                <li className="text-[12.5px] text-mist font-mono">
+                  — empty —
                 </li>
-              ))}
+              ) : (
+                topIdeas.map((idea) => (
+                  <li
+                    key={idea.id}
+                    className="flex items-center gap-2.5 text-[12.5px] text-white/75"
+                  >
+                    <span
+                      className={cn(
+                        "font-mono mono-tab shrink-0 tabular-nums text-[10.5px]",
+                        (idea.opportunity_score ?? 0) >= 90
+                          ? "text-cinnabar"
+                          : "text-mist",
+                      )}
+                    >
+                      {idea.opportunity_score ?? "—"}
+                    </span>
+                    <span className="truncate">{idea.title}</span>
+                  </li>
+                ))
+              )}
             </ul>
             <Button
               variant="secondary"
@@ -92,7 +95,7 @@ export default function MakePage() {
               className="w-full mt-4"
               disabled={ideasDimmed}
             >
-              Browse all {STATE.ideasCount}
+              Browse all {ideasCount}
               <ArrowRight size={12} weight="bold" />
             </Button>
           </OptionCard>
@@ -278,8 +281,3 @@ function OptionCard({
   );
 }
 
-const SAMPLE_IDEAS = [
-  { title: "Why AI agents will replace SaaS", score: 91 },
-  { title: "The new creator stack in 2026", score: 87 },
-  { title: "How I scripted 30 videos in a day", score: 83 },
-];
