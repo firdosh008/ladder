@@ -7,9 +7,9 @@ the chosen draft to /ideas to create the row and open the studio session.
 
 Event protocol (server→client):
   {"type": "agent_start",   "agent": "search_agent"}
-  {"type": "tool_call",     "tool":  "web_search", "query": "..."}
-  {"type": "tool_result",   "preview": "..."}
-  {"type": "agent_step",    "agent": "...", "preview": "..."}
+  {"type": "tool_call",     "agent": "...", "tool": "web_search", "arguments": "..."}
+  {"type": "sources",       "query": "...", "items": [{"title","url",...}]}
+  {"type": "text_delta",    "agent": "...", "content": "..."}
   {"type": "task_complete", "agent": "...", "preview": "..."}
   {"type": "ideas_ready",   "ideas": [...], "token_usage": {...}}
   {"type": "complete",      "count": N, "cost_usd": 0.07}

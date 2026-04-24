@@ -14,6 +14,7 @@ from typing import Any
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from app.agents.research.streaming import SourceRef, sources_emitter_var
 from app.providers import exa
 
 
@@ -27,15 +28,29 @@ class ExaSearchTool(BaseTool):
     description: str = (
         "Search the public web for recent articles, posts, and discussions via "
         "Exa's neural search. Returns a JSON list of {title, url, text, "
-        "published_date, score}. Use for trend discovery."
+        "published_date, score}. Use for trend discovery. Cite the `url` field "
+        "verbatim in downstream outputs."
     )
     args_schema: type[BaseModel] = _ExaSearchInput
 
     def _run(self, query: str, num_results: int = 8) -> str:
-        # CrewAI agents call _run synchronously. Run our async coroutine in a
-        # fresh loop via asyncio.run — safe because crew steps are executed
-        # in a worker thread by crewai when invoked with kickoff_async.
         results = asyncio.run(exa.search(query=query, num_results=num_results))
+
+        emitter = sources_emitter_var.get()
+        if emitter is not None:
+            emitter(
+                query,
+                [
+                    SourceRef(
+                        title=r.title,
+                        url=r.url,
+                        published_date=r.published_date,
+                        snippet=(r.text or "")[:220] or None,
+                    )
+                    for r in results
+                ],
+            )
+
         payload: list[dict[str, Any]] = [
             {
                 "title": r.title,

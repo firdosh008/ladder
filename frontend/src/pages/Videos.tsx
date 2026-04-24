@@ -198,6 +198,19 @@ export default function VideosPage() {
     setSelectedId(null);
   }
 
+  async function onBoardCardDelete(id: string) {
+    setBannerError(null);
+    try {
+      await deleteIdea(id);
+      if (selectedId === id) {
+        setSelectedId(null);
+        setSheetOpen(false);
+      }
+    } catch (e) {
+      setBannerError(e instanceof Error ? e.message : "Failed to delete card");
+    }
+  }
+
   return (
     <Shell>
       <PageContainer>
@@ -241,6 +254,7 @@ export default function VideosPage() {
             onMove={onMove}
             onAdd={onAdd}
             onCardClick={onCardClick}
+            onCardDelete={onBoardCardDelete}
             emptyCopyByColumn={EMPTY_COPY}
           />
         )}

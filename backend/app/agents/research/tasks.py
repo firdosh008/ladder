@@ -15,18 +15,21 @@ def build_tasks(
     search_task = Task(
         description=(
             f"Research the following topic on the public web: '{topic}'.\n\n"
-            "Use the `web_search` tool at least once — run 1-3 carefully "
-            "worded queries that hunt for specific, recent, non-generic "
-            "signals. Aim for 8-12 total results across queries. Focus on "
-            "articles, case studies, founder posts, and breakdowns — skip "
-            "SEO listicles and vendor blogs when possible.\n\n"
-            "Output: a bulleted list. For each signal, give the title, the "
-            "URL, and a one-line note on why this signal is interesting "
-            "(what is specific or counter-intuitive about it)."
+            "Run 2-4 distinct `web_search` queries that hunt from different "
+            "angles (e.g. tactics, case studies, contrarian takes, recent "
+            "shifts). Request 10-14 results per query. Aggregate until you "
+            "have 12-18 specific, recent, non-generic signals. Skip SEO "
+            "listicles and vendor blogs when possible.\n\n"
+            "Output: a bulleted list. For each signal give:\n"
+            "  • title (verbatim from the source)\n"
+            "  • full url (verbatim from the `url` field — no markdown link "
+            "syntax)\n"
+            "  • why-this-matters: 1-2 sentences (25-60 words) naming what "
+            "is specific or counter-intuitive about it."
         ),
         expected_output=(
-            "Markdown bulleted list of 8-12 signals. Each bullet contains "
-            "title, URL, and a one-line 'why this matters' note."
+            "Markdown bulleted list of 12-18 signals. Each bullet contains "
+            "title, raw URL, and a 25-60 word 'why this matters' note."
         ),
         agent=agents["search_agent"],
     )
@@ -37,12 +40,17 @@ def build_tasks(
             "an opportunity_score between 0 and 100 reflecting outlier "
             "potential for a founder-operator's video content. Reject "
             "generic or recycled takes (score <30). Reward specific, "
-            "decision-level tactics (score >70). Preserve the URL for every "
-            "signal so downstream agents can cite it."
+            "decision-level tactics (score >70). Preserve the URL verbatim "
+            "so downstream agents can cite it.\n\n"
+            "Group-reason briefly: identify the 2-3 distinct narrative "
+            "threads that emerge from the highest-scoring signals, because "
+            "the next agent will build ideas along those threads."
         ),
         expected_output=(
             "Markdown table with columns: signal_title | url | score | "
-            "reasoning. Sorted score desc."
+            "reasoning (1 sentence). Sorted score desc. Followed by a short "
+            "'Narrative threads' section listing the 2-3 angles with a "
+            "one-line description each."
         ),
         agent=agents["trend_scorer"],
         context=[search_task],
@@ -50,28 +58,35 @@ def build_tasks(
 
     formulate_task = Task(
         description=(
-            "Using the highest-scoring signals (score >=60), draft 3-5 "
-            "distinct video ideas a founder-operator could record in their "
-            "own voice.\n\n"
+            "Using the highest-scoring signals (score >=60) and the "
+            "narrative threads, draft 4-6 distinct video ideas the founder "
+            "could actually record in their own voice. Each idea must be "
+            "specific enough that two different founders would produce "
+            "two different videos from it.\n\n"
             "For each idea produce:\n"
-            "  - title: 6-12 words, concrete, voice-matched. No clickbait.\n"
-            "  - rationale: one sentence citing the trigger signal(s) and "
-            "why this is specific to THIS founder.\n"
+            "  - title: 6-12 words, concrete, voice-matched. No clickbait. "
+            "No 'The Ultimate Guide' / 'X Things You' template phrasing.\n"
+            "  - rationale: 2-3 sentences (50-100 words) that (a) name the "
+            "trigger signal, (b) explain why this angle is sharp for THIS "
+            "founder's positioning and audience, and (c) hint at the "
+            "opening beat.\n"
             "  - idea_type: one of systems, framework, pitch, case_study.\n"
-            "  - opportunity_score: 0-100 integer — anchor to the signal's "
-            "score; 60-79 = solid, 80+ = sharp outlier potential.\n"
+            "  - opportunity_score: 0-100 integer — anchor to the source "
+            "signal's score; 60-79 = solid, 80+ = sharp outlier potential.\n"
             "  - outlier_score: 0-10 float — how counter-intuitive or "
-            "against-the-grain the angle is for this audience.\n"
-            "  - why_now: one short sentence (<=200 chars) on the current "
-            "market reason this topic is sharp THIS week.\n"
+            "against-the-grain the angle is for this audience. Reserve 8+ "
+            "for takes that directly contradict consensus.\n"
+            "  - why_now: one sentence (<=220 chars) on the current market "
+            "reason this topic is sharp THIS week. Must cite a concrete "
+            "trigger from the signals.\n"
             "  - suggested_tags: 2-4 lowercase topic tags (single words or "
             "hyphenated), useful for the user's knowledge graph.\n\n"
-            "Return strict JSON that matches the schema — ideas must be a "
-            "list of 3-5 objects. Do NOT wrap in markdown fences. Do NOT "
-            "include a `body` field."
+            "Return strict JSON that matches the IdeaDraft schema. Ideas "
+            "must be a list of 4-6 objects. Do NOT wrap in markdown fences. "
+            "Do NOT include a `body` field."
         ),
         expected_output=(
-            "JSON object with key `ideas`, a list of 3-5 drafts matching "
+            "JSON object with key `ideas`, a list of 4-6 drafts matching "
             "the IdeaDraft schema (title, rationale, idea_type, "
             "opportunity_score, outlier_score, why_now, suggested_tags)."
         ),

@@ -1,6 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { CSSProperties } from "react";
+import { Trash } from "@phosphor-icons/react";
 import { Badge } from "../ui/Badge";
 import { cn } from "../../lib/cn";
 import type { KanbanCard as KanbanCardType } from "./types";
@@ -8,9 +9,10 @@ import type { KanbanCard as KanbanCardType } from "./types";
 type Props = {
   card: KanbanCardType;
   onClick?: (id: string) => void;
+  onDelete?: (id: string) => void | Promise<void>;
 };
 
-export function KanbanCardView({ card, onClick }: Props) {
+export function KanbanCardView({ card, onClick, onDelete }: Props) {
   const {
     attributes,
     listeners,
@@ -24,6 +26,13 @@ export function KanbanCardView({ card, onClick }: Props) {
     transform: CSS.Transform.toString(transform),
     transition,
   };
+
+  function handleDelete(e: React.MouseEvent | React.PointerEvent | React.KeyboardEvent) {
+    e.stopPropagation();
+    if (!onDelete) return;
+    if (!window.confirm(`Delete "${card.title}"? This cannot be undone.`)) return;
+    void onDelete(card.id);
+  }
 
   return (
     <div
@@ -46,7 +55,31 @@ export function KanbanCardView({ card, onClick }: Props) {
         isDragging && "opacity-30",
       )}
     >
-      <div className="flex items-start justify-between gap-2 mb-2.5">
+      {onDelete ? (
+        <button
+          type="button"
+          aria-label={`Delete ${card.title}`}
+          title="Delete"
+          onClick={handleDelete}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleDelete(e);
+            }
+          }}
+          className={cn(
+            "absolute top-1.5 right-1.5 z-10",
+            "inline-flex items-center justify-center h-6 w-6 rounded",
+            "text-mist hover:text-cinnabar hover:bg-cinnabar/10",
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+            "transition-opacity duration-150",
+          )}
+        >
+          <Trash size={12} weight="bold" />
+        </button>
+      ) : null}
+      <div className="flex items-start justify-between gap-2 mb-2.5 pr-6">
         <span className="text-[13.5px] text-white leading-[1.35] font-medium line-clamp-2 tracking-[-0.005em]">
           {card.title}
         </span>

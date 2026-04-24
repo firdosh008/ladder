@@ -1,6 +1,6 @@
 # Ladder Content OS — Handoff / Context Doc
 
-Last updated: 2026-04-25. Purpose: bring a fresh Claude session (or a human contributor) up to speed without re-reading the whole chat history.
+Last updated: 2026-04-25 (late evening — native-streaming + source cards shipped, kanban hover-delete shipped). Purpose: bring a fresh Claude session (or a human contributor) up to speed without re-reading the whole chat history.
 
 ---
 
@@ -109,7 +109,7 @@ ladder-os/
 │   │   │   └── cn.ts
 │   │   ├── components/
 │   │   │   ├── research/
-│   │   │   │   └── ResearchStreamDrawer.tsx   # live agent timeline + idea cards
+│   │   │   │   └── ResearchRunPanel.tsx       # inline on /make (per PRD §2 Option 2)
 │   │   │   ├── studio/StudioSetupDialog.tsx
 │   │   │   ├── kanban/                   # Videos.tsx board
 │   │   │   ├── ui/                       # Button, Badge, Input, Card, ...
@@ -166,12 +166,35 @@ ladder-os/
 ### AI — Research vertical (first crew, 2026-04-25)
 - [x] Shared agent foundation: `providers/exa.py`, `services/llm.py`, `services/usage.py`, `middleware/ws_auth.py`, `models/db.py`.
 - [x] `backend/app/agents/research/` — `ExaSearchTool` + three-agent crew (trend researcher, outlier scorer, idea architect) producing `ResearchIdeas` via `output_pydantic`.
-- [x] `run_research()` async generator — wraps the crew in `log_usage(...)`, bridges CrewAI's threaded `step_callback` / `task_callback` into an `asyncio.Queue`, yields wire events.
-- [x] `POST` equivalent: `WebSocket /ws/agents/research?token=...&topic=...` — verifies JWT, loads profile, streams events, persists each idea into `ideas` with `source_type="research"`, `status="new"`, tail-of-column positioning.
-- [x] Make page rewired: research option opens `ResearchStreamDrawer` (live agent timeline + idea cards popping in); `refresh()` fires on close.
-- [x] Dummy removed from Make page: hardcoded "4.2× trending" banner deleted; hardcoded alias replaced with `profile.forwarding_alias`; "keys · 3/4 configured" deleted.
-- [x] Tests (`tests/test_research_crew.py`, 10 cases): Exa tool JSON shape, event mappers, Pydantic bounds, WS close codes, full streaming happy path with 3 persisted ideas, cross-user isolation (user A's JWT never produces a row with user B's `user_id`, even if drafts try).
-- [x] Full backend test suite: **38 passing, 0 failing** (`uv run pytest -q`).
+- [x] `IdeaDraft` schema expanded to full PRD §11.8 shape: `title, rationale, idea_type, opportunity_score, outlier_score (0-10), why_now (≤280 chars), suggested_tags[]`. Dropped the non-PRD `body` field (reserved for user notes post-save).
+- [x] `WebSocket /ws/agents/research?token=...&topic=...` — verifies JWT, loads profile, streams events. **No longer auto-persists drafts** — per PRD §2.1 the user picks one inline; the frontend POSTs it to `/ideas` and navigates to `/studio/:id`. Route now only touches `user_profiles` (read).
+- [x] Research run surface moved inline per PRD §2 Option 2: `ResearchRunPanel` renders directly on `/make` (no drawer). Completed runs mirror to `sessionStorage` so a refresh doesn't lose drafts. "New research" button clears it. "Save all to /videos" button bulk-creates ideas in one click. Per-draft pick still saves and opens studio.
+- [x] Make page deviation fixed: StudioSetupDialog gate removed from research path (PRD: no modal between click and run). Extract button honestly disabled ("extract crew ships next"). Fake `gpt-4o · ~$0.03` caption replaced with `exa · sonnet-4.6`. Dead `StudioSetupDialog.tsx` + `components/studio/` directory deleted.
+- [x] Tests (`tests/test_research_crew.py`): Exa tool JSON, event mappers, Pydantic bounds (inc. new `outlier_score` + `suggested_tags` default), WS auth + topic validation, streaming happy path asserting no ideas-table writes + full §11.8 shape on the wire.
+- [x] Full backend test suite: **39 passing, 0 failing** (`uv run pytest -q`).
+
+### Dummy-data sweep (2026-04-25 evening)
+- [x] `Library.tsx` — all four tabs rewritten. KnowTab: real profile completeness % + per-field rendering from `useAuth()`. SourcesTab: alias driven by real `profile.forwarding_alias` with a pending state when null. Graph/Insights: honest empty states naming what ships next. Fabricated `{1,284 nodes / +62 / alex+ladder@ingest.ladder.so}` gone.
+- [x] `Settings.tsx` — Profile tab gains read-only email (from `user.email`) + forwarding alias + copy button. Brands/Skills: honest empty states. Models: "server-default keys active, BYOK in v2" + a live/pending table with research_agent marked live. Integrations rows are driven by `profile.youtube_connected`.
+- [x] `Sidebar.tsx` — hardcoded `topIdeas` array replaced with real top-3 by `opportunity_score` from `useIdeas({status:"new"})`; clicks navigate to `/studio/:id`. Fabricated "2 jobs running · $4.21" strip removed.
+- [x] `Studio.tsx` — ripped hardcoded SCRIPT/OUTLINE/CHAT_SEED + the `setTimeout` pseudo-streaming. Now loads the real idea via `useIdeas()` + URL `:id`, shows title/score/outlier/rationale/body/source_content, and three honest "ships next" placeholders for Script / Scene / Sharpen panels.
+- [x] Frontend typechecks clean (`npx tsc --noEmit`).
+
+### Native-streaming rewrite (shipped 2026-04-25 late evening)
+Problem: drawer hung after `agent_start` for the three agents because the old event stream was built on CrewAI's threaded `step_callback` with speculative `getattr(step, "tool"/"tool_input"/"result"/"output")` shape-guessing that never matched real payloads.
+
+Shipped:
+- `backend/app/agents/research/crew.py` — dropped the `step_callback` + `asyncio.Queue` bridge. Uses `Crew(stream=True)` + `async for chunk in await crew.akickoff():` and emits events directly.
+- `agents.research.streaming` — new `sources_emitter_var: ContextVar[SourcesEmitter]` side-channel. `ExaSearchTool._run` reads it and pushes real search result titles+URLs+snippets into the runner's queue so they appear in the stream as `sources` events (CrewAI's native stream only surfaces tool-call *arguments*, not *results*).
+- New event protocol (see §11 below): `agent_start` on `agent_role` transition, `tool_call` on TOOL_CALL chunks (with real tool_name + arguments JSON), `sources` on ExaSearchTool results, `text_delta` on TEXT chunks, `task_complete` on `task_index` advance. Dropped `tool_result` + `agent_step` (step_callback-era artefacts).
+- `streaming.result.pydantic` / `streaming.result.tasks_output[-1].pydantic` for the `ResearchIdeas`; `streaming.result.token_usage` for real input/output tokens.
+- `ResearchRunPanel.tsx` (replaces the old drawer) — inline full-width section on `/make`. Two-column layout on lg+ : left column = Drafts → Agents → Activity; right column = numbered Sources rail (Perplexity-style, collapses beyond 6). Each agent row shows status dot + tool-call pills + tail of streaming text. Draft cards carry opportunity + outlier scores, multi-sentence rationale, `why now` callout, suggested tags, and two save paths: pick-one → studio, or Save-all → /videos. `sessionStorage` key `ladder:research:last` persists the terminal state across refreshes within the same tab.
+- `tasks.py` prompts hardened: search now demands 12-18 signals from 2-4 distinct queries, scorer surfaces narrative threads, formulator produces 4-6 drafts with 50-100-word rationales.
+- `outlier_score` is now persisted: wired through `IdeaCreate` (backend), `pickDraft` (drawer), and `CardDetailSheet` (editable). `why_now` + `suggested_tags` remain wire-only per storage decision (option b from 2026-04-25 planning).
+
+### Kanban hover-delete (shipped 2026-04-25 late evening)
+- `KanbanCardView` now renders a trash affordance in the top-right that fades in on `group-hover` / focus. Click → `window.confirm` → `deleteIdea()`. Pointer-down is stopped so the drag handle doesn't swallow the click.
+- Threaded `onCardDelete` through `Column` → `Board` → `Videos.tsx`, which reuses `useIdeas().deleteIdea` and clears the detail sheet if the deleted card happens to be open.
 
 ---
 
@@ -273,7 +296,7 @@ Rough shape:
 2. Embedding pipeline: trigger on new `newsletter_items`, `ideas`, `artifacts` rows → chunk → `text-embedding-3-small` → `knowledge_nodes` with explicit `user_id` + `source_type` / `source_id`.
 3. `app/agents/script/` — Retrieval agent (calls `match_knowledge_nodes` via `service_client` with the user_id from the verified JWT) → Outline agent → Script writer. Structured `output_pydantic` for each stage.
 4. `WebSocket /ws/agents/script?token=...&idea_id=...` — same event protocol as the research WS. Stream outline first, then scene cards, persist into `studio_sessions` + `artifacts`.
-5. Frontend: replace the hardcoded `SCRIPT` / `OUTLINE` / `CHAT_SEED` in `Studio.tsx` with a generic version of `ResearchStreamDrawer` — the component is already shaped around the event protocol and should be easy to extract into `components/agents/AgentStreamDrawer.tsx`.
+5. Frontend: replace the hardcoded `SCRIPT` / `OUTLINE` / `CHAT_SEED` in `Studio.tsx` with a component shaped like `ResearchRunPanel` — the event protocol is already generic. Good factoring candidate: extract the shared Agent/Source/Timeline subcomponents into `components/agents/` and let each vertical compose its own header + final-output section.
 
 The Research vertical is the template. Copy its structure file-for-file.
 
@@ -285,14 +308,13 @@ Every `/ws/agents/*` endpoint emits events in this shape. The frontend drawer is
 
 ```json
 {"type": "agent_start",   "agent": "search_agent"}
-{"type": "tool_call",     "tool":  "web_search", "query": "...", "agent": "search_agent"}
-{"type": "tool_result",   "preview": "...", "agent": "search_agent"}
-{"type": "agent_step",    "agent": "...", "preview": "..."}
-{"type": "task_complete", "agent": "...", "preview": "..."}
+{"type": "tool_call",     "agent": "search_agent", "tool": "web_search", "arguments": "{\"query\":\"...\",\"num_results\":10}"}
+{"type": "sources",       "query": "...", "items": [{"title":"...","url":"https://...","published_date":"2026-04-10","snippet":"..."}]}
+{"type": "text_delta",    "agent": "...", "content": "partial chunk"}
+{"type": "task_complete", "agent": "...", "preview": "tail of output"}
 {"type": "ideas_ready",   "ideas": [...], "token_usage": {"input": 0, "output": 0, "cost_usd": 0.0}}
-{"type": "idea_saved",    "idea":  {"id": "...", "title": "...", "opportunity_score": 87}}
-{"type": "complete",      "saved":  4, "cost_usd": 0.07}
+{"type": "complete",      "count":  4,    "cost_usd": 0.07}
 {"type": "error",         "message": "..."}
 ```
 
-`ideas_ready` / `idea_saved` are Research-specific names — for the Script vertical swap in `outline_ready` / `section_saved`, etc. Keep `agent_start`, `tool_call`, `tool_result`, `agent_step`, `task_complete`, `complete`, and `error` identical so the drawer renders the timeline without changes.
+`ideas_ready` is research-specific — for the Script vertical swap in `outline_ready` / `script_ready`, etc. Keep `agent_start`, `tool_call`, `sources`, `text_delta`, `task_complete`, `complete`, and `error` identical so the drawer renders the timeline without changes. Tools that want their results on the wire (not just their call arguments) should read `app.agents.research.streaming.sources_emitter_var` and push a `SourceRef` list — the runner translates that into a `sources` event.

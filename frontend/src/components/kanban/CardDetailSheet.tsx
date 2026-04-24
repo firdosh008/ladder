@@ -22,6 +22,7 @@ type Editable = {
   body: string;
   status: KanbanStatus;
   opportunity_score: number | null;
+  outlier_score: number | null;
   rationale: string;
 };
 
@@ -31,6 +32,7 @@ function seedFrom(idea: Idea | null): Editable {
     body: idea?.body ?? "",
     status: (idea?.status as KanbanStatus) ?? "new",
     opportunity_score: idea?.opportunity_score ?? null,
+    outlier_score: idea?.outlier_score ?? null,
     rationale: idea?.rationale ?? "",
   };
 }
@@ -71,6 +73,9 @@ export function CardDetailSheet({
       if (edit.status !== original.status) patch.status = edit.status;
       if (edit.opportunity_score !== original.opportunity_score) {
         patch.opportunity_score = edit.opportunity_score;
+      }
+      if (edit.outlier_score !== original.outlier_score) {
+        patch.outlier_score = edit.outlier_score;
       }
       if (edit.rationale !== original.rationale) {
         patch.rationale = edit.rationale || null;
@@ -184,30 +189,57 @@ export function CardDetailSheet({
                 </div>
               </div>
 
-              {/* Score */}
-              <div className="px-6 py-4 border-t border-hairline">
-                <Label>opportunity score</Label>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={edit.opportunity_score ?? ""}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setEdit((s) => ({
-                      ...s,
-                      opportunity_score:
-                        v === ""
-                          ? null
-                          : Math.max(0, Math.min(100, Number(v))),
-                    }));
-                  }}
-                  placeholder="—"
-                  className={cn(
-                    "w-24 h-9 px-3 rounded-md bg-surface-input text-[14px] text-white",
-                    "border border-transparent focus:border-cinnabar focus:outline-none",
-                  )}
-                />
+              {/* Scores */}
+              <div className="px-6 py-4 border-t border-hairline grid grid-cols-2 gap-4">
+                <div>
+                  <Label>opportunity · 0-100</Label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={edit.opportunity_score ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEdit((s) => ({
+                        ...s,
+                        opportunity_score:
+                          v === ""
+                            ? null
+                            : Math.max(0, Math.min(100, Number(v))),
+                      }));
+                    }}
+                    placeholder="—"
+                    className={cn(
+                      "w-full h-9 px-3 rounded-md bg-surface-input text-[14px] text-white",
+                      "border border-transparent focus:border-cinnabar focus:outline-none",
+                    )}
+                  />
+                </div>
+                <div>
+                  <Label>outlier · 0-10</Label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.1}
+                    value={edit.outlier_score ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEdit((s) => ({
+                        ...s,
+                        outlier_score:
+                          v === ""
+                            ? null
+                            : Math.max(0, Math.min(10, Number(v))),
+                      }));
+                    }}
+                    placeholder="—"
+                    className={cn(
+                      "w-full h-9 px-3 rounded-md bg-surface-input text-[14px] text-white",
+                      "border border-transparent focus:border-cinnabar focus:outline-none",
+                    )}
+                  />
+                </div>
               </div>
 
               {/* Body */}

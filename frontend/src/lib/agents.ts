@@ -21,11 +21,23 @@ export type IdeaDraft = {
   suggested_tags?: string[];
 };
 
+export type Source = {
+  title: string;
+  url: string;
+  published_date?: string | null;
+  snippet?: string | null;
+};
+
 export type AgentEvent =
   | { type: "agent_start"; agent: string }
-  | { type: "tool_call"; tool: string; query: string; agent?: string | null }
-  | { type: "tool_result"; preview?: string; agent?: string | null }
-  | { type: "agent_step"; agent?: string | null; preview?: string }
+  | {
+      type: "tool_call";
+      agent?: string | null;
+      tool: string;
+      arguments?: string;
+    }
+  | { type: "sources"; query: string; items: Source[] }
+  | { type: "text_delta"; agent: string; content: string }
   | { type: "task_complete"; agent?: string | null; preview?: string }
   | {
       type: "ideas_ready";

@@ -16,6 +16,7 @@ type Props = {
   emptyCopy?: string;
   onAdd: (title: string) => void | Promise<void>;
   onCardClick?: (id: string) => void;
+  onCardDelete?: (id: string) => void | Promise<void>;
 };
 
 // On-brand column-dot colors — stay within tailwind tokens.
@@ -35,6 +36,7 @@ export function KanbanColumnView({
   emptyCopy,
   onAdd,
   onCardClick,
+  onCardDelete,
 }: Props) {
   const [adding, setAdding] = useState(false);
   const { setNodeRef, isOver } = useDroppable({
@@ -93,7 +95,11 @@ export function KanbanColumnView({
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.18, ease: [0.32, 0.72, 0, 1] }}
               >
-                <KanbanCardView card={card} onClick={onCardClick} />
+                <KanbanCardView
+                  card={card}
+                  onClick={onCardClick}
+                  onDelete={onCardDelete}
+                />
               </motion.div>
             ))}
           </AnimatePresence>

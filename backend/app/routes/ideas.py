@@ -13,6 +13,7 @@ class IdeaCreate(BaseModel):
     idea_type: str | None = None
     status: str = "new"
     opportunity_score: int | None = Field(default=None, ge=0, le=100)
+    outlier_score: float | None = Field(default=None, ge=0, le=10)
     rationale: str | None = None
     source_type: str = "manual"
     source_content: str | None = None
@@ -27,6 +28,7 @@ class IdeaUpdate(BaseModel):
     idea_type: str | None = None
     status: str | None = None
     opportunity_score: int | None = Field(default=None, ge=0, le=100)
+    outlier_score: float | None = Field(default=None, ge=0, le=10)
     rationale: str | None = None
     project_id: str | None = None
     position: float | None = None

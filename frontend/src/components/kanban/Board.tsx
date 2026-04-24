@@ -28,6 +28,7 @@ export type KanbanBoardProps = {
   onMove: (e: KanbanMoveEvent) => void | Promise<void>;
   onAdd: (columnId: KanbanStatus, title: string) => void | Promise<void>;
   onCardClick?: (cardId: string) => void;
+  onCardDelete?: (cardId: string) => void | Promise<void>;
   isLoading?: boolean;
   emptyCopyByColumn?: Partial<Record<KanbanStatus, string>>;
 };
@@ -38,6 +39,7 @@ export function KanbanBoard({
   onMove,
   onAdd,
   onCardClick,
+  onCardDelete,
   emptyCopyByColumn,
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -177,6 +179,7 @@ export function KanbanBoard({
             emptyCopy={emptyCopyByColumn?.[col.id]}
             onAdd={(t) => onAdd(col.id, t)}
             onCardClick={onCardClick}
+            onCardDelete={onCardDelete}
           />
         ))}
       </div>

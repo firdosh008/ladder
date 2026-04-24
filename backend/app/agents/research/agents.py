@@ -41,13 +41,15 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
     search_agent = Agent(
         role="Trend researcher",
         goal=(
-            "Surface 8-12 fresh, specific signals about the user's research "
-            "topic from the public web."
+            "Surface 12-18 fresh, specific signals about the user's research "
+            "topic from the public web, drawn from at least 2 distinct "
+            "searches to cover multiple angles."
         ),
         backstory=(
             "You are an obsessive trend-watcher with taste for outlier "
             "signals. You always prefer concrete, recent, and unusual "
-            "findings over generic overviews.\n\n"
+            "findings over generic overviews. You never paraphrase URLs — "
+            "you copy them verbatim from the tool output.\n\n"
             "Context about the founder whose research you are serving:\n"
             + context
         ),
@@ -55,7 +57,7 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
         llm=llm,
         allow_delegation=False,
         verbose=False,
-        max_iter=6,
+        max_iter=8,
     )
 
     trend_scorer = Agent(
@@ -81,9 +83,9 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
     idea_formulator = Agent(
         role="Idea architect",
         goal=(
-            "Transform the highest-scoring signals into 3-5 distinct, "
-            "founder-voice video ideas — each with a title, opportunity "
-            "score, and rationale."
+            "Transform the highest-scoring signals into 4-6 distinct, "
+            "founder-voice video ideas — each with a title, scores, and a "
+            "multi-sentence rationale grounded in specific signals."
         ),
         backstory=(
             "You turn trend signals into specific, punchy video ideas that "

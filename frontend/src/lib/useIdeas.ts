@@ -27,6 +27,7 @@ export type IdeaCreate = {
   idea_type?: string;
   status?: string;
   opportunity_score?: number;
+  outlier_score?: number;
   rationale?: string;
   source_type?: string;
   source_content?: string;
@@ -43,6 +44,7 @@ export type IdeaUpdate = Partial<
     | "idea_type"
     | "status"
     | "opportunity_score"
+    | "outlier_score"
     | "rationale"
     | "project_id"
     | "position"

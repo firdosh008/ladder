@@ -1,8 +1,8 @@
 """Tests for the Research crew + /ws/agents/research route.
 
 Coverage:
-  - ExaSearchTool wraps exa.search correctly.
-  - _step_to_event / _task_to_event produce the expected wire events.
+  - ExaSearchTool wraps exa.search correctly and emits sources via
+    the ContextVar side-channel.
   - Pydantic models validate the draft shape (incl. score bounds).
   - The WebSocket route auths + streams events from run_research verbatim,
     terminates with a `complete` event carrying the draft count + cost.
@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agents.research import crew as crew_mod
+from app.agents.research.streaming import SourceRef, sources_emitter_var
 from app.agents.research.tools import ExaSearchTool
 from app.models.db import IdeaDraft, ResearchIdeas
 from app.providers.exa import ExaResult
@@ -61,43 +61,60 @@ def test_exa_tool_serialises_results_as_json() -> None:
     ]
 
 
-# ---------------------------------------------------------------------------
-# Event normalisation
-# ---------------------------------------------------------------------------
+def test_exa_tool_emits_sources_when_emitter_set() -> None:
+    fake = [
+        ExaResult(
+            title="Outlier finding",
+            url="https://x.test/outlier",
+            text="body text " * 40,
+            published_date="2026-04-10",
+            score=0.9,
+        ),
+        ExaResult(
+            title="Context piece",
+            url="https://x.test/context",
+            text="shorter body",
+            published_date=None,
+            score=0.8,
+        ),
+    ]
+
+    emissions: list[tuple[str, list[SourceRef]]] = []
+
+    def emit(query: str, sources: list[SourceRef]) -> None:
+        emissions.append((query, sources))
+
+    async def fake_search(query: str, num_results: int = 8) -> list[ExaResult]:
+        return fake
+
+    token = sources_emitter_var.set(emit)
+    try:
+        with patch("app.agents.research.tools.exa.search", fake_search):
+            ExaSearchTool()._run(query="ai agents", num_results=8)
+    finally:
+        sources_emitter_var.reset(token)
+
+    assert len(emissions) == 1
+    query, sources = emissions[0]
+    assert query == "ai agents"
+    assert len(sources) == 2
+    assert sources[0].url == "https://x.test/outlier"
+    assert sources[0].title == "Outlier finding"
+    assert sources[0].snippet and len(sources[0].snippet) <= 220
 
 
-def test_step_to_event_tool_call() -> None:
-    step = MagicMock(spec=["tool", "tool_input", "agent"])
-    step.tool = "web_search"
-    step.tool_input = "ai agents trend"
-    step.agent = "search_agent"
-    ev = crew_mod._step_to_event(step)
-    assert ev == {
-        "type": "tool_call",
-        "tool": "web_search",
-        "query": "ai agents trend",
-        "agent": "search_agent",
-    }
+def test_exa_tool_is_a_noop_when_no_emitter() -> None:
+    fake = [
+        ExaResult(title="x", url="https://x.test/1", text="y", published_date=None, score=None)
+    ]
 
+    async def fake_search(query: str, num_results: int = 8) -> list[ExaResult]:
+        return fake
 
-def test_step_to_event_tool_result() -> None:
-    step = MagicMock(spec=["result", "agent"])
-    step.result = "x" * 500
-    step.agent = "search_agent"
-    ev = crew_mod._step_to_event(step)
-    assert ev is not None
-    assert ev["type"] == "tool_result"
-    assert len(ev["preview"]) == 240
-
-
-def test_task_to_event_shape() -> None:
-    task_out = MagicMock(spec=["agent", "raw"])
-    task_out.agent = "idea_formulator"
-    task_out.raw = "some markdown output" * 30
-    ev = crew_mod._task_to_event(task_out)
-    assert ev["type"] == "task_complete"
-    assert ev["agent"] == "idea_formulator"
-    assert len(ev["preview"]) == 240
+    # sources_emitter_var is unset at module scope
+    with patch("app.agents.research.tools.exa.search", fake_search):
+        out = ExaSearchTool()._run(query="x")
+    assert json.loads(out)[0]["url"] == "https://x.test/1"
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +158,7 @@ def test_research_ideas_requires_at_least_one_draft() -> None:
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 
-def _profile_client(profile_row: dict | None) -> AsyncMock:
+def _profile_client(profile_row: dict | None) -> tuple[AsyncMock, MagicMock]:
     """Builder for the user_profiles select used by _load_profile."""
     response = MagicMock()
     response.data = profile_row
@@ -172,11 +189,34 @@ def _fake_run_research(ideas_payload: list[dict]):
         yield {"type": "agent_start", "agent": "search_agent"}
         yield {
             "type": "tool_call",
-            "tool": "web_search",
-            "query": topic,
             "agent": "search_agent",
+            "tool": "web_search",
+            "arguments": json.dumps({"query": topic, "num_results": 10}),
         }
-        yield {"type": "task_complete", "agent": "idea_formulator"}
+        yield {
+            "type": "sources",
+            "query": topic,
+            "items": [
+                {
+                    "title": "Source 1",
+                    "url": "https://x.test/1",
+                    "published_date": "2026-04-01",
+                    "snippet": "first snippet",
+                },
+                {
+                    "title": "Source 2",
+                    "url": "https://x.test/2",
+                    "published_date": None,
+                    "snippet": "second snippet",
+                },
+            ],
+        }
+        yield {
+            "type": "text_delta",
+            "agent": "search_agent",
+            "content": "partial thought …",
+        }
+        yield {"type": "task_complete", "agent": "idea_formulator", "preview": ""}
         yield {
             "type": "ideas_ready",
             "ideas": ideas_payload,
@@ -271,11 +311,25 @@ async def test_ws_streams_events_and_never_writes_ideas(
     types = [e["type"] for e in events]
     assert types[0] == "agent_start"
     assert "tool_call" in types
+    assert "sources" in types
+    assert "text_delta" in types
     assert "task_complete" in types
     assert "ideas_ready" in types
     assert types[-1] == "complete"
     # No idea_saved events — drafts are not persisted by the route.
     assert "idea_saved" not in types
+
+    sources_ev = next(e for e in events if e["type"] == "sources")
+    assert sources_ev["query"] == "ai agents"
+    assert len(sources_ev["items"]) == 2
+    assert sources_ev["items"][0]["url"] == "https://x.test/1"
+
+    tool_call_ev = next(e for e in events if e["type"] == "tool_call")
+    assert tool_call_ev["tool"] == "web_search"
+    assert tool_call_ev["agent"] == "search_agent"
+    # arguments is a JSON string of the tool call args
+    args = json.loads(tool_call_ev["arguments"])
+    assert args["query"] == "ai agents"
 
     ideas_ready = next(e for e in events if e["type"] == "ideas_ready")
     assert len(ideas_ready["ideas"]) == 3

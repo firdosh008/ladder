@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Lightbulb,
@@ -15,7 +15,11 @@ import { Badge } from "../components/ui/Badge";
 import { useIdeas } from "../lib/useIdeas";
 import { useAuth } from "../lib/auth";
 import { cn } from "../lib/cn";
-import { ResearchStreamDrawer } from "../components/research/ResearchStreamDrawer";
+import {
+  ResearchRunPanel,
+  clearStoredRun,
+  loadStoredRun,
+} from "../components/research/ResearchRunPanel";
 import type { ResearchSetup } from "../lib/agents";
 
 type Option = "ideas" | "research" | "content";
@@ -25,25 +29,41 @@ export default function MakePage() {
   const [topic, setTopic] = useState("");
   const [content, setContent] = useState("");
   const [researchSetup, setResearchSetup] = useState<ResearchSetup | null>(null);
+  const [hasRestoredRun, setHasRestoredRun] = useState(() => loadStoredRun() !== null);
   const navigate = useNavigate();
   const { ideas, loading: ideasLoading, refresh: refreshIdeas } = useIdeas();
   const { profile } = useAuth();
+  const panelRef = useRef<HTMLDivElement>(null);
 
   function startResearch() {
     const cleaned = topic.trim();
     if (!cleaned) return;
     setResearchSetup({ topic: cleaned });
+    setHasRestoredRun(false);
+    requestAnimationFrame(() => {
+      panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
-  const handleResearchClose = useCallback(
-    (open: boolean) => {
-      if (!open) {
-        setResearchSetup(null);
-        void refreshIdeas();
-      }
-    },
-    [refreshIdeas],
-  );
+  useEffect(() => {
+    if (researchSetup || !hasRestoredRun) return;
+    requestAnimationFrame(() => {
+      panelRef.current?.scrollIntoView({ behavior: "auto", block: "nearest" });
+    });
+  }, [researchSetup, hasRestoredRun]);
+
+  const handleStartOver = useCallback(() => {
+    clearStoredRun();
+    setResearchSetup(null);
+    setHasRestoredRun(false);
+    setTopic("");
+  }, []);
+
+  const handleIdeasChanged = useCallback(() => {
+    void refreshIdeas();
+  }, [refreshIdeas]);
+
+  const panelVisible = researchSetup !== null || hasRestoredRun;
 
   const ideasCount = ideas.length;
   const ideasDimmed = !ideasLoading && ideasCount === 0;
@@ -143,18 +163,24 @@ export default function MakePage() {
                     startResearch();
                   }
                 }}
+                disabled={researchSetup !== null}
               />
               <Button
                 size="sm"
                 onClick={startResearch}
-                disabled={!topic.trim()}
+                disabled={!topic.trim() || researchSetup !== null}
                 className="w-full"
               >
                 <Sparkle size={12} weight="fill" />
-                Research & stream
+                {researchSetup !== null
+                  ? "Running…"
+                  : hasRestoredRun
+                    ? "New research"
+                    : "Research & stream"}
               </Button>
               <p className="text-[11.5px] text-mist font-mono pt-0.5">
                 exa · sonnet-4.6
+                {hasRestoredRun && !researchSetup ? " · last run restored below" : ""}
               </p>
             </div>
           </OptionCard>
@@ -191,6 +217,20 @@ export default function MakePage() {
           </OptionCard>
         </div>
 
+        {/* Inline research panel (per PRD §2 Option 2). Renders while a run
+            is live AND after it completes until the user explicitly starts
+            over — state mirrors to sessionStorage so a refresh doesn't
+            wipe drafts. */}
+        {panelVisible ? (
+          <div ref={panelRef}>
+            <ResearchRunPanel
+              setup={researchSetup}
+              onStartOver={handleStartOver}
+              onIdeasChanged={handleIdeasChanged}
+            />
+          </div>
+        ) : null}
+
         {/* Quiet metadata row */}
         <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[10.5px] uppercase tracking-[0.2em] text-mist">
           <span>session · fresh</span>
@@ -203,13 +243,6 @@ export default function MakePage() {
           </span>
         </div>
       </PageContainer>
-
-      <ResearchStreamDrawer
-        open={researchSetup !== null}
-        onOpenChange={handleResearchClose}
-        setup={researchSetup}
-        onIdeaSaved={() => void refreshIdeas()}
-      />
     </Shell>
   );
 }
