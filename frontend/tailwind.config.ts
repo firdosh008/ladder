@@ -92,6 +92,14 @@ export default {
           from: { opacity: "1" },
           to: { opacity: "0" },
         },
+        "scale-in": {
+          from: { opacity: "0", transform: "translate(-50%, -48%) scale(0.96)" },
+          to: { opacity: "1", transform: "translate(-50%, -50%) scale(1)" },
+        },
+        "scale-out": {
+          from: { opacity: "1", transform: "translate(-50%, -50%) scale(1)" },
+          to: { opacity: "0", transform: "translate(-50%, -48%) scale(0.97)" },
+        },
       },
       animation: {
         float: "float 6s cubic-bezier(0.45, 0, 0.55, 1) infinite",
@@ -102,6 +110,8 @@ export default {
         "slide-out-right": "slide-out-right 180ms cubic-bezier(0.4, 0, 1, 1)",
         "fade-in": "fade-in 180ms ease-out",
         "fade-out": "fade-out 150ms ease-in",
+        "scale-in": "scale-in 220ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "scale-out": "scale-out 160ms cubic-bezier(0.4, 0, 1, 1)",
       },
     },
   },

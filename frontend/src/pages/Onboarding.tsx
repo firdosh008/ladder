@@ -9,27 +9,28 @@ import { api, ApiError } from "../lib/api";
 import { useAuth, type Profile } from "../lib/auth";
 
 const STEPS = [
-  { id: 1, title: "Who are you?", hint: "identity" },
-  { id: 2, title: "How do you sound?", hint: "voice" },
-  { id: 3, title: "Pick your first brand.", hint: "brand" },
+  { id: 1, title: "Who are you?", hint: "identity · ~60s" },
+  { id: 2, title: "Who do you sound like?", hint: "voice · ~30s" },
+  { id: 3, title: "Pick your first brand.", hint: "brand · ~45s" },
+];
+
+const CREATOR_PRESETS = [
+  "Greg Eisenberg",
+  "Nick Saraev",
+  "Lenny Rachitsky",
+  "David Perell",
 ];
 
 type FormState = {
-  display_name: string;
   positioning: string;
   audience: string;
-  voice: string;
-  creators_followed: string;
-  things_to_avoid: string;
+  creator_seed: string;
 };
 
 const INITIAL: FormState = {
-  display_name: "",
   positioning: "",
   audience: "",
-  voice: "",
-  creators_followed: "",
-  things_to_avoid: "",
+  creator_seed: "",
 };
 
 // TODO: wire to /brands endpoint once built
@@ -55,24 +56,24 @@ export default function OnboardingPage() {
   const { setProfileAndOnboarded } = useAuth();
 
   async function submit() {
-    if (!form.display_name || !form.positioning || !form.voice) {
-      setError("Name, positioning, and voice are required.");
+    const creator = form.creator_seed.trim();
+    if (!form.positioning.trim() || !form.audience.trim()) {
+      setError("Tell us what you do and who you help.");
       setStep(1);
+      return;
+    }
+    if (!creator) {
+      setError("Pick a creator or type one to seed your voice.");
+      setStep(2);
       return;
     }
     setBusy(true);
     setError(null);
     try {
       const res = await api.post<{ profile: Profile | null }>("/auth/onboard", {
-        display_name: form.display_name,
         positioning: form.positioning,
         audience: form.audience,
-        voice: form.voice,
-        creators_followed: form.creators_followed
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        things_to_avoid: form.things_to_avoid,
+        creators_followed: [creator],
       });
       // Commit the new profile to context SYNCHRONOUSLY so the next route guard
       // sees onboarded=true immediately. flushSync forces React to apply the
@@ -81,15 +82,12 @@ export default function OnboardingPage() {
       const freshProfile: Profile =
         res.profile ?? {
           user_id: "",
-          display_name: form.display_name,
+          display_name: null,
           positioning: form.positioning,
           audience: form.audience,
-          voice: form.voice,
-          creators_followed: form.creators_followed
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-          things_to_avoid: form.things_to_avoid,
+          voice: null,
+          creators_followed: [creator],
+          things_to_avoid: null,
           onboarded_at: new Date().toISOString(),
         };
       flushSync(() => {
@@ -165,9 +163,9 @@ export default function OnboardingPage() {
         </h1>
         <p className="text-[15px] text-white/65 leading-[1.55] mb-10 max-w-[54ch]">
           {step === 1 &&
-            "The studio uses this at call time. There's no hard-coded context anywhere — every prompt reads from what you write here."}
+            "Two fields map straight to your profile: what you do (positioning) and who you help (audience). The studio reads both at call time."}
           {step === 2 &&
-            "Tell us what makes you sound like you. Be specific. Examples of creators are fine — we map them to latent voice qualities, not mimicry."}
+            "Which creator's style do you want to sound like? One name seeds your voice profile; the system learns more as you edit scripts."}
           {step === 3 &&
             "You can add more brands later. One now gets you into the studio in under a minute."}
         </p>
@@ -225,30 +223,22 @@ function StepOne({ form, setForm }: StepProps) {
   return (
     <div className="space-y-5">
       <div>
-        <FieldLabel htmlFor="name">Your name</FieldLabel>
-        <Input
-          id="name"
-          placeholder="e.g. your name"
-          autoFocus
-          value={form.display_name}
-          onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-        />
-      </div>
-      <div>
-        <FieldLabel htmlFor="pos">What do you make and for whom?</FieldLabel>
+        <FieldLabel htmlFor="pos">What do you do?</FieldLabel>
         <Textarea
           id="pos"
           rows={3}
-          placeholder="e.g. I build AI agents and ship videos about it."
+          autoFocus
+          placeholder="e.g. I teach solo founders how to ship weekly video without a team."
           value={form.positioning}
           onChange={(e) => setForm({ ...form, positioning: e.target.value })}
         />
       </div>
       <div>
-        <FieldLabel htmlFor="aud">Who's it for?</FieldLabel>
-        <Input
+        <FieldLabel htmlFor="aud">Who do you help?</FieldLabel>
+        <Textarea
           id="aud"
-          placeholder="e.g. Founder-operators at 1–20 person companies."
+          rows={3}
+          placeholder="e.g. Bootstrapped B2B founders at 0–20 person companies."
           value={form.audience}
           onChange={(e) => setForm({ ...form, audience: e.target.value })}
         />
@@ -258,45 +248,39 @@ function StepOne({ form, setForm }: StepProps) {
 }
 
 function StepTwo({ form, setForm }: StepProps) {
+  const selected = form.creator_seed.trim();
   return (
-    <div className="space-y-5">
-      <div>
-        <FieldLabel htmlFor="voice">
-          How would a friend describe your voice?
-        </FieldLabel>
-        <Textarea
-          id="voice"
-          rows={2}
-          placeholder="e.g. Dry, structural, low-ceremony. Concrete over clever."
-          value={form.voice}
-          onChange={(e) => setForm({ ...form, voice: e.target.value })}
-        />
+    <div className="space-y-4">
+      <FieldLabel htmlFor="creator">
+        Which creator's style do you want to sound like?
+      </FieldLabel>
+      <div className="flex flex-wrap gap-2">
+        {CREATOR_PRESETS.map((name) => {
+          const active = selected.toLowerCase() === name.toLowerCase();
+          return (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setForm({ ...form, creator_seed: name })}
+              className={cn(
+                "h-9 px-4 rounded-full text-[13px] font-sans font-medium",
+                "border transition-colors",
+                active
+                  ? "border-cinnabar bg-cinnabar/15 text-white"
+                  : "border-white/15 bg-white/5 text-white/80 hover:border-white/30 hover:bg-white/10",
+              )}
+            >
+              {name}
+            </button>
+          );
+        })}
       </div>
-      <div>
-        <FieldLabel htmlFor="creators" hint="comma separated">
-          Creators you sound closest to
-        </FieldLabel>
-        <Input
-          id="creators"
-          placeholder="e.g. Packy McCormick, Ben Thompson, Lenny Rachitsky"
-          value={form.creators_followed}
-          onChange={(e) =>
-            setForm({ ...form, creators_followed: e.target.value })
-          }
-        />
-      </div>
-      <div>
-        <FieldLabel htmlFor="avoid">Never do this</FieldLabel>
-        <Textarea
-          id="avoid"
-          rows={2}
-          placeholder="e.g. Filler words. Over-capitalised Frameworks. Fake urgency."
-          value={form.things_to_avoid}
-          onChange={(e) =>
-            setForm({ ...form, things_to_avoid: e.target.value })
-          }
-        />
-      </div>
+      <Input
+        id="creator"
+        placeholder="Or type any creator name"
+        value={form.creator_seed}
+        onChange={(e) => setForm({ ...form, creator_seed: e.target.value })}
+      />
     </div>
   );
 }

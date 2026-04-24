@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from jose import jwt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.deps import service_client, user_client
 from app.middleware.auth import current_user
@@ -11,11 +11,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class OnboardPayload(BaseModel):
-    display_name: str
-    positioning: str
-    audience: str
-    voice: str
-    creators_followed: list[str] = Field(default_factory=list)
+    display_name: str | None = None
+    positioning: str | None = None
+    audience: str | None = None
+    voice: str | None = None
+    creators_followed: list[str] | None = None
     things_to_avoid: str | None = None
 
 
@@ -112,15 +112,14 @@ async def onboard(
 
     client = await user_client(token)
 
+    # Only include fields the caller actually sent — different screens submit
+    # different subsets (onboarding step 1+2 sends positioning/audience/creators,
+    # Settings sends the full profile). Excluding unset keys means missing
+    # fields don't clobber existing values on the upsert.
     row = {
         "user_id": str(user_id),
-        "display_name": payload.display_name,
-        "positioning": payload.positioning,
-        "audience": payload.audience,
-        "voice": payload.voice,
-        "creators_followed": payload.creators_followed,
-        "things_to_avoid": payload.things_to_avoid,
         "onboarded_at": datetime.now(timezone.utc).isoformat(),
+        **payload.model_dump(exclude_none=True),
     }
 
     try:

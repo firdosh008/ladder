@@ -14,15 +14,40 @@ import { Input, Textarea } from "../components/ui/Input";
 import { Badge } from "../components/ui/Badge";
 import { useIdeas } from "../lib/useIdeas";
 import { cn } from "../lib/cn";
+import {
+  StudioSetupDialog,
+  type StudioSetupValues,
+} from "../components/studio/StudioSetupDialog";
 
 type Option = "ideas" | "research" | "content";
+
+type SetupIntent =
+  | { kind: "research"; topic: string }
+  | { kind: "extract"; content: string };
 
 export default function MakePage() {
   const [active, setActive] = useState<Option>("research");
   const [topic, setTopic] = useState("");
   const [content, setContent] = useState("");
+  const [intent, setIntent] = useState<SetupIntent | null>(null);
   const navigate = useNavigate();
   const { ideas, loading: ideasLoading } = useIdeas();
+
+  function handleSetupConfirm(v: StudioSetupValues) {
+    if (!intent) return;
+    const params = new URLSearchParams({
+      duration: String(v.duration),
+      tool: v.tool,
+      brand: v.brandId,
+    });
+    if (intent.kind === "research") {
+      params.set("topic", intent.topic);
+      navigate(`/studio/new?${params.toString()}`);
+    } else {
+      params.set("content", intent.content);
+      navigate(`/studio/extract?${params.toString()}`);
+    }
+  }
 
   const ideasCount = ideas.length;
   const ideasDimmed = !ideasLoading && ideasCount === 0;
@@ -119,7 +144,9 @@ export default function MakePage() {
               />
               <Button
                 size="sm"
-                onClick={() => navigate("/studio/new")}
+                onClick={() =>
+                  setIntent({ kind: "research", topic: topic.trim() })
+                }
                 disabled={!topic.trim()}
                 className="w-full"
               >
@@ -151,7 +178,9 @@ export default function MakePage() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => navigate("/studio/extract")}
+              onClick={() =>
+                setIntent({ kind: "extract", content: content.trim() })
+              }
               disabled={content.trim().length < 60}
               className="w-full mt-2"
             >
@@ -204,6 +233,27 @@ export default function MakePage() {
           <span>keys · 3/4 configured</span>
         </div>
       </PageContainer>
+
+      <StudioSetupDialog
+        open={intent !== null}
+        onOpenChange={(v) => !v && setIntent(null)}
+        title={
+          intent?.kind === "extract"
+            ? "Turn content into a video"
+            : "Research and generate"
+        }
+        subtitle={
+          intent?.kind === "research"
+            ? intent.topic
+            : intent?.kind === "extract"
+              ? `${intent.content.slice(0, 80)}${intent.content.length > 80 ? "…" : ""}`
+              : undefined
+        }
+        ctaLabel={
+          intent?.kind === "extract" ? "Extract & build" : "Research & stream"
+        }
+        onConfirm={handleSetupConfirm}
+      />
     </Shell>
   );
 }
