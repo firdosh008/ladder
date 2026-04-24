@@ -1,0 +1,2077 @@
+﻿Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+L A D D E R
+
+Content OS
+Full Engineering Handoff Document
+
+Product · UX · Architecture · Data Model · Agent Specs · Build Split
+
+Owner Shiv — Founder, Ladder & Agent Loopr
+Status Ready for build
+Initial users Shiv + Agent Loopr team (up to 9 people)
+Architecture Internal tool first, SaaS-ready from day one
+Updated April 2026
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+1. Product Philosophy
+One job: help founders make videos. Every design decision is evaluated against a single
+question — does this get the user closer to hitting record?
+
+Ladder Content OS is a video production assistant. Research, ideation, scripting, scene
+generation, thumbnail creation, and knowledge accumulation all happen on the user's behalf.
+These capabilities surface as intelligence, never as features to manage.
+
+1.1 Five Design Principles
+1. Outcome-first navigation
+Navigation reflects what the user is trying to accomplish, not how the system is structured.
+"Make a Video" is a primary action. The user never needs to understand what a knowledge
+graph is to benefit from one.
+2. The video idea is the atomic unit
+Everything lives inside a video idea: script, scene outline, walkthrough output, thumbnail, and a
+persistent AI chat that can modify any of it at any time.
+3. Shortest path to value
+Onboarding is 3 steps. Script streams automatically on studio entry. Scene outline generates
+alongside the script. No buttons to click to start generation. Every default is the right answer for
+80% of cases.
+4. AI is the engine, not the feature
+No button is labelled "Generate with AI." Buttons say what they do: "Write my script," "Build
+scene," "Generate thumbnail." The user does not need to know or care which model is running.
+5. Invisible intelligence
+The knowledge graph never appears as a feature to manage. It surfaces as moments: a
+contextual hint in the studio, a pre-filled structure based on past patterns, ideas that feel
+increasingly personal over time.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+2. Navigation
+Four items in the left rail. Each maps to a user goal.
+
+Nav Item Purpose
+Make a Video Primary action. Opens the video production entry screen. Always the
+
+first item. Clicking when a video is in progress resumes that session.
+My Videos The complete pipeline: ideas, scripts in progress, scenes ready to
+
+record, and published YouTube videos with performance data. Includes
+the weekly AI-suggested top 3 ideas at the top.
+
+Library The intelligence layer: What I Know (editable knowledge profile),
+Sources, Insights Feed, and Knowledge Graph. Everything that feeds
+the system lives here.
+
+Settings Profile, brands, model selection (BYOK), skill.md files, output
+preferences, integrations, appearance. Admin tab visible only to
+is_admin users.
+
+2.1 Make a Video — Entry Screen
+Three option cards. All three paths lead to the Video Studio. The key distinction: option 1 uses
+existing generated ideas, option 2 uses a keyword or statement to trigger fresh research, option
+3 accepts long-form content the user already has.
+
+┌──────────────────────────────────────────────────────────────┐
+│ What do you want to make a video about? │
+│ │
+│ ┌────────────────────────────────────────────────────────┐ │
+│ │ Pick from your ideas │ │
+│ │ 7 ideas ready · sorted by opportunity score │ │
+│ │ [Idea title — 94] [Idea title — 88] +5 more │ │
+│ └────────────────────────────────────────────────────────┘ │
+│ │
+│ ┌────────────────────────────────────────────────────────┐ │
+│ │ Research and generate │ │
+│ │ Enter a keyword, topic, or question │ │
+│ │ [What are people asking about AI agents right now...] │ │
+│ │ [Research this ->] │ │
+│ └────────────────────────────────────────────────────────┘ │
+│ │
+│ ┌────────────────────────────────────────────────────────┐ │
+│ │ I have content I want to turn into a video │ │
+│ │ Paste a post, newsletter, thread, or doc │ │
+│ │ [Paste content here...] │ │
+│ │ Video length is derived from content (not adjustable)│ │
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+│ │ [Extract and build ->] │ │
+│ └────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+
+Option 1 — Pick from existing ideas
+• Shows top ideas from the ideas table ordered by opportunity_score DESC, status = new
+
+or in_progress.
+• Clicking any idea navigates directly to /studio/:sessionId — no intermediate screen.
+• "+ N more" expands an inline list of remaining ideas without navigation.
+• If zero ideas exist: card is dimmed, arrow points to Option 2.
+
+Option 2 — Research and generate
+• User enters a keyword, topic statement, or question. This is a targeted research trigger
+
+— not a general weekly sweep.
+• On "Research this ->": research_agent runs with this specific input as the focus query.
+
+Returns 3-5 ideas in approximately 15 seconds.
+• Results appear inline inside the card as selectable items. User picks one.
+• Picking an idea navigates to /studio/:sessionId with that idea pre-loaded.
+
+Option 3 — Turn existing content into a video
+• User pastes a long-form post, newsletter, thread, article, or document.
+• On "Extract and build ->": content_extract_agent processes the pasted content, rewrites
+
+it as a video-native script with natural talking points (not copied text), and derives the
+appropriate video length from the content depth.
+
+• Video duration is NOT adjustable for this path — it is derived from the content. The goal
+is a curated, natural video not a compressed or padded one.
+
+• Source content is stored linked to the idea so the user can reference it during recording.
+• Navigates to /studio/:sessionId with the extracted idea and draft script pre-loaded.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+3. Onboarding
+Get to value in under 3 minutes. Collect the minimum context for a first useful generation.
+Everything else fills in progressively.
+
+3.1 Three Steps
+Step 1 — Who are you? (60 seconds)
+"In one sentence, what do you do and who do you help?" One optional follow-up if the answer is
+under 5 words. Two inputs maximum. Builds the positioning field of user_profile.
+
+Step 2 — Who do you sound like? (30 seconds)
+"Which creator's style do you want to sound like?" Free text with suggestion chips: Greg
+Eisenberg, Nick Saraev, Lenny Rachitsky, David Perell. One name seeds the voice profile. The
+system learns more from script edits over time.
+
+Step 3 — Make your first video
+The Make a Video entry screen appears directly inside the onboarding frame. No confirmation
+screen. The user is in the product. Onboarding completes the moment they enter the Video
+Studio — onboarded_at is written then.
+
+3.2 Progressive Profile Building
+• After first script: "Does this sound like you? Edit anything that feels off." Edits become
+
+voice training data.
+• After 3 videos: Library > What I Know shows a "Complete your profile" prompt with
+
+remaining fields and concrete explanations of what each field improves.
+• After YouTube connected: performance data feeds the knowledge graph automatically.
+• Profile completeness score (0-100%) shown as a progress bar. Each incomplete field
+
+shows one sentence explaining how filling it improves output.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+4. The Video Idea — Atomic Unit
+The video idea is the container for everything. Script, scene outline, walkthrough output,
+thumbnail, version history, and a persistent AI chat. Nothing about a video lives outside its idea.
+
+Every video starts as an idea — sourced from the research agent, extracted from a newsletter,
+generated from a targeted keyword search, or extracted from pasted content. Each idea holds:
+
+• Title and body (user's own notes and context)
+• Idea type — determines default output format
+• Opportunity score and outlier score
+• Source link — for content-extracted ideas, the original pasted content is stored and
+
+linkable
+• Script — talking points per scene and transition statements (not word-for-word copy),
+
+versioned
+• Scene outline — text-based structural preview, editable, approved before scene build
+• Walkthrough output — Excalidraw, Notion (post-MVP), or Gamma depending on idea
+
+type, versioned
+• Thumbnail — 3 variants generated after scene is built, stored as artifacts
+• AI chat — always visible, scoped to this idea, capable of modifying script, outline, output,
+
+and thumbnail
+• Brand — which brand this video represents
+• Target duration — default 20 min for AI-generated ideas, derived from content for
+
+pasted-content ideas
+
+4.1 Idea Types and Output Formats
+Idea Type Default Output
+Systems / Architecture Excalidraw — dark canvas, hand-drawn diagrams, flow diagrams,
+
+architecture maps. Default for most technical content.
+Framework / How-to Notion doc — structured walkthrough, headers, steps, callouts.
+
+Shareable as lead magnet. (Post-MVP)
+Pitch / Proposal Gamma — polished designed presentation for content where
+
+production quality signals credibility.
+Case study / Story Excalidraw — narrative flow diagram, timeline or before/after structure.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+5. The Video Studio
+This is the product. A user should be able to go from entering the studio to having an Excalidraw
+scene open in browser and a thumbnail generated — without leaving this screen, without clicking
+a generate button, and without reading any instructions.
+
+5.1 Studio Layout
+┌────────────────────────────────────────────────────────────────────┐
+│ <- My Videos [Editable title] [Output pill][Brand pill] │
+│ [Duration pill] [Thumbnail ->] │
+├──────────────────────────────────┬─────────────────────────────────┤
+│ LEFT: SCRIPT + SCENE (resizable│ RIGHT: AI CHAT (resizable) │
+│ default 65%) │ default 35%) │
+│ │ │
+│ SCRIPT │ Always visible. │
+│ Streams automatically on load. │ Always scoped to this idea. │
+│ Talking points + transitions. │ Full context pre-loaded. │
+│ │ │
+│ -- Intro 2 min -- │ [Chat thread] │
+│ . talking point │ │
+│ . [transition -> next section] │ Mode 1: text refinement │
+│ │ Mode 2: screenshot-to-edit │
+│ -- Problem 4 min -- │ Mode 3: regenerate scene │
+│ . talking point │ │
+│ . [transition -> next section] │ [Paste screenshot or type] │
+│ │ [Inject skill.md ▾] │
+│ SCENE OUTLINE │ [Send] │
+│ Auto-generates after script. │ │
+│ Text-based numbered list. │ Resize handle on panel edge │
+│ Editable inline. │ │
+│ │ │
+│ [Approve and build scene ->] │ │
+│ │ │
+│ [Open in Excalidraw ->] │ │
+│ [Regenerate scene] │ │
+│ [Generate thumbnail ->] │ │
+│ (active after scene exists) │ │
+└──────────────────────────────────┴─────────────────────────────────┘
+
+5.2 Studio Load Behaviour
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+The moment a user enters the studio from any entry path, two things happen simultaneously
+with no button click:
+
+1. Script begins streaming section by section via SSE. User sees text appearing before the
+page finishes loading. No loading screen, no spinner on a blank area, no "Generate
+script" button anywhere.
+
+2. Scene outline generates alongside the script. By the time the script is complete, the
+scene outline is ready below it.
+
+Exception: Option 3 (pasted content). The content_extract_agent runs first and returns a draft
+script. The studio opens with this pre-loaded — streaming is not used for this path since the
+script is derived from provided content, not generated fresh.
+
+Entry path Studio load behaviour
+Entry: picked existing idea Script and outline stream immediately from the idea's stored rationale
+
+and body.
+Entry: research and User selected one idea from targeted research results. Script and
+generate outline stream from that idea.
+Entry: pasted content content_extract_agent has already processed the paste. Studio opens
+
+with draft script and outline pre-loaded. Duration is locked and derived
+from content.
+
+5.3 Script Format
+The script is NOT a word-for-word teleprompter. It is a structured guide for a natural Loom
+recording. Format per section:
+
+## Section Title · N min
+
+Talking points:
+. What the problem actually looks like in production
+. The three failure patterns you will see
+. Why most teams do not catch this until it is too late
+
+Transition to next section:
+-> "So the question becomes -- what does a production-ready
+
+architecture actually look like? Let me show you."
+
+• Talking points are speakable bullets — enough to know what to say, not how to say it
+exactly.
+
+• Transition statements are written out in full — these are the connective tissue of the
+video and need to feel natural, not improvised.
+
+• Each section shows estimated duration. Total duration shown at the top of the script.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+• Scripts are versioned. Each regeneration creates a new version. Version selector on the
+script header.
+
+• For pasted-content ideas: the script is a natural rewrite, not a summary. The agent
+preserves the original argument structure and unique IP while making it feel video-
+native.
+
+5.4 Scene Outline
+Appears below the script after a thin Cinnabar divider. Generates automatically when the script
+completes — no button click. Displayed as an editable numbered text list:
+
+Scene outline -- 8 frames
+
+Frame 1: Title card -- "Why AI agents fail in production"
+Frame 2: The 3 failure modes -- diagram with 3 nodes
+Frame 3: Context collapse -- flow diagram showing token overflow
+Frame 4: Tool overload -- comparison table (right vs wrong)
+Frame 5: No fallback logic -- decision tree diagram
+Frame 6: The production-ready architecture -- layered diagram
+Frame 7: Implementation checklist -- 5-step numbered list
+Frame 8: CTA + summary card
+
+• Every frame is inline-editable. User can rename frames, change diagram type
+descriptions, reorder, add, or delete frames directly in the text.
+
+• The AI chat can modify the outline: "combine frames 3-5 into one overview frame" or
+"add a before/after frame before frame 6."
+
+• "Approve and build scene ->" is the only button that triggers full scene generation.
+Enabled only after the outline exists. User approves structure before the expensive build
+step.
+
+5.5 Scene Generation — Excalidraw
+Tapping "Approve and build scene" calls build_scene. For Excalidraw output:
+
+• Agent generates a complete .excalidraw JSON file from the approved outline.
+• JSON is stored in Supabase Storage. A shareable URL is generated.
+• URL is encoded as excalidraw.com/#json=[base64-encoded-content] so it opens directly
+
+in the Excalidraw web app in a new tab. No download, no file management.
+• "Open in Excalidraw ->" card appears in the studio. User opens, reviews, makes direct
+
+canvas edits for final polish, then opens Loom and records.
+• "Regenerate scene" button appears below the open link. Triggers full rebuild from the
+
+current approved outline.
+• Scene versions are tracked. Each regeneration creates a new artifact version. Version
+
+selector accessible via small dropdown.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+Excalidraw JSON generation requirements
+• Valid .excalidraw JSON format — must open without errors in excalidraw.com.
+• Dark mode compatible — dark background (#1A1A2E or similar), light text, Cinnabar
+
+(#E8442A) accent color for key elements.
+• Hand-drawn style — roughness: 1, strokeStyle: "hand-drawn" on all elements.
+• Logical spatial layout — left-to-right or top-to-bottom flow. No overlapping elements.
+
+Generous spacing between frames.
+• Element types matched to frame descriptions: "flow diagram" = rectangles + arrows,
+
+"comparison table" = grid, "decision tree" = diamonds + branches, "architecture diagram"
+= layered boxes, "checklist" = vertical list with circles.
+
+• Text labels on all elements must match the outline frame titles exactly — required for
+screenshot-to-edit label matching.
+
+5.6 Scene Generation — Gamma (Pitch/Proposal
+ideas)
+
+• Agent calls Gamma API v1.0 with the approved outline and brand context_description.
+• Async generation with polling via get_scene_status.
+• "Open in Gamma ->" card appears when complete.
+• "Export as Google Doc" available as secondary text link.
+
+5.7 Scene Generation — Notion (Post-MVP,
+Framework/How-to ideas)
+
+• Agent generates a structured Notion page via Notion API.
+• Page is private by default. User reviews it in Notion.
+• User manually toggles "Share to web" in Notion to make it public as a lead magnet.
+• "Open in Notion ->" card appears in studio. Notion URL stored on studio_session.
+
+5.8 Thumbnail Generation
+Thumbnail button becomes visible and clickable once BOTH the script and the Excalidraw scene
+exist for the session. It is not enabled before that point.
+
+Clicking "Generate thumbnail ->" opens an inline panel below the scene link card:
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+┌──────────────────────────────────────────────────────┐
+│ Generate thumbnail │
+│ │
+│ Style reference (optional): │
+│ [Paste a YouTube thumbnail URL to use as reference] │
+│ │
+│ The agent will use: │
+│ . Video title │
+│ . Top 3 talking points │
+│ . Your brand colors │
+│ . Reference style (if provided) │
+│ │
+│ [Generate 3 variants ->] (Cinnabar primary button) │
+└──────────────────────────────────────────────────────┘
+
+• Agent calls NanoBanana Pro or DALL-E 3 (configured in Settings > Model Selection)
+with a prompt built from the video title, top 3 talking points, brand primary color, and the
+reference thumbnail style if provided.
+
+• Returns 3 thumbnail variants displayed as a horizontal row of image cards.
+• Each variant has two actions: "Select" (saves as the idea's thumbnail artifact) and
+
+"Refine" (opens a text input to describe what to change — calls the thumbnail agent
+again with the refinement instruction).
+
+• Selected thumbnail is stored as artifact (type = thumbnail) linked to the studio session.
+• If a reference URL is provided: agent analyzes the reference for composition, text
+
+placement, color usage, and face direction before generating. This is the approach that
+produces the most consistent results.
+
+5.9 The AI Chat Panel
+Always visible on the right side of the studio. Never collapsed. Resizable by dragging the panel
+divider. The primary interface for refinement after initial generation.
+
+Context pre-loaded at all times: idea title and body, current script version, current scene outline,
+user voice profile, top-K knowledge_nodes (this user only), last 15 chat turns verbatim, older
+turns as rolling summary.
+
+Three interaction modes
+
+Mode 1 — Text refinement
+"Make the opening more contrarian." "Cut the framework section." "Add a transition after point
+3." "Rewrite the problem section to be sharper." Produces updated script sections or outline
+frame edits that update in the left panel in place.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+Mode 2 — Screenshot-to-edit
+User takes a screenshot of the current Excalidraw canvas, pastes it into the chat input, and
+types what to change: "Move the architecture box to the right and add an arrow from it to the
+outcome node."
+Processing pipeline: Claude Vision parses the screenshot, identifies elements by text labels and
+positions, maps them to element IDs in the stored .excalidraw JSON using label matching,
+generates a surgical diff of only the changed elements, edge function applies the diff, generates
+updated Excalidraw URL, studio_session.excalidraw_url updated, new artifact version created.
+Fallback: if label matching fails, agent asks: "I could not identify that element — can you tell me
+its exact label text?" Never silently applies wrong edits.
+The chat input area shows a placeholder hint when an Excalidraw scene exists and no text has
+been typed: "Paste a screenshot to edit the scene, or type a message."
+
+Mode 3 — Full scene regeneration
+"Regenerate scene" button sits above the chat input, visible only after a scene has been built.
+Triggers build_scene from the current approved outline. For structural overhauls where surgical
+edits would be slower.
+
+Skill.md injection
+A "Inject skill.md" dropdown sits above the chat input. It shows the list of skill.md files the user
+has uploaded in Settings. Selecting one injects its content into the next message's context.
+Useful when asking the agent to follow a specific framework or SOP for a particular type of
+content.
+
+Error recovery
+• If stream_script fails mid-stream: a "Retry" button appears in the script area showing
+
+exactly where the stream stopped. Retrying resumes from the last complete section, not
+from scratch.
+
+• If build_scene fails: the outline remains intact. "Try again" button re-triggers build_scene.
+The user never loses their approved outline.
+
+• If the Excalidraw URL fails to open: a "Download .excalidraw file" fallback link appears
+below it.
+
+• On slow connections: a "Taking longer than expected..." message appears after 15
+seconds on any generation. Progress is shown for what has completed so far.
+
+5.10 Studio Header Controls
+Control Behaviour
+Output type pill Excalidraw / Notion / Gamma. Defaults to idea type's mapped format.
+
+Tap opens inline dropdown. Switching after scene exists prompts:
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+"Switching output type will regenerate the scene. Continue?"
+Brand pill Current brand name. Defaults to last used brand (localStorage per
+
+user). Inline dropdown on tap.
+Duration pill Shows "~20 min" by default. Locked and non-tappable for content-
+
+extracted ideas. For AI-generated ideas: tap opens three-zone slider
+(Short 5-10 / Medium 15-25 / Long 30-60 min) with custom option.
+Changing duration re-streams script in place.
+
+Thumbnail button Visible always. Clickable only after both script and Excalidraw scene
+exist. Greyed out with tooltip "Finish your scene first" before that point.
+
+<- My Videos Saves session and navigates to /videos. Session never lost.
+
+5.11 Contextual Intelligence Hints
+• "You covered a similar angle in [video title] — reference it or take a different approach?"
+
+— appears below the script title after generation.
+• "This topic is performing 4.2x above average in adjacent niches this week." — badge on
+
+opportunity score for TubeLab-sourced ideas.
+• "Your audience typically responds well to numbered frameworks. This script uses
+
+narrative — intentional?" — single dismissable nudge.
+• "You have not covered this angle before — it is a gap in your topic territory." — surfaces
+
+from knowledge graph coverage analysis.
+All hints are small, inline, and dismissable. Never modals, never notifications, never a separate
+panel.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+6. My Videos
+Unified pipeline view. Four-column kanban. Includes the weekly AI suggestion block at the top.
+
+6.1 Weekly AI Suggestion Block
+Pinned at the very top of the page, above the kanban columns. Refreshes every Monday.
+Shows the top 3 ideas the research agent recommends making a video about this week, based
+on what is being actively discussed in the user's industry right now.
+
+┌──────────────────────────────────────────────────────────────┐
+│ This week's best bets · Updated Monday │
+│ Based on what people in your industry are talking about now │
+├────────────────────┬──────────────────┬───────────────────── │
+│ [Idea 1] │ [Idea 2] │ [Idea 3] │
+│ Score: 96 │ Score: 91 │ Score: 87 │
+│ Why now: [1 line] │ Why now: [1 line]│ Why now: [1 line] │
+│ [Make this video] │ [Make this video]│ [Make this video] │
+├────────────────────┴──────────────────┴───────────────────── │
+│ [Dismiss] [Refresh manually] │
+└──────────────────────────────────────────────────────────────┘
+
+• Each card shows: title, opportunity score, and a single "Why now" sentence explaining
+current market relevance.
+
+• "Make this video ->" opens /studio/:sessionId with that idea loaded.
+• "Dismiss" hides the block until next Monday.
+• "Refresh manually" triggers a fresh research_agent run with the user's industry context
+
+and returns new top 3.
+
+6.2 Four Kanban Columns
+IDEAS (N) IN PROGRESS (N) READY TO RECORD (N) PUBLISHED (N)
+───────────── ───────────────── ────────────────── ─────────────
+ideas where studio_sessions sessions where yt_metrics
+status = new status = active status = completed for this user
+
++ scene link exists
+
+Ideas column
+• Each card: opportunity score (Cinnabar if above 80), title, one-sentence rationale, idea
+
+type badge, source tag.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+• Single primary action: "Make this video ->" Opens Video Studio directly. No intermediate
+step.
+
+• Swipe or right-click: Archive (soft delete, recoverable for 30 days).
+• Search bar above column: filters ideas by keyword across title and rationale.
+
+In Progress column
+• Each card: title, progress indicator (Script / Outline / Scene / Thumbnail — filled dots for
+
+completed stages), last edited timestamp, brand badge.
+• "Continue ->" reopens Video Studio exactly where user left off. studio_session_id
+
+restores full state: script version, outline, chat history.
+
+Ready to Record column
+• Each card: title, idea type badge, estimated duration, thumbnail preview (if generated),
+
+"Open [output type] ->" primary button, "Open Loom" secondary button (deep link to
+loom.com/record).
+
+Published column
+• Visible once YouTube Data API is connected. Each card shows: thumbnail, title (2 lines
+
+max), views, CTR, watch time, outlier score (Cinnabar if above 3.0x), weekly "What
+worked" insight.
+
+• Clicking a card opens the Performance Detail panel (see Section 6.3).
+• If YouTube not connected: single prompt card with connection instructions and link to
+
+Settings > Integrations.
+
+6.3 YouTube Performance — Published Video Detail
+Clicking any Published card opens an expandable side panel showing:
+
+• Video thumbnail + title + published date
+• Core metrics: Views, CTR, Average view duration, Watch time (hours), Subscribers
+
+gained from this video
+• Outlier score: [N]x — "This video performed [N] times your channel average"
+• Views over time: simple 30-day line chart (Chart.js or Recharts)
+• Drop-off signal: estimated at what percentage through the video viewers stop watching
+
+(derived from average view duration vs total length)
+• "What worked": weekly AI-generated insight from yt_metrics data. Examples: "CTR was
+
+2x your average — strong hook signal." "Watch time dropped at the 8-minute mark —
+consider tightening the framework section next time."
+
+• "Make a follow-up video ->" button: routes to /make with the insight pre-seeded as a
+topic.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+6.4 Channel-Level Summary (top of My Videos)
+A summary strip between the weekly suggestion block and the kanban columns:
+
+Total views this month Best performing Avg CTR Avg outlier score
+[N] [Video title] [N]% [N]x
+
+These four numbers give the user enough channel-level context without building a full analytics
+product. All derived from yt_metrics table.
+
+6.5 Search and Missing Scenarios
+• Search bar above the kanban: searches across all columns by title and rationale. Filters
+
+all four columns simultaneously.
+• Manual idea creation: "+ Add idea" button above the Ideas column opens an inline form:
+
+title (required), body (optional notes), idea type selector, tags. Creates idea with
+source_type = manual, status = new.
+
+• Duplicate idea: right-click any card for "Duplicate" — creates a copy with status = new
+and no artifacts. For reusing successful formats.
+
+• Template from successful format: right-click any completed session for "Use as
+template" — creates a new idea with the same scene outline structure, blank script.
+Allows repeating a format that worked without starting from scratch.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+7. Library
+The intelligence infrastructure layer. Four tabs. Visited weekly at most — not a primary workflow
+destination. This is where the system's intelligence comes from.
+
+7.1 What I Know
+The user's full knowledge profile. The most important page in Library.
+
+• Profile completeness score: progress bar (0-100%). Each incomplete field shows one
+concrete sentence on what improves.
+
+• Editable sections: Who I Am (positioning), Who I'm Talking To (audience), How I Sound
+(voice — auto-built from script edits, plus any sample writing provided), Creators I
+Emulate, Things to Avoid.
+
+• Each field: click to edit inline, saves on blur.
+• Topic territory: three flat lists — Covered (tags used 3+ times), Thin coverage (1-2
+
+times), Open gaps (research agent flags). Each open gap has "Make a video about this
+->" routing to /make with topic pre-seeded.
+
+• Brands shortcut: link to Settings > Brands.
+
+7.2 Knowledge Graph
+Visual and editable view of everything the system has learned about this user. Two sub-
+sections:
+
+Auto-accumulated knowledge
+• Shows a feed of what has been added to the knowledge graph automatically: scripts
+
+generated, ideas accepted, YouTube transcripts processed, newsletter ideas extracted.
+Each entry shows source type, date, and a summary of what was learned.
+
+• User can delete individual entries if they want to remove something from the graph.
+
+Manual knowledge feed
+• "+ Add knowledge" button: opens a text input where the user can paste their own
+
+frameworks, SOPs, positioning statements, product documentation, case studies, or any
+IP they want the system to know about.
+
+• Accepts plain text, markdown, or pasted documents.
+• Each manual entry is tagged, embedded, and added to knowledge_nodes with
+
+source_type = manual.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+• This is the primary way a user teaches the system their internal IP beyond what is
+captured automatically.
+
+7.3 My Sources
+User's forwarding alias shown prominently: "[firstname]@ideas.ladder.io — Forward any
+newsletter here." Copy button.
+
+• Sources table: name, type (Newsletter / YouTube Channel / X Account), last received,
+ideas extracted this month, active/paused toggle, delete.
+
+• Row click: expands to show last 5 items received with extracted idea counts.
+• "+ Add source" inline form (not modal): source name, type selector, sender email or
+
+handle, auto-extract toggle (default on).
+
+7.4 Insights Feed
+Reverse-chronological list of curated research signals from the last 7 days. Not raw newsletter
+items — synthesised signals the research agent has identified as relevant to this user's
+positioning.
+
+• "147 Reddit threads this week asking about AI agent failure modes. High overlap with
+your positioning."
+
+• "Greg Eisenberg's latest (5.2x outlier) covers vertical AI vs SaaS — you have not
+touched this angle."
+
+• "Lenny's Newsletter mentioned cold outbound 4 times this week. Possible hook for your
+Ladder audience."
+
+Each insight has one action: "Make a video about this ->" Routes to /make with the signal pre-
+seeded as the topic.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+8. Settings
+Six tabs: Profile, Brands, Models, Skill Files, Integrations, Appearance. Admin tab visible only to
+is_admin users.
+
+8.1 Profile
+• Display name, email (read-only), avatar upload (Supabase Storage).
+• Forwarding alias: read-only, copy button. Example: "shiv@ideas.ladder.io"
+• Link to Library > What I Know for the full knowledge profile.
+
+8.2 Brands
+List of this user's content brands. Each brand: name, primary color swatch, secondary color
+swatch, context description excerpt, edit/delete.
+
+• "+ Add brand" inline form: Brand Name, Primary Color (hex input + color picker),
+Secondary Color, Context Description (textarea — this is injected into deck generation
+and thumbnail prompts).
+
+• Each brand maps to: Ladder (Cinnabar #E8442A, Jet #3D3D3D), Agent Loopr (or any
+custom brand the user defines).
+
+8.3 Models — BYOK Per-Function
+Users bring their own API keys. One key per provider. Keys are stored encrypted in Supabase
+vault (never in plaintext). Each function has an independently configurable model.
+
+API Keys section:
+Anthropic API key: [sk-ant-...] [Save]
+OpenAI API key: [sk-...] [Save]
+Google AI key: [AIza...] [Save]
+
+Function -> Model mapping:
+Script generation: [Claude Sonnet 4.5 ▾]
+Scene generation: [Claude Sonnet 4.5 ▾]
+Scene editing (Vision):[Claude Sonnet 4.5 ▾]
+Research agent: [GPT-4o ▾]
+Refine / Chat: [Claude Sonnet 4.5 ▾]
+Content extraction: [Gemini 1.5 Pro ▾]
+Thumbnail generation: [DALL-E 3 ▾] or [NanoBanana Pro ▾]
+Newsletter extraction: [Claude Haiku ▾]
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+Available models per provider (dropdown options):
+Anthropic: Claude Opus 4.5, Claude Sonnet 4.5, Claude Haiku
+OpenAI: GPT-4o, GPT-4o Mini, GPT-4-turbo
+Google: Gemini 1.5 Pro, Gemini 1.5 Flash
+Image: DALL-E 3, NanoBanana Pro
+
+Each function shows estimated cost per run next to the model selector (based on average token
+usage from usage_log). This helps users make cost-aware model choices.
+If no API key is provided for the selected model's provider: the selector is greyed out and shows
+"Add [Provider] API key first."
+
+8.4 Skill Files
+Upload 2-3 markdown (.md) files that represent the user's personal frameworks, SOPs, or IP.
+These are injected into the AI chat context on demand — not automatically on every call.
+
+• "+ Upload skill file" accepts .md files only. File is stored in Supabase Storage.
+• Each uploaded file shows: filename, upload date, a short auto-generated summary of its
+
+contents, delete button.
+• In the studio's AI chat panel, an "Inject skill.md" dropdown lists all uploaded files.
+
+Selecting one injects its full content into the next message's context window.
+• Maximum 3 skill files. Combined must be under 50KB to stay within context budget.
+• Example use: "My Cold Outbound Framework.md" injected when asking the agent to
+
+help structure a video about outbound systems.
+
+8.5 Integrations
+• YouTube: connected/disconnected status (boolean in user_profiles.youtube_connected).
+
+If disconnected: instructions card with Client ID + Client Secret inputs and "Connect
+YouTube" button. Once connected: shows channel name, subscriber count, last sync
+timestamp.
+
+• Notion (post-MVP): Notion integration token input. Instructions for finding the token in
+Notion settings.
+
+• Gamma: API key input ($15/month Pro plan required). Instructions for finding key in
+Gamma settings.
+
+• NanoBanana Pro: API key input for thumbnail generation.
+
+8.6 Appearance
+• Dark / light mode toggle. Dark is the default. Saves to localStorage, applies immediately.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+• Font size: Default / Comfortable / Compact. Adjusts base font size across the app.
+
+8.7 Admin Tab (is_admin only)
+• Team usage: aggregated usage_log by user — name, total API calls, total cost this
+
+month, most used function. Numbers only, no content.
+• Users table: name, email, alias, onboarding status, last active. Actions: Deactivate,
+
+Reset onboarding, Resend invite.
+• "+ Invite user" inline form: name, email, role (Member / Admin). Sends magic link via
+
+Supabase.
+• System health: indicator for each API (Anthropic, OpenAI, Google, Gamma, TubeLab,
+
+YouTube), last newsletter ingest timestamp, pgvector index status.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+9. System Architecture
+
+9.1 Stack
+Layer Technology Owner
+Frontend React + Tailwind + shadcn/ui AI coding tool
+Auth Supabase Auth — email/password, magic link, AI coding tool
+
+multi-user
+Database Supabase Postgres + pgvector AI tool scaffolds; engineer
+
+refines
+File storage Supabase Storage (.excalidraw files, AI coding tool
+
+thumbnails, skill.md)
+Edge functions Supabase Edge Functions (Deno/TypeScript) Engineer (Priyanshu)
+Script generation Claude API — SSE streaming Engineer
+Scene generation Claude API — Excalidraw JSON / Gamma API Engineer
+
+/ Notion API
+Scene editing Claude Vision API — screenshot to JSON diff Engineer
+Thumbnail DALL-E 3 or NanoBanana Pro (per user Engineer
+generation Settings)
+Content extraction Claude API or Gemini (per user Settings) Engineer
+Research agent Claude API + web search + TubeLab API Engineer
+Newsletter ingestion n8n + Cloudflare Email Routing Engineer (Vansh)
+Knowledge graph Postgres + pgvector, strictly per-user scoped Engineer
+YouTube analytics YouTube Data API v3 read-only Shiv provisions; engineer
+
+integrates
+Outlier detection TubeLab API Engineer
+Hosting AI coding tool hosted URL (Vercel) AI coding tool
+
+9.2 Architecture Diagram
+┌──────────────────────────────────────────────────────────┐
+│ FRONTEND React + Tailwind │
+│ Supabase Auth · Per-user data isolation │
+└──────────────────────────┬───────────────────────────────┘
+
+│ Supabase JS client (typed, RLS)
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+┌──────────────────────────▼───────────────────────────────┐
+│ SUPABASE POSTGRES │
+│ users · user_profiles · brands · ideas · studio_sessions│
+│ artifacts · chat_messages · sources · newsletter_items │
+│ knowledge_nodes (pgvector) · yt_metrics · usage_log │
+│ skill_files · projects · tags │
+│ RLS: user_id = auth.uid() on every table │
+└──────────────────────────┬───────────────────────────────┘
+
+┌─────────────────┼─────────────────┐
+▼ ▼ ▼
+
+┌─────────────────┐ ┌────────────┐ ┌──────────────────┐
+│ EDGE FUNCTIONS │ │ n8n FLOW │ │ KNOWLEDGE GRAPH │
+│ │ │ per-user │ │ pgvector RAG │
+│ stream_script │ │ alias │ │ user-scoped │
+│ gen_outline │ │ │ │ │
+│ build_scene │ │ parse TO │ │ WHERE user_id │
+│ edit_scene │ │ route to │ │ BEFORE search │
+│ gen_thumbnail │ │ user_id │ │ ALWAYS │
+│ sharpen_this │ │ │ │ │
+│ research_agent │ └────────────┘ └──────────────────┘
+│ content_extract│
+│ onboarding │
+└────────┬────────┘
+
+│
+▼
+
+┌──────────────────────────────────────────────────────┐
+│ EXTERNAL APIs (all via edge functions, never direct) │
+│ Claude API (text + Vision + streaming) │
+│ OpenAI API (GPT-4o + DALL-E 3) │
+│ Google AI API (Gemini) │
+│ NanoBanana Pro API (thumbnails) │
+│ Gamma API v1.0 │
+│ Notion API (post-MVP) │
+│ TubeLab API (outlier detection) │
+│ YouTube Data API v3 │
+│ Supabase Storage (scene files, thumbnails, skills) │
+└──────────────────────────────────────────────────────┘
+
+The frontend never calls Claude, OpenAI, Gemini, Gamma, TubeLab, Notion, or YouTube
+directly. Every external API call routes through a Supabase edge function. The frontend talks
+only to Supabase, and every query is scoped to the authenticated user via RLS.
+
+9.3 Multi-Tenancy and Data Isolation
+Every row in every table carries a user_id. Every query is filtered by auth.uid() via Row-Level
+Security. No shared data between users of any kind. The knowledge graph is the most sensitive
+surface — every pgvector retrieval query must include WHERE user_id = :uid before the
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+similarity search. This is enforced at the database level via RLS and at the application level in
+every edge function. Both must be in place.
+
+9.4 SaaS-Readiness Rules
+• No hardcoded user identifiers in prompts. Every system prompt uses {user_profile.field}
+
+interpolation. Pre-commit lint check on agents directory enforces this.
+• Onboarding is part of the core product. Every user completes the same 3-step flow. No
+
+special paths.
+• Per-user forwarding aliases from day one. Adding a user = Cloudflare alias + Supabase
+
+row. No code changes required.
+• Usage logging from the first API call. Every edge function writes to usage_log. Historical
+
+data from day one.
+• BYOK in v1. All API keys managed per-user via Settings > Models. Already structured
+
+for metered billing in v2.
+• Brands are user-defined. Any number per user. No code changes to add a new brand.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+10. Data Model
+Full schema. The AI coding tool scaffolds all tables with basic RLS. The engineer adds pgvector
+columns, embedding indexes, and admin-visibility policies.
+
+-- ── USERS ──
+CREATE TABLE users (
+id uuid PRIMARY KEY REFERENCES auth.users(id),
+is_admin boolean DEFAULT false,
+created_at timestamptz DEFAULT now()
+
+);
+
+-- ── USER PROFILES ──
+CREATE TABLE user_profiles (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) UNIQUE NOT NULL,
+display_name text,
+forwarding_alias text,
+positioning text,
+audience text,
+voice text,
+creators_followed text[],
+things_to_avoid text,
+youtube_connected boolean DEFAULT false,
+last_used_brand_id uuid,
+last_used_duration int DEFAULT 20,
+onboarded_at timestamptz,
+updated_at timestamptz DEFAULT now()
+
+);
+
+-- ── BRANDS ──
+CREATE TABLE brands (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+name text NOT NULL,
+primary_color text,
+secondary_color text,
+context_description text,
+created_at timestamptz DEFAULT now()
+
+);
+
+-- ── SKILL FILES ──
+CREATE TABLE skill_files (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+filename text NOT NULL,
+storage_path text NOT NULL,
+file_summary text,
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+file_size_kb int,
+created_at timestamptz DEFAULT now()
+
+);
+
+-- ── PROJECTS ──
+CREATE TABLE projects (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+name text NOT NULL,
+color text,
+created_at timestamptz DEFAULT now()
+
+);
+
+-- ── IDEAS ──
+CREATE TABLE ideas (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+project_id uuid REFERENCES projects(id),
+title text NOT NULL,
+body text,
+idea_type text, -- systems|framework|pitch|case_study
+status text DEFAULT 'new',
+opportunity_score int,
+outlier_score numeric(5,2),
+rationale text,
+source_type text DEFAULT 'manual',
+source_id uuid,
+source_content text, -- stores original pasted content
+source_content_url text, -- if source was a URL
+created_at timestamptz DEFAULT now(),
+updated_at timestamptz DEFAULT now()
+
+);
+
+-- ── STUDIO SESSIONS ──
+CREATE TABLE studio_sessions (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+idea_id uuid REFERENCES ideas(id),
+topic_text text,
+output_type text DEFAULT 'excalidraw',
+brand_id uuid REFERENCES brands(id),
+target_duration_min int DEFAULT 20,
+duration_locked boolean DEFAULT false,
+scene_outline text,
+outline_approved boolean DEFAULT false,
+excalidraw_url text,
+excalidraw_storage_path text,
+notion_url text,
+gamma_url text,
+thumbnail_selected_id uuid,
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+status text DEFAULT 'active',
+created_at timestamptz DEFAULT now(),
+updated_at timestamptz DEFAULT now()
+
+);
+
+-- ── ARTIFACTS ──
+CREATE TABLE artifacts (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+session_id uuid REFERENCES studio_sessions(id),
+type text NOT NULL,
+-- script|scene_outline|excalidraw|gamma|notion|thumbnail
+version int DEFAULT 1,
+content_text text,
+content_json jsonb,
+file_url text,
+storage_path text,
+created_at timestamptz DEFAULT now()
+
+);
+
+-- ── CHAT MESSAGES ──
+CREATE TABLE chat_messages (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+session_id uuid REFERENCES studio_sessions(id) NOT NULL,
+role text NOT NULL, -- user|assistant
+content text NOT NULL,
+has_image boolean DEFAULT false,
+image_storage_path text,
+applied boolean DEFAULT false,
+created_at timestamptz DEFAULT now()
+
+);
+
+-- ── SOURCES ──
+CREATE TABLE sources (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+name text NOT NULL,
+source_type text, -- newsletter|youtube_channel|x_account
+sender_email text,
+external_id text,
+auto_extract boolean DEFAULT true,
+status text DEFAULT 'active',
+created_at timestamptz DEFAULT now(),
+last_received_at timestamptz
+
+);
+
+-- ── NEWSLETTER ITEMS ──
+CREATE TABLE newsletter_items (
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+source_id uuid REFERENCES sources(id) NOT NULL,
+received_at timestamptz DEFAULT now(),
+subject text,
+raw_text text,
+summary text,
+processed_at timestamptz
+
+);
+
+-- ── KNOWLEDGE NODES (pgvector -- engineer adds post-scaffold) ──
+CREATE TABLE knowledge_nodes (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+source_type text,
+-- idea|chat|script|manual|yt_transcript|skill_file
+source_id uuid,
+content_chunk text,
+embedding vector(1536), -- engineer adds
+topic_tags text[],
+created_at timestamptz DEFAULT now()
+
+);
+-- CRITICAL: EVERY retrieval query must include
+-- WHERE user_id = :uid BEFORE similarity search.
+-- No exceptions.
+
+-- ── YOUTUBE METRICS ──
+CREATE TABLE yt_metrics (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+video_id text NOT NULL,
+title text,
+thumbnail_url text,
+views int,
+ctr numeric(5,4),
+watch_time_hrs numeric,
+avg_duration_s int,
+total_duration_s int,
+subscribers_gained int,
+outlier_score numeric(5,2),
+what_worked text,
+published_at timestamptz,
+fetched_at timestamptz DEFAULT now()
+
+);
+
+-- ── USAGE LOG ──
+CREATE TABLE usage_log (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+function_name text,
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+model text,
+provider text, -- anthropic|openai|google
+input_tokens int,
+output_tokens int,
+cost_usd numeric(10,6),
+latency_ms int,
+created_at timestamptz DEFAULT now()
+
+);
+
+-- ── TAGS ──
+CREATE TABLE tags (
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+user_id uuid REFERENCES users(id) NOT NULL,
+name text NOT NULL,
+UNIQUE (user_id, name)
+
+);
+
+CREATE TABLE idea_tags (
+idea_id uuid REFERENCES ideas(id),
+tag_id uuid REFERENCES tags(id),
+PRIMARY KEY (idea_id, tag_id)
+
+);
+
+10.1 RLS Policies
+-- Apply to ALL content tables:
+ALTER TABLE [table] ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user_owns_row" ON [table]
+FOR ALL
+USING (user_id = auth.uid())
+WITH CHECK (user_id = auth.uid());
+
+-- idea_tags: ownership via idea
+CREATE POLICY "user_owns_idea_tag" ON idea_tags
+FOR ALL USING (
+idea_id IN (SELECT id FROM ideas WHERE user_id = auth.uid())
+
+);
+
+-- Admin: read usage_log and users metadata only
+-- Engineer adds after scaffold.
+-- Admin has NO access to ideas, chat_messages, artifacts,
+-- user_profiles, knowledge_nodes, or skill_files.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+10.2 Indexes
+CREATE INDEX ON ideas (user_id, opportunity_score DESC);
+CREATE INDEX ON ideas (user_id, status, created_at DESC);
+CREATE INDEX ON studio_sessions (user_id, status, updated_at DESC);
+CREATE INDEX ON chat_messages (session_id, created_at ASC);
+CREATE INDEX ON yt_metrics (user_id, fetched_at DESC);
+CREATE INDEX ON usage_log (user_id, created_at DESC);
+CREATE INDEX ON knowledge_nodes (user_id);
+-- Engineer adds ivfflat/hnsw index on embedding column
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+11. Agent Specifications
+(!!) CARDINAL RULE: No agent prompt may contain a hardcoded user identifier, company
+name, or context reference. Every user-specific value is interpolated from user_profile at
+call time. Pre-commit lint check on the agents directory enforces this. Zero exceptions.
+
+11.1 stream_script
+Purpose Generate a structured video script for the current studio session,
+
+streaming section by section via SSE.
+Trigger Automatic on /studio/:sessionId load. No button click.
+Inputs studio_session_id, idea title + body + idea_type + target_duration_min,
+
+brand context_description, user_profile fully interpolated, top-K
+knowledge_nodes (this user only, user_id filter applied first).
+
+Streaming SSE stream. Each section (Intro / Problem / Framework / Walkthrough
+/ Close) is one chunk. Talking points stream one by one within each
+section. 200ms between chunks in stub.
+
+Script format Per section: ## Title · N min, talking points as bullets, transition
+statement to next section written in full. No word-for-word copy.
+
+Duration scaling Section time allocations scale proportionally with target_duration_min.
+Acceptable variance: +/- 15%. Never pad or compress unnaturally.
+
+Content-extracted path Not used for Option 3 (pasted content). content_extract_agent handles
+that path. stream_script is for AI-generated ideas only.
+
+Output Persists completed script as artifact (type = script, version N). Returns
+{ artifact_id }.
+
+SYSTEM PROMPT SCAFFOLD:
+You are writing a YouTube script for a founder-operator.
+Format: architectural explainer. The person talks through a
+structured Excalidraw scene on screen. NOT a hands-on demo.
+
+Who they are: {user_profile.positioning}
+Who they talk to: {user_profile.audience}
+Their voice: {user_profile.voice}
+Creators they sound like: {user_profile.creators_followed}
+Never do this: {user_profile.things_to_avoid}
+Brand context: {brand.context_description}
+
+Topic: {idea.title}
+Notes: {idea.body}
+Idea type: {idea.idea_type}
+Target duration: {target_duration_min} min (acceptable: +/-15%)
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+Relevant past work from knowledge graph:
+{top_k_knowledge_nodes}
+
+Format each section as:
+## [Section Title] · [N] min
+
+Talking points:
+. [speakable bullet -- 30-60 seconds each]
+
+Transition to next section:
+-> "[full transition sentence -- natural, not scripted-sounding]"
+
+Write talking points and transitions only.
+Do NOT write word-for-word copy.
+Voice must match their profile exactly.
+Stream one complete section at a time.
+
+11.2 content_extract_agent
+Purpose Extract and rewrite a long-form piece of content (post, newsletter,
+
+article, thread) as a video-native script.
+Trigger Option 3 on /make entry screen: user pastes content and clicks
+
+"Extract and build ->".
+Key constraint The output is a natural, curated rewrite. NOT a summary. NOT copied
+
+text. The original argument, unique IP, and structure are preserved.
+The voice and format are video-native.
+
+Duration Derived from content depth. Not adjustable by user. The agent
+determines appropriate duration based on content length and density.
+
+Source storage Original pasted content stored in ideas.source_content. Always
+accessible from the studio for user reference during recording.
+
+Output { artifact_id, idea_id, derived_duration_min } — studio opens with draft
+script pre-loaded.
+
+SYSTEM PROMPT SCAFFOLD:
+You are converting a piece of long-form content into a
+video script for a founder-operator's YouTube channel.
+
+IMPORTANT:
+- This is a REWRITE for video, not a summary.
+- Preserve the original argument structure and unique IP.
+- Make it feel natural and video-native, not like reading.
+- The person will walk through an Excalidraw scene on screen.
+- Do NOT copy sentences verbatim from the source.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+Who they are: {user_profile.positioning}
+Their voice: {user_profile.voice}
+Brand context: {brand.context_description}
+
+Source content:
+{source_content}
+
+Determine appropriate video duration from content depth.
+Return duration_min as part of your output.
+
+Format: same as stream_script format.
+## Section Title · N min
+Talking points + transition statements.
+
+11.3 gen_outline
+Purpose Generate the text-based scene outline from the completed script.
+Trigger Automatic after stream_script or content_extract_agent completes. No
+
+button click.
+Format Numbered list. Frame N: [Title] -- [diagram type]. 5-10 frames. Text
+
+only, no visual preview.
+Output Persisted to studio_sessions.scene_outline and as artifact (type =
+
+scene_outline). Returns { artifact_id }.
+
+11.4 build_scene
+Purpose Generate the full walkthrough output from the approved scene outline.
+Trigger "Approve and build scene ->" button. Only fires when outline_approved
+
+= true.
+Excalidraw requirements Valid .excalidraw JSON. Dark mode compatible. Hand-drawn style
+
+(roughness:1). Logical spatial layout with no overlapping elements.
+Element types matched to frame diagram descriptions. Text labels
+match outline titles exactly (required for screenshot-to-edit label
+matching).
+
+Gamma path Calls Gamma API v1.0 with outline + brand context. Async polling via
+get_scene_status.
+
+Notion path (post-MVP) Calls Notion API. Creates private page. Returns Notion URL.
+Storage Excalidraw JSON stored in Supabase Storage. URL encoded as
+
+excalidraw.com/#json=[content].
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+Output { output_url, artifact_id, storage_path }
+
+11.5 edit_scene (Screenshot-to-Edit)
+Purpose Apply surgical edits to an existing Excalidraw scene from a screenshot
+
++ text instruction.
+Trigger User pastes screenshot into chat + sends message.
+Pipeline 1. Claude Vision parses screenshot, identifies elements by text labels
+
+and position. 2. Maps to element IDs in stored .excalidraw JSON via
+label matching. 3. Generates surgical diff (changed elements only). 4.
+Edge function applies diff. 5. New Excalidraw URL generated. 6.
+studio_sessions.excalidraw_url updated. 7. New artifact version
+created.
+
+Fallback If label matching fails: "I could not identify that element — can you tell
+me its exact label text?" Never silently applies wrong edits.
+
+Image handling Image compressed to max 1200px on longest side before sending to
+Vision API. Max file size: 4MB. Format: JPEG or PNG only. Frontend
+validates before upload.
+
+Full regen escape "Regenerate scene" button above chat input. Always available after a
+scene exists. Triggers build_scene from current approved outline.
+
+11.6 gen_thumbnail
+Purpose Generate 3 thumbnail variants for a video idea using the video title,
+
+talking points, brand colors, and optional reference style.
+Trigger "Generate thumbnail ->" button. Only active after both script and
+
+Excalidraw scene exist for the session.
+Inputs Video title, top 3 talking points from script, brand.primary_color,
+
+brand.secondary_color, optional reference_thumbnail_url.
+Reference processing If reference URL provided: agent fetches and analyzes the thumbnail
+
+for composition style, text placement, face direction (yaw/pitch), color
+usage before generating. This significantly improves output quality and
+consistency.
+
+Model DALL-E 3 or NanoBanana Pro — configured per user in Settings >
+Models > Thumbnail generation.
+
+Output 3 thumbnail image variants. Stored as artifacts (type = thumbnail).
+Returns { artifact_ids: [3 UUIDs], image_urls: [3 URLs] }.
+
+Refinement Each variant has a "Refine" button that opens a text input. Calling
+gen_thumbnail again with the refinement instruction and the selected
+variant as a new reference.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+11.7 sharpen_this
+Purpose Conversational refinement of script, scene outline, or idea. Context-
+
+aware. Opinionated. Pushes back on weak framings.
+Trigger Any message sent in the AI chat panel in the studio.
+Context Full current script, scene outline, idea title and body, user_profile, top-K
+
+knowledge_nodes (user_id filtered), last 15 turns verbatim, older turns
+as rolling summary. Skill.md content injected when user selects from
+dropdown.
+
+Behaviour Not sycophantic. Provide 2-3 options on rewrites. Reference past work
+when relevant. Web search available for topical questions. Updates left
+panel in place when producing script or outline changes.
+
+Token budget Max 15 turns verbatim. Older turns compressed. Idea body capped at
+4000 tokens. Skill.md injection capped at 10KB combined. Total ~18K
+tokens per turn.
+
+11.8 research_agent
+Purpose Generate ranked content ideas grounded in current market signals.
+Modes Targeted: user enters keyword/topic on /make option 2 — returns 3-5
+
+ideas focused on that input. Background: runs weekly per active user,
+deposits ideas silently. Weekly suggestion: runs Monday for each user,
+returns top 3 "best bet" ideas for this week.
+
+Sources Claude web_search, TubeLab API (adjacent niche outliers), this user's
+sources (newsletters, YouTube channels, X accounts).
+
+Output JSON: [{ title, rationale, idea_type, opportunity_score, outlier_score,
+why_now, suggested_tags }]
+
+11.9 newsletter_extraction_agent
+Purpose Extract 0-3 content ideas from a newsletter issue.
+Trigger Automatic via n8n pipeline on newsletter receipt.
+Output JSON: { summary, ideas: [{title, rationale, idea_type,
+
+suggested_tags}] }. Zero ideas valid if off-topic.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+11.10 onboarding_agent
+Purpose 3-step interview to populate user_profile.
+Behaviour Scripted sequence. Does not advance until answers are substantive.
+
+Offers examples if user struggles.
+Output JSON: { question_text, advance_to_next_step, extracted_fields }
+
+11.11 Edge Function Contract
+Function Signature Trigger
+stream_script POST { studio_session_id } -> SSE stream, Auto on studio load
+
+one section per chunk Stub: 200ms delay
+between chunks, topic-aware mock
+
+content_extract POST { session_id, source_content } Returns /make option 3 "Extract and
+{ artifact_id, idea_id, derived_duration_min } build"
+
+gen_outline POST { studio_session_id } Returns Auto after script completes
+{ artifact_id, outline_text }
+
+build_scene POST { studio_session_id } Returns "Approve and build scene"
+{ output_url, artifact_id } button
+
+edit_scene POST { session_id, message, Screenshot paste + send in
+image_base64? } Returns { updated_url, chat
+artifact_id }
+
+gen_thumbnail POST { session_id, reference_url? } Returns "Generate thumbnail" button
+{ artifact_ids, image_urls }
+
+sharpen_this POST { session_id, message, skill_file_ids? } AI chat send
+Returns { message_id, content }
+
+research_agent POST { user_id, mode, focus_query? } mode: /make option 2 + cron
+targeted|background|weekly_suggestion
+
+onboarding_agent POST { step, previous_answers } Returns Onboarding step
+{ question, advance, fields }
+
+onboarding_save POST { profile_fields } Returns { success: Onboarding step 3 done
+true }
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+12. Design System
+Ladder Content OS is a Ladder product. Aesthetic target: dense, precise developer tool. Linear,
+Vercel dashboard, Cursor. Not a marketing app. Every element must earn its place.
+
+12.1 Color Tokens
+Token + Hex Usage
+--cinnabar #E8442A Primary CTAs, active nav states, brand accent, section border rules.
+
+Dominant (60% visual weight). Use boldly on primary actions.
+--jet #3D3D3D Primary text, structural elements, body copy.
+--sienna #8B4A3A Hover states on Cinnabar elements, secondary accent, gradient
+
+endpoints.
+--sea-salt #F7EDE2 Warm surface for callouts, selected states in light mode.
+--gray-surface #F5F5F5 Input backgrounds, card surfaces, alternating table rows.
+--gray-border #CCCCCC All borders and dividers. 1px only. Never thicker except 3px Cinnabar
+
+brand accent rules.
+--gray-text #6B6B6B Secondary text, metadata, timestamps, helper text, placeholder text.
+--white #FFFFFF Light mode background, text on dark surfaces.
+--night #0E0E0E Dark mode background. Default mode. Deep, not pure black.
+
+12.2 Typography
+Font + Size Usage
+Playfair Display 700 — H1 page titles only. Maximum one per screen.
+36px
+Playfair Display 700 — H2 section headings + 3px Cinnabar bottom border.
+28px
+SF Pro Display 600 — H3 subsections in Cinnabar. Card titles (18px) in Jet.
+22px
+SF Pro Text 400 — 15px Body copy, line-height 1.6.
+SF Pro Text 400 — 13px Labels, metadata, timestamps.
+SF Pro Text 600 — 14px Button labels, CTA text.
+JetBrains Mono 400 — Code blocks, data values, file references, API strings.
+13px
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+12.3 Component Rules
+Buttons
+
+• Primary: Cinnabar (#E8442A) fill, white text, 8px radius, 14px SF Pro Text 600. Hover:
+darken to #C83820.
+
+• Secondary: Jet fill, white text. Hover: lighten to #555.
+• Ghost: transparent, 1px Jet border, Jet text. Hover: gray-surface background.
+• Destructive: Sienna fill, white text.
+• No gradients. No drop shadows. Solid fills only.
+
+Cards
+• 1px gray-border border. 12px border-radius. 20px internal padding.
+• Hover: 3px Cinnabar left border accent. Background unchanged.
+• No drop shadow at rest.
+
+Inputs
+• gray-surface background. No border at rest. 1px Cinnabar border on focus. No glow.
+• Labels above input: SF Pro Text 14px 600, Jet color.
+• Placeholder: gray-text color.
+
+Editable Pills
+• Output type, brand, duration in studio header: rounded-full, 12px SF Pro Text 500, 12%
+
+opacity background, full color text.
+• Tap opens inline dropdown directly below the pill. Never a modal.
+• Locked pills (duration for content-extracted ideas): grey-out with lock icon. Non-tappable.
+
+AI Chat Panel
+• Always visible in the studio. Never collapsed. Minimum width 280px. Default 35% of
+
+studio width. Resizable via drag handle on the panel divider.
+• User messages: right-aligned, Cinnabar tint background.
+• Assistant messages: left-aligned, gray-surface background.
+• Image attachments: displayed as thumbnail in the message bubble.
+
+Dark mode
+• Dark mode is the default. Use CSS variables throughout. Never hardcode hex values in
+
+component styles.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+• Dark mode mappings: --night replaces --white for backgrounds, --white replaces --jet for
+primary text, --gray-surface becomes #2A2A2A.
+
+Spacing and layout
+• Base unit: 4px. All spacing is a multiple: 4, 8, 12, 16, 24, 32, 48, 64px.
+• Max content width: 1440px.
+• Studio: full viewport width, no max-width constraint.
+• Internal content padding: 24px on all main surfaces.
+
+Three-Zone Duration Slider
+Custom component. Not a standard range input.
+Short Medium Long
+5-10 min 15-25 min 30-60 min
+Tight concept Full walkthrough Deep dive
+
+[drag handle snaps to zone midpoints: 8 / 20 / 45 min]
+
+Three zones with subtle Cinnabar tint (lightest to full)
+"Custom" text link below: opens number input for exact minutes
+
+12.4 Empty States
+State Empty State Behaviour
+/make — no ideas Option 1 card dimmed with arrow pointing to Option 2. Not an error
+
+message.
+/videos — no ideas Ideas column: "Generate ideas to fill your pipeline. [Make a Video ->]"
+/videos — YouTube not Published column: connection prompt card. Not hidden.
+connected
+Studio — before stream Script area: "Writing your script..." with gentle pulse. Not a blank white
+starts box.
+Library — no sources My Sources tab: forwarding alias box is the primary visual element.
+Library — no insights "Your insights appear here after your first idea generation."
+Settings — no brands "Add your first brand to get started." with add form pre-opened.
+
+12.5 Error and Loading States
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+Scenario Behaviour
+stream_script fails mid- "Something went wrong at [section name]." Retry button resumes from
+stream last complete section.
+build_scene fails "Scene generation failed." Try again button. Outline preserved. User
+
+never loses approved outline.
+Excalidraw URL fails to "Download .excalidraw file" fallback link appears.
+open
+Slow connection (>15s) "Taking longer than expected..." with progress indicator for what has
+
+completed.
+API key not configured Function button greyed out. Tooltip: "Add [Provider] API key in
+
+Settings > Models."
+Screenshot too large Inline warning in chat: "Image too large. Please screenshot a smaller
+
+section." Max 4MB enforced.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+13. Build Split
+
+13.1 AI Coding Tool Builds
+The AI coding tool handles the full frontend, auth, database schema scaffold, and stub edge
+functions. It does not implement agent logic. The engineering team wires the real logic on top of
+a clean, fully functional frontend scaffold.
+
+• All frontend screens: /sign-in, /onboarding, /make, /studio/:sessionId, /videos, /library,
+/settings.
+
+• Supabase Auth — email/password, magic link invites, multi-user, is_admin flag.
+• Full Supabase schema per Section 10 — all tables, basic RLS, indexes.
+• All CRUD from frontend to Supabase via typed JS client. Never add manual user_id
+
+filters — RLS handles scoping automatically.
+• Supabase Storage setup — buckets for: excalidraw_scenes, thumbnails, skill_files,
+
+avatars.
+• Supabase Realtime — subscribe to studio_sessions and ideas tables.
+• All 10 stub edge functions deployed and callable, returning mock data. stream_script
+
+stub simulates SSE with 200ms delay and topic-aware mock content.
+• Streaming UI in Video Studio — handles SSE, renders text progressively section by
+
+section.
+• Image paste support in AI chat input — accepts JPEG/PNG up to 4MB, compresses to
+
+max 1200px longest side before upload.
+• Three-zone duration slider custom component.
+• Inline editable scene outline (numbered list, editable in place).
+• Resizable panels in Video Studio — drag handle between script/outline panel and chat
+
+panel.
+• Full Ladder design system per Section 12.
+• Seed data on first onboarding: 2 brands, 1 project, 7 sample ideas (varied scores and
+
+types), 3 sources, 5 insight cards, 2 in-progress sessions, 3 published yt_metrics rows
+with mock data.
+
+• Deployment to hosted URL.
+
+13.2 Agent Loopr Engineering Team Builds
+• stream_script — SSE streaming, Claude API, section-by-section output, persists to
+
+artifacts.
+• content_extract_agent — long-form content rewrite, duration derivation, source storage.
+• gen_outline — outline generation from script, persists to studio_sessions and artifacts.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+• build_scene — Excalidraw JSON generation (valid format, dark mode, hand-drawn style,
+logical layout), Supabase Storage upload, excalidraw.com URL encoding. Gamma API
+path. Notion API path (post-MVP).
+
+• edit_scene — Claude Vision API, label-to-element-ID mapping, JSON diff generation,
+storage update.
+
+• gen_thumbnail — DALL-E 3 / NanoBanana Pro integration, reference thumbnail
+analysis, 3 variant generation.
+
+• sharpen_this — context-aware chat, skill.md injection, web search, left-panel update
+triggers.
+
+• research_agent — three modes (targeted, background, weekly suggestion), TubeLab
+integration, web search, why_now field generation.
+
+• newsletter_extraction_agent — parameterised by user_profile, zero-idea fallback.
+• onboarding_agent — scripted interview sequence.
+• pgvector configuration, embedding pipeline (text-embedding-3-small), RAG retrieval with
+
+enforced user_id filter.
+• YouTube Data API v3 — weekly sync, yt_metrics population, outlier scoring,
+
+what_worked insight generation.
+• TubeLab API — adjacent niche outlier fetching.
+• Cloudflare Email Routing + n8n newsletter pipeline with per-alias user routing.
+• Weekly suggestion cron job — runs Monday for each active user.
+• Pre-commit lint: no hardcoded user identifiers in any prompt file.
+• Unit test: cross-user knowledge_nodes retrieval returns zero results. Must pass in CI
+
+from day one.
+• usage_log instrumentation on every edge function call including provider and model
+
+fields.
+
+13.3 Shiv Provides
+• Anthropic, OpenAI, Google AI API keys (for team v1 — flips to per-user BYOK which is
+
+already architected).
+• Gamma Pro account + API key ($15/month).
+• TubeLab API key.
+• NanoBanana Pro API key.
+• Google Cloud project with YouTube Data API v3 enabled + OAuth credentials.
+• Cloudflare account with ideas.ladder.io configured for Email Routing.
+• Notion integration token (post-MVP).
+• Initial team email list + first names for alias provisioning.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+14. Rollout Plan
+Seven weeks. Frontend and backend in parallel from Week 1.
+
+Phase 1 — Scaffold (Weeks 1-2)
+• AI coding tool: all routes, auth, onboarding (3 steps), My Videos kanban + weekly
+
+suggestion block, Video Studio layout (static, streaming UI ready), Library (4 tabs),
+Settings (6 tabs), full schema + RLS, all stubs deployed with SSE simulation, seed data
+on onboarding, Ladder brand applied, deployed to hosted URL.
+
+• Engineer (Priyanshu): Supabase provisioned, pgvector enabled, RLS validated, edge
+function skeletons, all API keys in Supabase secrets.
+
+• Engineer (Vansh): Cloudflare Email Routing on ideas.ladder.io, n8n skeleton.
+• Shiv: Google Cloud project, YouTube Data API v3 enabled. Team email list provided. All
+
+API keys collected and shared securely with Priyanshu.
+
+Phase 2 — Core Generation (Weeks 3-4)
+• Engineer: stream_script (SSE), content_extract_agent, gen_outline, sharpen_this,
+
+research_agent (all 3 modes), onboarding_agent wired. Prompts parameterised.
+usage_log instrumented.
+
+• AI coding tool: streaming UI end-to-end functional. All 3 /make entry paths navigate to
+studio with correct state. Resizable panels working. Skill.md injection in chat functional.
+
+• Shiv: First full session — enter studio, read streaming script, review outline. "Feels like
+me" test. Iterate on prompts until passing.
+
+Phase 3 — Scene + Thumbnail (Week 5)
+• Engineer: build_scene for Excalidraw (valid JSON, correct format, dark mode, hand-
+
+drawn style, excalidraw.com URL confirmed working). edit_scene with Vision API.
+gen_thumbnail with DALL-E 3. Gamma API path.
+
+• Engineer (Vansh): Full n8n newsletter pipeline live.
+• AI coding tool: "Approve and build scene" complete. Scene link card. Screenshot paste
+
+in chat. Thumbnail generation panel. Three variant display.
+• Shiv: First complete session — studio entry to Excalidraw scene in browser to thumbnail
+
+generated to Loom recording. Target: under 12 minutes.
+
+Phase 4 — Knowledge Graph + YouTube (Week 6)
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+• Engineer: knowledge_nodes populated, embedding pipeline running, RAG retrieval with
+user_id filter, contextual intelligence hints in studio. YouTube Data API sync, yt_metrics
+populating, what_worked insights generating. TubeLab in research_agent. Weekly
+suggestion cron job running.
+
+• AI coding tool: Library > Knowledge Graph manual feed working. My Videos Published
+column live with performance detail panel.
+
+• Milestone: Shiv uses a contextual intelligence hint to choose a video topic AND sees
+YouTube performance data for a published video. Both intelligence loops closed.
+
+Phase 5 — Team Rollout (Week 7)
+• Shiv: Invites Priyanshu, Ayush, Karthikeya, Vansh, Vishakha. Each completes 3-step
+
+onboarding and makes their first video end-to-end.
+• Engineer: Monitors usage_log for cost anomalies, prompt quality issues, cross-user
+
+signals. Fixes immediately.
+• Target: all opted-in users have made at least one video from studio entry to Excalidraw
+
+scene + thumbnail.
+
+Post-MVP Roadmap
+• Notion output type — Framework/How-to ideas generate Notion docs, user toggles
+
+public for lead magnet use.
+• Video editing automation, YouTube upload automation.
+• SaaS launch — public signup, billing, subscriptions.
+• Mobile app — web only and desktop-first for v1.
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+15. Risks and Mitigations
+Excalidraw JSON renders poorly
+Cramped layouts, overlapping elements, illogical flow. Mitigation: engineer builds a validation
+step checking bounding boxes for overlaps before returning the URL. The scene outline
+approval step catches structural problems first. edit_scene handles spatial corrections. Direct
+canvas editing in Excalidraw handles final polish. The bar for "good enough to record over" is
+lower than pixel-perfect.
+
+Screenshot-to-edit label matching fails
+Claude Vision cannot reliably map a screenshot element to its JSON ID if labels are ambiguous
+or truncated. Mitigation: agent asks "I could not identify that element — can you tell me its exact
+label text?" before attempting any edit. Full regeneration from outline is always one tap away.
+
+Cross-user knowledge graph data leakage
+Highest-severity risk. Mitigation: unit test attempting cross-user retrieval fails CI if it succeeds.
+Every pgvector query includes WHERE user_id = :uid before similarity search. RLS on
+knowledge_nodes is a second layer. Both must be in place before any user other than Shiv
+accesses the system.
+
+"Feels like me" fails after 3-step onboarding
+With only a positioning sentence and one creator name, the first script may feel generic.
+Mitigation: the AI chat is always visible and the user can refine immediately. "Does this sound
+like you?" prompt after the first script captures voice training data. By the third video the system
+has enough signal.
+
+stream_script fails or stalls
+Mitigation: if SSE fails mid-stream, a "Retry from [section name]" button appears. Retrying
+resumes from the last complete section. If SSE is unavailable entirely, fallback to non-streaming
+mode — script appears after a 10-15 second wait.
+
+BYOK model misconfiguration causes silent failures
+A user configures a model with an incorrect API key or selects a model not available on their
+plan. Mitigation: Settings > Models shows real-time API key validation (test call on save). If a
+
+Ladder · Internal — Do not distribute Page
+
+
+
+Ladder Content OS — Full Engineering Handoff Document Confidential · Ladder
+
+function call fails due to model error, the studio shows "Model unavailable — check Settings >
+Models" with a direct link. Never silently falls back to a different model without the user knowing.
+
+Thumbnail quality is inconsistent
+AI-generated thumbnails are notoriously variable. Mitigation: always generate 3 variants. The
+reference thumbnail URL input is the single most effective quality lever — users should be
+nudged to provide one. The "Refine" button on each variant gives a quick iteration loop. This is
+expected to be a high-touch workflow for the first few videos until users find their reference
+style.
+
+API costs with 9 users
+At approximately $0.15-0.30 per idea generation, $0.50-1.00 per script, $0.30-0.60 per scene,
+and $0.10-0.20 per thumbnail, 9 users at moderate usage is approximately $400-700 per month
+total across all providers. BYOK in v1 means each user pays for their own usage directly. The
+usage_log table allows Shiv to see aggregate usage in the admin dashboard. Per-function
+model selection (use Haiku for cheap tasks, Sonnet for important ones) is the primary cost
+optimisation lever.
+
+Ladder Content OS · Full Engineering Handoff Document · End of Document
+
+Ladder · Internal — Do not distribute Page

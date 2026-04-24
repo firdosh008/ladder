@@ -83,6 +83,7 @@ export default function OnboardingPage() {
         res.profile ?? {
           user_id: "",
           display_name: null,
+          forwarding_alias: null,
           positioning: form.positioning,
           audience: form.audience,
           voice: null,

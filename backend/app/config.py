@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     GOOGLE_API_KEY: str | None = None
+    EXA_API_KEY: str | None = None
+
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

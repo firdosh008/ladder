@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
   PlusCircle,
@@ -11,18 +12,13 @@ import {
 } from "@phosphor-icons/react";
 import { cn } from "../../lib/cn";
 import { useAuth } from "../../lib/auth";
+import { useIdeas } from "../../lib/useIdeas";
 
 const nav = [
   { to: "/make", label: "Make a video", icon: PlusCircle, hint: "M" },
   { to: "/videos", label: "My videos", icon: Stack, hint: "V" },
   { to: "/library", label: "Library", icon: BookOpen, hint: "L" },
   { to: "/settings", label: "Settings", icon: GearSix, hint: "," },
-];
-
-const topIdeas = [
-  { title: "Why AI agents will replace SaaS", score: 91 },
-  { title: "The new creator stack in 2026", score: 87 },
-  { title: "How I scripted 30 videos in a day", score: 83 },
 ];
 
 export function Sidebar() {
@@ -32,6 +28,17 @@ export function Sidebar() {
     signOut: () => Promise<void>;
   };
   const navigate = useNavigate();
+  const { ideas } = useIdeas({ status: "new" });
+  const topIdeas = useMemo(
+    () =>
+      [...ideas]
+        .sort(
+          (a, b) =>
+            (b.opportunity_score ?? -1) - (a.opportunity_score ?? -1),
+        )
+        .slice(0, 3),
+    [ideas],
+  );
   const displayName = auth.profile?.display_name ?? auth.user?.email ?? "—";
   const subLabel =
     auth.profile?.display_name && auth.user?.email ? auth.user.email : "signed in";
@@ -141,49 +148,45 @@ export function Sidebar() {
       <div className="px-2 mt-2 mb-1">
         <div className="px-2.5 flex items-center justify-between h-6">
           <span className="font-mono text-[9.5px] uppercase tracking-[0.22em] text-mist">
-            top ideas · 04.22
+            top ideas
           </span>
           <Sparkle size={10} className="text-cinnabar opacity-80" />
         </div>
       </div>
 
-      {/* Top ideas this week */}
+      {/* Top ideas by opportunity_score */}
       <div className="px-2 space-y-0.5">
-        {topIdeas.map((idea) => (
-          <button
-            key={idea.title}
-            type="button"
-            className="w-full group flex items-center gap-2.5 h-auto py-2 px-2.5 rounded-md text-left hover:bg-white/[0.03] transition-colors"
-          >
-            <span
-              className={cn(
-                "font-mono mono-tab text-[10.5px] shrink-0 tabular-nums",
-                idea.score >= 90 ? "text-cinnabar" : "text-mist",
-              )}
+        {topIdeas.length === 0 ? (
+          <div className="px-2.5 py-2 font-mono text-[10.5px] text-mist">
+            · none yet ·
+          </div>
+        ) : (
+          topIdeas.map((idea) => (
+            <button
+              key={idea.id}
+              type="button"
+              onClick={() => navigate(`/studio/${idea.id}`)}
+              className="w-full group flex items-center gap-2.5 h-auto py-2 px-2.5 rounded-md text-left hover:bg-white/[0.03] transition-colors"
             >
-              {idea.score}
-            </span>
-            <span className="text-[12px] text-white/75 leading-snug truncate group-hover:text-white">
-              {idea.title}
-            </span>
-          </button>
-        ))}
+              <span
+                className={cn(
+                  "font-mono mono-tab text-[10.5px] shrink-0 tabular-nums",
+                  (idea.opportunity_score ?? 0) >= 90
+                    ? "text-cinnabar"
+                    : "text-mist",
+                )}
+              >
+                {idea.opportunity_score ?? "—"}
+              </span>
+              <span className="text-[12px] text-white/75 leading-snug truncate group-hover:text-white">
+                {idea.title}
+              </span>
+            </button>
+          ))
+        )}
       </div>
 
       <div className="flex-1" />
-
-      {/* Status strip */}
-      <div className="px-2 pb-2">
-        <div className="flex items-center gap-2 px-2.5 h-7">
-          <span className="flex h-1.5 w-1.5 rounded-full bg-cinnabar animate-pulse-dot" />
-          <span className="font-mono text-[10.5px] text-mist tracking-wide">
-            2 jobs running
-          </span>
-          <span className="ml-auto font-mono text-[10.5px] text-mist">
-            $4.21
-          </span>
-        </div>
-      </div>
 
       {/* User / seat info */}
       <div className="border-t border-hairline p-2">

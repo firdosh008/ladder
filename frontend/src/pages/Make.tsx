@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Lightbulb,
@@ -13,41 +13,37 @@ import { Button } from "../components/ui/Button";
 import { Input, Textarea } from "../components/ui/Input";
 import { Badge } from "../components/ui/Badge";
 import { useIdeas } from "../lib/useIdeas";
+import { useAuth } from "../lib/auth";
 import { cn } from "../lib/cn";
-import {
-  StudioSetupDialog,
-  type StudioSetupValues,
-} from "../components/studio/StudioSetupDialog";
+import { ResearchStreamDrawer } from "../components/research/ResearchStreamDrawer";
+import type { ResearchSetup } from "../lib/agents";
 
 type Option = "ideas" | "research" | "content";
-
-type SetupIntent =
-  | { kind: "research"; topic: string }
-  | { kind: "extract"; content: string };
 
 export default function MakePage() {
   const [active, setActive] = useState<Option>("research");
   const [topic, setTopic] = useState("");
   const [content, setContent] = useState("");
-  const [intent, setIntent] = useState<SetupIntent | null>(null);
+  const [researchSetup, setResearchSetup] = useState<ResearchSetup | null>(null);
   const navigate = useNavigate();
-  const { ideas, loading: ideasLoading } = useIdeas();
+  const { ideas, loading: ideasLoading, refresh: refreshIdeas } = useIdeas();
+  const { profile } = useAuth();
 
-  function handleSetupConfirm(v: StudioSetupValues) {
-    if (!intent) return;
-    const params = new URLSearchParams({
-      duration: String(v.duration),
-      tool: v.tool,
-      brand: v.brandId,
-    });
-    if (intent.kind === "research") {
-      params.set("topic", intent.topic);
-      navigate(`/studio/new?${params.toString()}`);
-    } else {
-      params.set("content", intent.content);
-      navigate(`/studio/extract?${params.toString()}`);
-    }
+  function startResearch() {
+    const cleaned = topic.trim();
+    if (!cleaned) return;
+    setResearchSetup({ topic: cleaned });
   }
+
+  const handleResearchClose = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        setResearchSetup(null);
+        void refreshIdeas();
+      }
+    },
+    [refreshIdeas],
+  );
 
   const ideasCount = ideas.length;
   const ideasDimmed = !ideasLoading && ideasCount === 0;
@@ -141,12 +137,16 @@ export default function MakePage() {
                 onChange={(e) => setTopic(e.target.value)}
                 placeholder="e.g. why AI agents replace SaaS"
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && topic.trim()) {
+                    e.preventDefault();
+                    startResearch();
+                  }
+                }}
               />
               <Button
                 size="sm"
-                onClick={() =>
-                  setIntent({ kind: "research", topic: topic.trim() })
-                }
+                onClick={startResearch}
                 disabled={!topic.trim()}
                 className="w-full"
               >
@@ -154,7 +154,7 @@ export default function MakePage() {
                 Research & stream
               </Button>
               <p className="text-[11.5px] text-mist font-mono pt-0.5">
-                gpt-4o · ~$0.03
+                exa · sonnet-4.6
               </p>
             </div>
           </OptionCard>
@@ -178,81 +178,37 @@ export default function MakePage() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() =>
-                setIntent({ kind: "extract", content: content.trim() })
-              }
-              disabled={content.trim().length < 60}
+              disabled
               className="w-full mt-2"
+              title="Content extraction crew ships next"
             >
               Extract & build
               <ArrowRight size={12} weight="bold" />
             </Button>
-            {content.trim().length > 0 && content.trim().length < 60 ? (
-              <p className="text-[11px] text-mist font-mono pt-1.5">
-                {60 - content.trim().length} more chars to extract
-              </p>
-            ) : null}
+            <p className="text-[11px] text-mist font-mono pt-1.5">
+              extract crew ships next
+            </p>
           </OptionCard>
         </div>
 
-        {/* Contextual intelligence strip */}
-        <div className="mt-8 rounded-xl border border-hairline bg-surface/50 px-5 py-4">
-          <div className="flex items-start gap-3">
-            <Sparkle
-              size={14}
-              weight="fill"
-              className="text-cinnabar mt-0.5 shrink-0"
-            />
-            <div className="flex-1 text-[13px] leading-[1.55] text-white/80">
-              <span className="text-white">
-                "AI agents" is performing 4.2× above average
-              </span>{" "}
-              in adjacent niches this week.{" "}
-              <button
-                onClick={() => {
-                  setActive("research");
-                  setTopic("AI agents replacing SaaS");
-                }}
-                className="text-cinnabar hover:underline underline-offset-2"
-              >
-                Use as a starting point →
-              </button>
-            </div>
-            <button className="text-mist hover:text-white transition-colors text-[18px] leading-none shrink-0">
-              ×
-            </button>
-          </div>
-        </div>
-
         {/* Quiet metadata row */}
-        <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[10.5px] uppercase tracking-[0.2em] text-mist">
+        <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[10.5px] uppercase tracking-[0.2em] text-mist">
           <span>session · fresh</span>
           <span className="h-3 w-px bg-hairline" />
-          <span>alias · alex+ladder@ingest.ladder.so</span>
-          <span className="h-3 w-px bg-hairline" />
-          <span>keys · 3/4 configured</span>
+          <span>
+            alias ·{" "}
+            <span className="text-white/80">
+              {profile?.forwarding_alias ?? "not configured"}
+            </span>
+          </span>
         </div>
       </PageContainer>
 
-      <StudioSetupDialog
-        open={intent !== null}
-        onOpenChange={(v) => !v && setIntent(null)}
-        title={
-          intent?.kind === "extract"
-            ? "Turn content into a video"
-            : "Research and generate"
-        }
-        subtitle={
-          intent?.kind === "research"
-            ? intent.topic
-            : intent?.kind === "extract"
-              ? `${intent.content.slice(0, 80)}${intent.content.length > 80 ? "…" : ""}`
-              : undefined
-        }
-        ctaLabel={
-          intent?.kind === "extract" ? "Extract & build" : "Research & stream"
-        }
-        onConfirm={handleSetupConfirm}
+      <ResearchStreamDrawer
+        open={researchSetup !== null}
+        onOpenChange={handleResearchClose}
+        setup={researchSetup}
+        onIdeaSaved={() => void refreshIdeas()}
       />
     </Shell>
   );
@@ -330,4 +286,3 @@ function OptionCard({
     </div>
   );
 }
-

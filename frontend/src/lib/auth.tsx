@@ -7,6 +7,7 @@ import { supabase } from "./supabase";
 export type Profile = {
   user_id: string;
   display_name: string | null;
+  forwarding_alias: string | null;
   positioning: string | null;
   audience: string | null;
   voice: string | null;
