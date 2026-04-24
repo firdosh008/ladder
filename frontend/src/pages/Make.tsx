@@ -20,6 +20,10 @@ import {
   clearStoredRun,
   loadStoredRun,
 } from "../components/research/ResearchRunPanel";
+import {
+  ContentExtractPanel,
+  type ContentExtractSetup,
+} from "../components/extract/ContentExtractPanel";
 import type { ResearchSetup } from "../lib/agents";
 
 type Option = "ideas" | "research" | "content";
@@ -29,6 +33,7 @@ export default function MakePage() {
   const [topic, setTopic] = useState("");
   const [content, setContent] = useState("");
   const [researchSetup, setResearchSetup] = useState<ResearchSetup | null>(null);
+  const [extractSetup, setExtractSetup] = useState<ContentExtractSetup | null>(null);
   const [hasRestoredRun, setHasRestoredRun] = useState(() => loadStoredRun() !== null);
   const navigate = useNavigate();
   const { ideas, loading: ideasLoading, refresh: refreshIdeas } = useIdeas();
@@ -38,6 +43,7 @@ export default function MakePage() {
   function startResearch() {
     const cleaned = topic.trim();
     if (!cleaned) return;
+    setExtractSetup(null);
     setResearchSetup({ topic: cleaned });
     setHasRestoredRun(false);
     requestAnimationFrame(() => {
@@ -45,29 +51,50 @@ export default function MakePage() {
     });
   }
 
+  function startExtract() {
+    const cleaned = content.trim();
+    if (cleaned.length < 80) return;
+    setResearchSetup(null);
+    clearStoredRun();
+    setHasRestoredRun(false);
+    setExtractSetup({ source_content: cleaned });
+    requestAnimationFrame(() => {
+      panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   useEffect(() => {
-    if (researchSetup || !hasRestoredRun) return;
+    if (researchSetup || extractSetup || !hasRestoredRun) return;
     requestAnimationFrame(() => {
       panelRef.current?.scrollIntoView({ behavior: "auto", block: "nearest" });
     });
-  }, [researchSetup, hasRestoredRun]);
+  }, [researchSetup, extractSetup, hasRestoredRun]);
 
-  const handleStartOver = useCallback(() => {
+  const handleResearchStartOver = useCallback(() => {
     clearStoredRun();
     setResearchSetup(null);
     setHasRestoredRun(false);
     setTopic("");
   }, []);
 
+  const handleExtractStartOver = useCallback(() => {
+    setExtractSetup(null);
+    setContent("");
+  }, []);
+
   const handleIdeasChanged = useCallback(() => {
     void refreshIdeas();
   }, [refreshIdeas]);
 
-  const panelVisible = researchSetup !== null || hasRestoredRun;
+  const researchPanelVisible = researchSetup !== null || hasRestoredRun;
+  const extractPanelVisible = extractSetup !== null;
 
   const ideasCount = ideas.length;
   const ideasDimmed = !ideasLoading && ideasCount === 0;
   const topIdeas = ideas.slice(0, 3);
+
+  const contentLength = content.trim().length;
+  const contentTooShort = contentLength > 0 && contentLength < 80;
 
   return (
     <Shell>
@@ -200,34 +227,45 @@ export default function MakePage() {
               placeholder="Paste an article, tweet thread, or Notion doc…"
               className="min-h-[88px] text-[12.5px]"
               onClick={(e) => e.stopPropagation()}
+              disabled={extractSetup !== null}
             />
             <Button
               variant="secondary"
               size="sm"
-              disabled
+              onClick={startExtract}
               className="w-full mt-2"
-              title="Content extraction crew ships next"
+              disabled={contentLength < 80 || extractSetup !== null}
+              title={
+                contentLength < 80 ? "Paste at least ~80 chars of content" : undefined
+              }
             >
-              Extract & build
+              {extractSetup !== null ? "Extracting…" : "Extract & build"}
               <ArrowRight size={12} weight="bold" />
             </Button>
             <p className="text-[11px] text-mist font-mono pt-1.5">
-              extract crew ships next
+              {contentTooShort
+                ? `${contentLength}/80 chars`
+                : "sonnet-4.6 · auto-saves & opens studio"}
             </p>
           </OptionCard>
         </div>
 
-        {/* Inline research panel (per PRD §2 Option 2). Renders while a run
-            is live AND after it completes until the user explicitly starts
-            over — state mirrors to sessionStorage so a refresh doesn't
-            wipe drafts. */}
-        {panelVisible ? (
+        {/* Active run panel — only one shows at a time. */}
+        {researchPanelVisible || extractPanelVisible ? (
           <div ref={panelRef}>
-            <ResearchRunPanel
-              setup={researchSetup}
-              onStartOver={handleStartOver}
-              onIdeasChanged={handleIdeasChanged}
-            />
+            {extractPanelVisible ? (
+              <ContentExtractPanel
+                setup={extractSetup}
+                onStartOver={handleExtractStartOver}
+                onIdeasChanged={handleIdeasChanged}
+              />
+            ) : (
+              <ResearchRunPanel
+                setup={researchSetup}
+                onStartOver={handleResearchStartOver}
+                onIdeasChanged={handleIdeasChanged}
+              />
+            )}
           </div>
         ) : null}
 

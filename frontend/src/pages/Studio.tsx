@@ -4,13 +4,18 @@ import {
   ArrowLeft,
   Image as ImageIcon,
   Sparkle,
-  Cpu,
   Lightbulb,
 } from "@phosphor-icons/react";
 import { Shell } from "../components/app/Shell";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { useIdeas, type Idea } from "../lib/useIdeas";
+import {
+  useStudioStream,
+  StudioRunStrip,
+  ScriptView,
+  OutlineView,
+} from "../components/studio/StudioScriptStream";
 
 export default function StudioPage() {
   const { id } = useParams();
@@ -24,11 +29,28 @@ export default function StudioPage() {
     <Shell unconstrained>
       <StudioHeader idea={idea} loading={loading} />
       <div className="flex-1 grid grid-cols-[1fr_1fr_380px] min-h-0 divide-x divide-hairline">
-        <ScriptPanel idea={idea} loading={loading} />
-        <ScenePanel />
-        <ChatPanel />
+        {idea ? (
+          <StudioBody ideaId={idea.id} idea={idea} />
+        ) : (
+          <>
+            <ScriptShell loading={loading} idea={null} />
+            <ScenePlaceholder />
+            <ChatPlaceholder />
+          </>
+        )}
       </div>
     </Shell>
+  );
+}
+
+function StudioBody({ ideaId, idea }: { ideaId: string; idea: Idea }) {
+  const state = useStudioStream(ideaId);
+  return (
+    <>
+      <ScriptPanelLive idea={idea} state={state} />
+      <ScenePanelLive state={state} />
+      <ChatPlaceholder />
+    </>
   );
 }
 
@@ -67,11 +89,91 @@ function StudioHeader({ idea, loading }: { idea: Idea | null; loading: boolean }
   );
 }
 
-function ScriptPanel({ idea, loading }: { idea: Idea | null; loading: boolean }) {
+function ScriptPanelLive({
+  idea,
+  state,
+}: {
+  idea: Idea;
+  state: ReturnType<typeof useStudioStream>;
+}) {
   return (
     <section className="flex flex-col min-h-0 bg-night">
-      <PanelHeader title="Script" hint="stream_script · not yet wired" />
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
+      <PanelHeader
+        title="Script"
+        hint={
+          state.status === "ready"
+            ? state.hydratedFromDb
+              ? "stream_script · hydrated"
+              : "stream_script · ready"
+            : state.status === "failed"
+              ? "stream_script · failed"
+              : "stream_script · streaming"
+        }
+      />
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+        <IdeaHeader idea={idea} />
+        <StudioRunStrip state={state} />
+        <ScriptView script={state.script} state={state} />
+      </div>
+    </section>
+  );
+}
+
+function ScenePanelLive({ state }: { state: ReturnType<typeof useStudioStream> }) {
+  return (
+    <section className="flex flex-col min-h-0 bg-night">
+      <PanelHeader
+        title="Scene"
+        hint={
+          state.outline
+            ? "outline · ready"
+            : state.status === "failed"
+              ? "outline · failed"
+              : "outline · pending"
+        }
+      />
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+        <OutlineView outline={state.outline} state={state} />
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.2em] text-mist pt-2">
+          build_scene + thumbnail ship next
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function IdeaHeader({ idea }: { idea: Idea }) {
+  return (
+    <div>
+      <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-mist mb-2">
+        idea
+      </div>
+      <h2 className="font-display text-[24px] text-white leading-[1.15] tracking-tight">
+        {idea.title}
+      </h2>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {typeof idea.opportunity_score === "number" ? (
+          <Badge tone="cinnabar">score {idea.opportunity_score}</Badge>
+        ) : null}
+        {typeof idea.outlier_score === "number" ? (
+          <Badge tone="muted">{idea.outlier_score.toFixed(1)}× outlier</Badge>
+        ) : null}
+        {idea.idea_type ? <Badge tone="muted">{idea.idea_type}</Badge> : null}
+      </div>
+      {idea.rationale ? (
+        <p className="mt-3 text-[13px] text-white/75 leading-[1.6]">
+          {idea.rationale}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ScriptShell({ idea, loading }: { idea: Idea | null; loading: boolean }) {
+  return (
+    <section className="flex flex-col min-h-0 bg-night">
+      <PanelHeader title="Script" hint="stream_script · waiting" />
+      <div className="flex-1 overflow-y-auto px-6 py-6">
         {loading ? (
           <p className="font-mono text-[11.5px] text-mist">loading idea…</p>
         ) : !idea ? (
@@ -80,96 +182,33 @@ function ScriptPanel({ idea, loading }: { idea: Idea | null; loading: boolean })
             title="No idea loaded."
             body="Go back to /videos and pick one, or run a research sweep from /make."
           />
-        ) : (
-          <>
-            <div>
-              <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-mist mb-2">
-                idea
-              </div>
-              <h2 className="font-display text-[26px] text-white leading-[1.15] tracking-tight">
-                {idea.title}
-              </h2>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                {typeof idea.opportunity_score === "number" ? (
-                  <Badge tone="cinnabar">
-                    score {idea.opportunity_score}
-                  </Badge>
-                ) : null}
-                {typeof idea.outlier_score === "number" ? (
-                  <Badge tone="muted">
-                    {idea.outlier_score.toFixed(1)}× outlier
-                  </Badge>
-                ) : null}
-                {idea.idea_type ? (
-                  <Badge tone="muted">{idea.idea_type}</Badge>
-                ) : null}
-              </div>
-            </div>
-            {idea.rationale ? (
-              <div>
-                <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-mist mb-2">
-                  rationale
-                </div>
-                <p className="text-[14px] text-white/85 leading-[1.6]">
-                  {idea.rationale}
-                </p>
-              </div>
-            ) : null}
-            {idea.body ? (
-              <div>
-                <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-mist mb-2">
-                  your notes
-                </div>
-                <p className="text-[14px] text-white/85 leading-[1.6] whitespace-pre-wrap">
-                  {idea.body}
-                </p>
-              </div>
-            ) : null}
-            {idea.source_content ? (
-              <div>
-                <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-mist mb-2">
-                  research topic
-                </div>
-                <p className="text-[13.5px] text-mist italic leading-[1.6]">
-                  {idea.source_content}
-                </p>
-              </div>
-            ) : null}
-            <EmptyBlock
-              icon={Sparkle}
-              title="Script crew ships next."
-              body="stream_script will auto-run here on studio load and write talking points + transitions section-by-section."
-            />
-          </>
-        )}
+        ) : null}
       </div>
     </section>
   );
 }
 
-function ScenePanel() {
+function ScenePlaceholder() {
   return (
     <section className="flex flex-col min-h-0 bg-night">
-      <PanelHeader title="Scene" hint="build_scene · not yet wired" />
+      <PanelHeader title="Scene" hint="outline · waiting" />
       <div className="flex-1 overflow-y-auto px-6 py-6">
-        <EmptyBlock
-          icon={Cpu}
-          title="Scene outline + Excalidraw build coming."
-          body="Once the Scene crew lands, the outline will generate alongside the script and 'Approve and build' will produce a shareable Excalidraw URL."
-        />
+        <p className="font-mono text-[11.5px] text-mist">
+          · pick an idea to see the outline ·
+        </p>
       </div>
     </section>
   );
 }
 
-function ChatPanel() {
+function ChatPlaceholder() {
   return (
     <aside className="flex flex-col min-h-0 bg-night">
       <PanelHeader title="Sharpen" hint="sharpen_this · not yet wired" />
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <EmptyBlock
           icon={Sparkle}
-          title="AI chat ships with the Studio vertical."
+          title="AI chat ships next."
           body="Text refinement, screenshot-to-edit on Excalidraw, and skill.md injection — all scoped to this idea."
         />
       </div>

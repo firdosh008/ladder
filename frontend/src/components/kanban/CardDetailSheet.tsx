@@ -304,20 +304,13 @@ export function CardDetailSheet({
 
               {/* Footer */}
               <div className="sticky bottom-0 bg-night border-t border-hairline px-6 py-4 flex items-center justify-between gap-2">
-                {edit.status !== "new" ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      navigate(`/studio/new?ideaId=${encodeURIComponent(idea.id)}`)
-                    }
-                  >
-                    Open in Studio
-                    <ArrowRight size={12} weight="bold" />
-                  </Button>
-                ) : (
-                  <span />
-                )}
+                <Button
+                  size="sm"
+                  onClick={() => navigate(`/studio/${idea.id}`)}
+                >
+                  Open in Studio
+                  <ArrowRight size={12} weight="bold" />
+                </Button>
 
                 <div className="flex items-center gap-2">
                   <button

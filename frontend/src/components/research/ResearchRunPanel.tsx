@@ -682,7 +682,7 @@ function AgentRow({ runtime }: { runtime: AgentRuntime }) {
         <div className="mt-2 flex flex-wrap gap-1">
           {runtime.toolCalls.map((tc, i) => (
             <span
-              key={i}
+              key={`${tc.tool}-${i}`}
               className="inline-flex items-center gap-1 rounded-full border border-hairline bg-white/[0.02] px-2 py-0.5 font-mono text-[10px] text-mist"
               title={tc.arguments}
             >
@@ -841,9 +841,9 @@ function DraftCard({
           ) : null}
           {tags.length > 0 ? (
             <div className="flex flex-wrap gap-1 mt-2.5">
-              {tags.map((t) => (
+              {tags.map((t, i) => (
                 <span
-                  key={t}
+                  key={`${t}-${i}`}
                   className="font-mono text-[10px] text-mist border border-hairline rounded px-1.5 py-0.5"
                 >
                   {t}

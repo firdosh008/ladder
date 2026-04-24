@@ -1,6 +1,6 @@
 # Ladder Content OS — Handoff / Context Doc
 
-Last updated: 2026-04-25 (late evening — native-streaming + source cards shipped, kanban hover-delete shipped). Purpose: bring a fresh Claude session (or a human contributor) up to speed without re-reading the whole chat history.
+Last updated: 2026-04-25 (overnight — Studio (script + outline) and Content-extract verticals shipped end-to-end). Purpose: bring a fresh Claude session (or a human contributor) up to speed without re-reading the whole chat history.
 
 ---
 
@@ -74,23 +74,22 @@ ladder-os/
 │   │   │   ├── auth.py                   # HTTP JWT (JWKS) — current_user dep
 │   │   │   └── ws_auth.py                # WebSocket JWT verification (?token=)
 │   │   ├── models/
-│   │   │   └── db.py                     # Pydantic mirrors (UserProfileSlice, IdeaDraft, ResearchIdeas)
+│   │   │   └── db.py                     # Pydantic mirrors — IdeaSlice, IdeaDraft/ResearchIdeas, Script/ScriptSection, Outline/OutlineItem, ContentAnalysis, ExtractedVideo, UserProfileSlice
 │   │   ├── providers/
 │   │   │   └── exa.py                    # async wrapper around exa-py neural search
 │   │   ├── services/
 │   │   │   ├── llm.py                    # anthropic_llm() — CrewAI LLM factory
 │   │   │   └── usage.py                  # log_usage() async context manager
 │   │   ├── agents/
-│   │   │   └── research/
-│   │   │       ├── tools.py              # ExaSearchTool (CrewAI BaseTool)
-│   │   │       ├── agents.py             # 3 agents (researcher / scorer / architect)
-│   │   │       ├── tasks.py              # sequential task pipeline
-│   │   │       └── crew.py               # run_research() async generator
+│   │   │   ├── research/                 # research crew (3 agents → ResearchIdeas)
+│   │   │   ├── studio/                   # studio crew (script_writer → outline_planner)
+│   │   │   └── content_extract/          # content_extract crew (analyzer → extractor)
 │   │   └── routes/
 │   │       ├── health.py                 # GET /health
 │   │       ├── auth.py                   # GET /auth/me, POST /auth/onboard
 │   │       ├── ideas.py                  # GET/POST/PATCH/DELETE /ideas
-│   │       └── agents.py                 # WebSocket /ws/agents/research
+│   │       ├── studio_sessions.py        # GET /studio-sessions/by-idea/{idea_id}
+│   │       └── agents.py                 # WebSocket /ws/agents/{research,studio,extract}
 │   ├── tests/                            # pytest-asyncio + httpx + starlette TestClient
 │   ├── pyproject.toml
 │   ├── .python-version                   # 3.12 (pyo3/pydantic-core 3.14 pin)
@@ -109,19 +108,22 @@ ladder-os/
 │   │   │   └── cn.ts
 │   │   ├── components/
 │   │   │   ├── research/
-│   │   │   │   └── ResearchRunPanel.tsx       # inline on /make (per PRD §2 Option 2)
-│   │   │   ├── studio/StudioSetupDialog.tsx
+│   │   │   │   └── ResearchRunPanel.tsx       # inline on /make (PRD §2 Option 2)
+│   │   │   ├── extract/
+│   │   │   │   └── ContentExtractPanel.tsx    # inline on /make Option 3
+│   │   │   ├── studio/
+│   │   │   │   └── StudioScriptStream.tsx     # useStudioStream + ScriptView/OutlineView
 │   │   │   ├── kanban/                   # Videos.tsx board
 │   │   │   ├── ui/                       # Button, Badge, Input, Card, ...
 │   │   │   └── app/Shell.tsx             # layout shell
 │   │   ├── pages/
 │   │   │   ├── Auth.tsx                  # WORKS
 │   │   │   ├── Onboarding.tsx            # WORKS (wired to /auth/onboard)
-│   │   │   ├── Make.tsx                  # PARTIAL — research option is live; extract is dummy
-│   │   │   ├── Videos.tsx                # WORKS (Kanban on ideas)
+│   │   │   ├── Make.tsx                  # WORKS (research + content-extract live; pick-from-ideas wires existing rows)
+│   │   │   ├── Videos.tsx                # WORKS (Kanban on ideas, hover-delete)
 │   │   │   ├── Library.tsx               # DUMMY
 │   │   │   ├── Settings.tsx              # PARTIAL — Profile tab works, others dummy
-│   │   │   └── Studio.tsx                # DUMMY
+│   │   │   └── Studio.tsx                # WORKS (auto-streams or hydrates script + outline; chat panel still placeholder)
 │   │   └── vite-env.d.ts
 │   ├── .env                              # gitignored, filled with VITE_SUPABASE_*
 │   └── .env.example
@@ -196,15 +198,40 @@ Shipped:
 - `KanbanCardView` now renders a trash affordance in the top-right that fades in on `group-hover` / focus. Click → `window.confirm` → `deleteIdea()`. Pointer-down is stopped so the drag handle doesn't swallow the click.
 - Threaded `onCardDelete` through `Column` → `Board` → `Videos.tsx`, which reuses `useIdeas().deleteIdea` and clears the detail sheet if the deleted card happens to be open.
 
+### AI — Studio vertical (shipped 2026-04-25 overnight)
+The /make → /studio loop now produces a real script + outline. Two-task sequential crew, native CrewAI streaming, persists to `studio_sessions` + versioned `artifacts`.
+
+- `backend/app/agents/studio/` — `script_writer` + `outline_planner` agents, sequential tasks (`Script` then `Outline` via `output_pydantic` per task), `run_studio_script(user_id, profile, idea, target_duration_min)` async generator.
+- `backend/app/models/db.py` — `IdeaSlice`, `Script`/`ScriptSection`, `Outline`/`OutlineItem` Pydantic models. Bounds: 2-12 sections × 1-15 min each, 3-18 outline items, 8-30 word talking points (enforced in prompt, not validator).
+- `WebSocket /ws/agents/studio?token=...&idea_id=...&duration=...` — verifies JWT, loads idea via RLS, loads profile, streams `agent_start` / `text_delta` / `task_complete` / `script_ready` / `outline_ready` / `usage`. On completion: upserts a `studio_sessions` row for `(user_id, idea_id)`, writes versioned `artifacts` rows (type=`script` / `outline`, JSON in `content_json`, plain-text mirror in `content_text`), mirrors the outline to `studio_sessions.scene_outline`, then emits `persisted` + `complete`.
+- `GET /studio-sessions/by-idea/{idea_id}` — returns `{session, script, outline}` (latest version of each artifact). Used by the studio page to hydrate before deciding to stream.
+- `frontend/src/components/studio/StudioScriptStream.tsx` — `useStudioStream(ideaId)` hook: hits the GET first, hydrates if a script artifact exists, otherwise opens the WS. Exposes `state.{script, outline, runtime, status, error, cost, hydratedFromDb, rerun}`. Companion `ScriptView` (sectioned cards with talking points + transitions) and `OutlineView` (numbered scene rows). `StudioRunStrip` shows live agent dots + cost.
+- `frontend/src/pages/Studio.tsx` — replaced the static placeholder copy with the live panels. Three-column grid: Script (live) | Scene/Outline (live) | Sharpen (still placeholder). Re-run button on the strip (status `ready` only).
+
+### AI — Content-extract vertical (shipped 2026-04-25 overnight)
+PRD §2 Option 3 is now fully live. Paste long-form content on `/make`, get an idea + script + outline + studio session in one shot.
+
+- `backend/app/agents/content_extract/` — `analyzer` (decides title / type / runtime / key beats) + `extractor` (drafts `ExtractedVideo` = title + rationale + idea_type + derived_duration_min + Script + Outline). `output_pydantic` per task: `ContentAnalysis` then `ExtractedVideo`.
+- `WebSocket /ws/agents/extract?token=...` — first client message is `{source_content: "...", source_url?: "..."}` (max 60k chars, 15s read timeout). On completion: inserts an `ideas` row (`source_type = "content_extract"`, `source_content` keeps the original paste, `source_content_url` keeps the optional URL), creates a `studio_sessions` row, writes versioned script + outline artifacts, emits `persisted` with the new `idea_id` + `session_id`.
+- `frontend/src/components/extract/ContentExtractPanel.tsx` — inline panel on `/make` Option 3. 2-agent timeline + extracted-video preview card + source rail. Auto-navigates to `/studio/:idea_id` ~700ms after `persisted` so the user sees the success state, then lands in studio with the script already hydrated from artifacts (no re-run).
+- `frontend/src/pages/Make.tsx` — Option 3 is now live: input enabled, button gated on ≥80 chars, character counter when below threshold. Research and content-extract panels are mutually exclusive (starting one clears the other's setup state).
+
+### Shared agent plumbing
+- `frontend/src/lib/agents.ts` — added `runStudioStream(ideaId, duration, onEvent)`, `runExtractStream(source, onEvent)`, `fetchStudioByIdea(ideaId)`, plus typed `Script` / `Outline` / `ExtractedVideo` / new event variants (`script_ready`, `outline_ready`, `extract_ready`, `usage`, `persisted`). Common WS pump factored into `consumeStream(url, onEvent, finalise, initialPayload?)`.
+- `backend/app/routes/agents.py` — three WS endpoints share `_load_profile` / `_load_idea` / `_ensure_studio_session` / `_persist_script_outline` / `_safe_send_json`. Versioning lives in `_next_artifact_version` (per-session, per-type).
+
+### Tests
+- `tests/test_studio_crew.py` — 9 cases covering Script/Outline/IdeaSlice Pydantic bounds, WS auth/idea-id validation, full happy path with mocked supabase tables (asserts `persisted` event ids match the inserted rows), and both branches of `GET /studio-sessions/by-idea/{idea_id}`.
+- `tests/test_extract_crew.py` — 5 cases covering ContentAnalysis/ExtractedVideo Pydantic, WS auth, blank-source rejection, and the full happy path (1 ideas insert + 1 session insert + 2 artifacts).
+- Full backend suite: **52 passed, 2 xfail (expected), 3 xpass (legacy)**. Frontend `tsc --noEmit` clean.
+
 ---
 
 ## 6. What's NOT built yet — priority-ordered backlog
 
-### P0 — finish the Make → Studio → Videos loop
-1. **Studio sessions CRUD** — backend `GET/POST/PATCH /studio-sessions` + wire to `Studio.tsx`. Still fully dummy (hardcoded `SCRIPT`, `OUTLINE`, `CHAT_SEED`).
-2. **Script + Scene crews** — Studio's outline generator and scene breakdown. First consumers of `match_knowledge_nodes` (retrieval lands here). Reuse the LLM factory, `log_usage`, and WS event protocol from the Research crew.
-3. **Content-extract crew** — Make page option 3 ("Turn content into a video"). Currently still dummy — the `intent.kind === "extract"` branch just navigates to `/studio/extract?...` which doesn't exist.
-4. **Sharpen crew** — Studio chat sidebar. Small streaming crew that rewrites script sections on request.
+### P0 — close the studio loop
+1. **Sharpen crew** — Studio chat sidebar. Small streaming crew that rewrites script sections on request. The studio's `ChatPanel` is the last placeholder. Stream protocol is identical; persist messages to `chat_messages`.
+2. **build_scene + edit_scene + gen_thumbnail** — Excalidraw scene generation + thumbnail variants. Outline → Excalidraw URL → image gen. Out-of-scope for the just-shipped overnight.
 
 ### P1 — knowledge + retrieval
 5. **Embedding pipeline** — OpenAI `text-embedding-3-small` (1536 dims) writes to `knowledge_nodes`. Triggered on new newsletter_items, ideas, artifacts. OpenAI SDK is already installed.

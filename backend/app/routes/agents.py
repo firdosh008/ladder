@@ -1,34 +1,57 @@
 """Agent WebSocket routes.
 
-Single endpoint today: /ws/agents/research. Streams events from the Research
-crew and delivers the finalised drafts to the client. Per PRD §2.1 the drafts
-are NOT auto-persisted — the user picks one inline, and the frontend POSTs
-the chosen draft to /ideas to create the row and open the studio session.
+Three endpoints today:
 
-Event protocol (server→client):
-  {"type": "agent_start",   "agent": "search_agent"}
-  {"type": "tool_call",     "agent": "...", "tool": "web_search", "arguments": "..."}
-  {"type": "sources",       "query": "...", "items": [{"title","url",...}]}
-  {"type": "text_delta",    "agent": "...", "content": "..."}
-  {"type": "task_complete", "agent": "...", "preview": "..."}
-  {"type": "ideas_ready",   "ideas": [...], "token_usage": {...}}
-  {"type": "complete",      "count": N, "cost_usd": 0.07}
-  {"type": "error",         "message": "..."}
+  /ws/agents/research?token=...&topic=...
+        Streams the Research crew. Drafts are NOT auto-persisted —
+        the user picks one inline, frontend POSTs to /ideas.
+
+  /ws/agents/studio?token=...&idea_id=...&duration=...
+        Streams the Studio crew (script_writer → outline_planner) for an
+        existing idea. On completion: upserts a studio_sessions row for
+        (user_id, idea_id), writes script + outline as artifacts (versioned),
+        and emits {type:'persisted', session_id, script_artifact_id,
+        outline_artifact_id}.
+
+  /ws/agents/extract?token=...
+        Streams the content_extract crew. The client sends the source as
+        the FIRST WS message (JSON {source_content: "..."}). On completion:
+        creates an idea + studio_session + script + outline artifacts and
+        emits {type:'persisted', idea_id, session_id, ...} so the client
+        can navigate to /studio/:idea_id.
+
+Common event protocol:
+  {"type": "agent_start",    "agent": "..."}
+  {"type": "tool_call",      "agent": "...", "tool": "...", "arguments": "..."}
+  {"type": "sources",        "query": "...", "items": [...]}      # research only
+  {"type": "text_delta",     "agent": "...", "content": "..."}
+  {"type": "task_complete",  "agent": "...", "preview": "..."}
+  {"type": "ideas_ready",    "ideas": [...], "token_usage": {...}} # research
+  {"type": "script_ready",   "script": {...}}                      # studio
+  {"type": "outline_ready",  "outline": {...}}                     # studio
+  {"type": "extract_ready",  "extracted": {...}}                   # extract
+  {"type": "usage",          "token_usage": {...}}
+  {"type": "persisted",      ...}                                  # studio/extract
+  {"type": "complete",       "cost_usd": 0.07}
+  {"type": "error",          "message": "..."}
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 
+from app.agents.content_extract import run_content_extract
 from app.agents.research import run_research
+from app.agents.studio import run_studio_script
 from app.deps import user_client
 from app.middleware.ws_auth import WsAuthError, verify_ws_token
-from app.models.db import UserProfileSlice
+from app.models.db import IdeaSlice, UserProfileSlice
 
 router = APIRouter(tags=["agents"])
 
@@ -36,6 +59,11 @@ router = APIRouter(tags=["agents"])
 _CLOSE_UNAUTHORIZED = 4401
 _CLOSE_BAD_REQUEST = 4400
 _CLOSE_SERVER_ERROR = 1011
+
+_MAX_SOURCE_CONTENT_CHARS = 60_000
+
+
+# ─── Helpers ───────────────────────────────────────────────────────────────
 
 
 async def _load_profile(user_id: UUID, jwt: str) -> UserProfileSlice:
@@ -63,8 +91,159 @@ async def _load_profile(user_id: UUID, jwt: str) -> UserProfileSlice:
     )
 
 
+async def _load_idea(idea_id: str, jwt: str) -> IdeaSlice | None:
+    """Fetch an idea row (RLS-scoped) and reduce it to the studio slice."""
+    client = await user_client(jwt)
+    resp = (
+        await client.from_("ideas")
+        .select(
+            "id, title, body, rationale, idea_type, opportunity_score, "
+            "source_type, source_content"
+        )
+        .eq("id", idea_id)
+        .maybe_single()
+        .execute()
+    )
+    data = resp.data if resp is not None else None
+    if not data:
+        return None
+    return IdeaSlice(
+        id=str(data["id"]),
+        title=data["title"],
+        body=data.get("body"),
+        rationale=data.get("rationale"),
+        idea_type=data.get("idea_type"),
+        opportunity_score=data.get("opportunity_score"),
+        source_type=data.get("source_type"),
+        source_content=data.get("source_content"),
+    )
+
+
+async def _ensure_studio_session(
+    user_id: UUID,
+    jwt: str,
+    idea_id: str,
+    target_duration_min: int,
+) -> str:
+    """Return the studio_sessions.id for (user_id, idea_id), creating if missing."""
+    client = await user_client(jwt)
+    existing = (
+        await client.from_("studio_sessions")
+        .select("id")
+        .eq("idea_id", idea_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return str(existing.data[0]["id"])
+
+    insert = (
+        await client.from_("studio_sessions")
+        .insert(
+            {
+                "user_id": str(user_id),
+                "idea_id": idea_id,
+                "target_duration_min": target_duration_min,
+                "status": "active",
+            }
+        )
+        .execute()
+    )
+    if not insert.data:
+        raise RuntimeError("studio_sessions insert returned no row")
+    return str(insert.data[0]["id"])
+
+
+def _script_to_text(script: dict[str, Any]) -> str:
+    """Flat-text rendering of a Script for content_text and previews."""
+    lines: list[str] = []
+    for i, sec in enumerate(script.get("sections") or [], start=1):
+        lines.append(f"{i}. {sec.get('heading','')} ({sec.get('duration_min','?')} min)")
+        for tp in sec.get("talking_points") or []:
+            lines.append(f"  • {tp}")
+        if sec.get("transition"):
+            lines.append(f"  → {sec['transition']}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _outline_to_text(outline: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for it in outline.get("items") or []:
+        lines.append(f"{it.get('number','?')}. {it.get('label','')} — {it.get('beat','')}")
+    return "\n".join(lines).strip()
+
+
+async def _next_artifact_version(
+    jwt: str,
+    session_id: str,
+    artifact_type: str,
+) -> int:
+    client = await user_client(jwt)
+    resp = (
+        await client.from_("artifacts")
+        .select("version")
+        .eq("session_id", session_id)
+        .eq("type", artifact_type)
+        .order("version", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if resp.data:
+        return int(resp.data[0]["version"]) + 1
+    return 1
+
+
+async def _persist_script_outline(
+    user_id: UUID,
+    jwt: str,
+    session_id: str,
+    script: dict[str, Any],
+    outline: dict[str, Any],
+) -> tuple[str, str]:
+    """Insert versioned script + outline artifacts. Returns (script_id, outline_id)."""
+    client = await user_client(jwt)
+
+    script_version = await _next_artifact_version(jwt, session_id, "script")
+    outline_version = await _next_artifact_version(jwt, session_id, "outline")
+
+    rows = [
+        {
+            "user_id": str(user_id),
+            "session_id": session_id,
+            "type": "script",
+            "version": script_version,
+            "content_text": _script_to_text(script),
+            "content_json": script,
+        },
+        {
+            "user_id": str(user_id),
+            "session_id": session_id,
+            "type": "outline",
+            "version": outline_version,
+            "content_text": _outline_to_text(outline),
+            "content_json": outline,
+        },
+    ]
+    inserted = await client.from_("artifacts").insert(rows).execute()
+    if not inserted.data or len(inserted.data) != 2:
+        raise RuntimeError("artifacts insert did not return both rows")
+
+    script_id = next(r["id"] for r in inserted.data if r["type"] == "script")
+    outline_id = next(r["id"] for r in inserted.data if r["type"] == "outline")
+
+    # Mirror outline as plain text on the session for the kanban preview.
+    await (
+        client.from_("studio_sessions")
+        .update({"scene_outline": _outline_to_text(outline)})
+        .eq("id", session_id)
+        .execute()
+    )
+    return str(script_id), str(outline_id)
+
+
 async def _safe_send_json(ws: WebSocket, payload: dict[str, Any]) -> bool:
-    """Return True on success, False if the socket is already closed."""
     if ws.application_state != WebSocketState.CONNECTED:
         return False
     try:
@@ -72,6 +251,9 @@ async def _safe_send_json(ws: WebSocket, payload: dict[str, Any]) -> bool:
         return True
     except Exception:
         return False
+
+
+# ─── /ws/agents/research ───────────────────────────────────────────────────
 
 
 @router.websocket("/ws/agents/research")
@@ -130,6 +312,265 @@ async def research_stream(
     await _safe_send_json(
         websocket,
         {"type": "complete", "count": draft_count, "cost_usd": cost_usd},
+    )
+    if websocket.application_state == WebSocketState.CONNECTED:
+        await websocket.close()
+
+
+# ─── /ws/agents/studio ─────────────────────────────────────────────────────
+
+
+@router.websocket("/ws/agents/studio")
+async def studio_stream(
+    websocket: WebSocket,
+    token: str | None = None,
+    idea_id: str | None = None,
+    duration: int | None = None,
+) -> None:
+    await websocket.accept()
+
+    try:
+        user_id, jwt = await verify_ws_token(token)
+    except WsAuthError as e:
+        await websocket.close(code=_CLOSE_UNAUTHORIZED, reason=str(e))
+        return
+
+    if not idea_id:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="idea_id required")
+        return
+
+    target_duration_min = duration if duration and 3 <= duration <= 60 else 20
+
+    try:
+        idea = await _load_idea(idea_id, jwt)
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"idea load failed: {e}"}
+        )
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    if idea is None:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="idea not found")
+        return
+
+    try:
+        profile = await _load_profile(user_id, jwt)
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"profile load failed: {e}"}
+        )
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    cost_usd = 0.0
+    last_script: dict[str, Any] | None = None
+    last_outline: dict[str, Any] | None = None
+
+    try:
+        async for event in run_studio_script(
+            user_id, profile, idea, target_duration_min
+        ):
+            t = event.get("type")
+            if t == "script_ready":
+                last_script = event.get("script")
+            elif t == "outline_ready":
+                last_outline = event.get("outline")
+            elif t == "usage":
+                cost_usd = float((event.get("token_usage") or {}).get("cost_usd") or 0.0)
+            await _safe_send_json(websocket, event)
+    except WebSocketDisconnect:
+        return
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"crew failed: {e}"}
+        )
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    if last_script is None or last_outline is None:
+        await _safe_send_json(
+            websocket,
+            {"type": "error", "message": "studio crew did not produce script + outline"},
+        )
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    try:
+        session_id = await _ensure_studio_session(
+            user_id, jwt, idea_id, target_duration_min
+        )
+        script_artifact_id, outline_artifact_id = await _persist_script_outline(
+            user_id, jwt, session_id, last_script, last_outline
+        )
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"persist failed: {e}"}
+        )
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    await _safe_send_json(
+        websocket,
+        {
+            "type": "persisted",
+            "session_id": session_id,
+            "idea_id": idea_id,
+            "script_artifact_id": script_artifact_id,
+            "outline_artifact_id": outline_artifact_id,
+        },
+    )
+    await _safe_send_json(
+        websocket,
+        {"type": "complete", "cost_usd": cost_usd},
+    )
+    if websocket.application_state == WebSocketState.CONNECTED:
+        await websocket.close()
+
+
+# ─── /ws/agents/extract ────────────────────────────────────────────────────
+
+
+@router.websocket("/ws/agents/extract")
+async def extract_stream(
+    websocket: WebSocket,
+    token: str | None = None,
+) -> None:
+    await websocket.accept()
+
+    try:
+        user_id, jwt = await verify_ws_token(token)
+    except WsAuthError as e:
+        await websocket.close(code=_CLOSE_UNAUTHORIZED, reason=str(e))
+        return
+
+    # First message must carry the source content.
+    try:
+        first = await asyncio.wait_for(websocket.receive_text(), timeout=15.0)
+    except asyncio.TimeoutError:
+        await websocket.close(
+            code=_CLOSE_BAD_REQUEST,
+            reason="expected source_content message within 15s",
+        )
+        return
+    except WebSocketDisconnect:
+        return
+
+    try:
+        first_payload = json.loads(first)
+    except json.JSONDecodeError:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="invalid JSON")
+        return
+
+    source_content = (first_payload.get("source_content") or "").strip()
+    source_url = (first_payload.get("source_url") or "").strip() or None
+    if not source_content or len(source_content) > _MAX_SOURCE_CONTENT_CHARS:
+        await websocket.close(
+            code=_CLOSE_BAD_REQUEST,
+            reason=f"source_content must be 1-{_MAX_SOURCE_CONTENT_CHARS} chars",
+        )
+        return
+
+    try:
+        profile = await _load_profile(user_id, jwt)
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"profile load failed: {e}"}
+        )
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    extracted: dict[str, Any] | None = None
+    cost_usd = 0.0
+
+    try:
+        async for event in run_content_extract(user_id, profile, source_content):
+            t = event.get("type")
+            if t == "extract_ready":
+                extracted = event.get("extracted")
+            elif t == "usage":
+                cost_usd = float((event.get("token_usage") or {}).get("cost_usd") or 0.0)
+            await _safe_send_json(websocket, event)
+    except WebSocketDisconnect:
+        return
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"crew failed: {e}"}
+        )
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    if extracted is None:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": "no extracted payload"}
+        )
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    try:
+        client = await user_client(jwt)
+        idea_row = (
+            await client.from_("ideas")
+            .insert(
+                {
+                    "user_id": str(user_id),
+                    "title": extracted["title"],
+                    "rationale": extracted.get("rationale"),
+                    "idea_type": extracted.get("idea_type"),
+                    "source_type": "content_extract",
+                    "source_content": source_content,
+                    "source_content_url": source_url,
+                }
+            )
+            .execute()
+        )
+        if not idea_row.data:
+            raise RuntimeError("ideas insert returned no row")
+        new_idea_id = str(idea_row.data[0]["id"])
+
+        session_id = await _ensure_studio_session(
+            user_id,
+            jwt,
+            new_idea_id,
+            int(extracted.get("derived_duration_min") or 20),
+        )
+        script_artifact_id, outline_artifact_id = await _persist_script_outline(
+            user_id,
+            jwt,
+            session_id,
+            extracted["script"],
+            extracted["outline"],
+        )
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"persist failed: {e}"}
+        )
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    await _safe_send_json(
+        websocket,
+        {
+            "type": "persisted",
+            "idea_id": new_idea_id,
+            "session_id": session_id,
+            "script_artifact_id": script_artifact_id,
+            "outline_artifact_id": outline_artifact_id,
+        },
+    )
+    await _safe_send_json(
+        websocket,
+        {"type": "complete", "cost_usd": cost_usd},
     )
     if websocket.application_state == WebSocketState.CONNECTED:
         await websocket.close()

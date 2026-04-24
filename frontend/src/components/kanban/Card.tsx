@@ -1,7 +1,8 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { CSSProperties } from "react";
-import { Trash } from "@phosphor-icons/react";
+import { Trash, ArrowSquareOut } from "@phosphor-icons/react";
+import { useNavigate } from "react-router-dom";
 import { Badge } from "../ui/Badge";
 import { cn } from "../../lib/cn";
 import type { KanbanCard as KanbanCardType } from "./types";
@@ -13,6 +14,7 @@ type Props = {
 };
 
 export function KanbanCardView({ card, onClick, onDelete }: Props) {
+  const navigate = useNavigate();
   const {
     attributes,
     listeners,
@@ -32,6 +34,11 @@ export function KanbanCardView({ card, onClick, onDelete }: Props) {
     if (!onDelete) return;
     if (!window.confirm(`Delete "${card.title}"? This cannot be undone.`)) return;
     void onDelete(card.id);
+  }
+
+  function handleOpenStudio(e: React.MouseEvent | React.PointerEvent | React.KeyboardEvent) {
+    e.stopPropagation();
+    navigate(`/studio/${card.id}`);
   }
 
   return (
@@ -55,31 +62,51 @@ export function KanbanCardView({ card, onClick, onDelete }: Props) {
         isDragging && "opacity-30",
       )}
     >
-      {onDelete ? (
+      <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
         <button
           type="button"
-          aria-label={`Delete ${card.title}`}
-          title="Delete"
-          onClick={handleDelete}
+          aria-label={`Open ${card.title} in Studio`}
+          title="Open in Studio"
+          onClick={handleOpenStudio}
           onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              handleDelete(e);
+              handleOpenStudio(e);
             }
           }}
           className={cn(
-            "absolute top-1.5 right-1.5 z-10",
             "inline-flex items-center justify-center h-6 w-6 rounded",
             "text-mist hover:text-cinnabar hover:bg-cinnabar/10",
-            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
-            "transition-opacity duration-150",
+            "transition-colors duration-150",
           )}
         >
-          <Trash size={12} weight="bold" />
+          <ArrowSquareOut size={12} weight="bold" />
         </button>
-      ) : null}
-      <div className="flex items-start justify-between gap-2 mb-2.5 pr-6">
+        {onDelete ? (
+          <button
+            type="button"
+            aria-label={`Delete ${card.title}`}
+            title="Delete"
+            onClick={handleDelete}
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleDelete(e);
+              }
+            }}
+            className={cn(
+              "inline-flex items-center justify-center h-6 w-6 rounded",
+              "text-mist hover:text-cinnabar hover:bg-cinnabar/10",
+              "transition-colors duration-150",
+            )}
+          >
+            <Trash size={12} weight="bold" />
+          </button>
+        ) : null}
+      </div>
+      <div className="flex items-start justify-between gap-2 mb-2.5 pr-12">
         <span className="text-[13.5px] text-white leading-[1.35] font-medium line-clamp-2 tracking-[-0.005em]">
           {card.title}
         </span>
@@ -112,7 +139,7 @@ export function KanbanCardOverlay({ card }: { card: KanbanCardType }) {
         "rotate-[1.5deg] cursor-grabbing",
       )}
     >
-      <div className="flex items-start justify-between gap-2 mb-2.5">
+      <div className="flex items-start justify-between gap-2 mb-2.5 pr-12">
         <span className="text-[13.5px] text-white leading-[1.35] font-medium line-clamp-2 tracking-[-0.005em]">
           {card.title}
         </span>
