@@ -1,11 +1,12 @@
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, ArrowLeft, Check, Warning } from "@phosphor-icons/react";
 import { Button } from "../components/ui/Button";
 import { Input, Textarea, FieldLabel } from "../components/ui/Input";
 import { cn } from "../lib/cn";
 import { api, ApiError } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useAuth, type Profile } from "../lib/auth";
 
 const STEPS = [
   { id: 1, title: "Who are you?", hint: "identity" },
@@ -51,9 +52,7 @@ export default function OnboardingPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
-  const auth = useAuth() as ReturnType<typeof useAuth> & {
-    refreshProfile?: () => Promise<void>;
-  };
+  const { setProfileAndOnboarded } = useAuth();
 
   async function submit() {
     if (!form.display_name || !form.positioning || !form.voice) {
@@ -64,7 +63,7 @@ export default function OnboardingPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.post("/auth/onboard", {
+      const res = await api.post<{ profile: Profile | null }>("/auth/onboard", {
         display_name: form.display_name,
         positioning: form.positioning,
         audience: form.audience,
@@ -75,9 +74,27 @@ export default function OnboardingPage() {
           .filter(Boolean),
         things_to_avoid: form.things_to_avoid,
       });
-      if (typeof auth.refreshProfile === "function") {
-        await auth.refreshProfile();
-      }
+      // Commit the new profile to context SYNCHRONOUSLY so the next route guard
+      // sees onboarded=true immediately. flushSync forces React to apply the
+      // state update before navigate runs — without it, RequireAuth on /make
+      // can render with stale onboarded=false and bounce back to /onboarding.
+      const freshProfile: Profile =
+        res.profile ?? {
+          user_id: "",
+          display_name: form.display_name,
+          positioning: form.positioning,
+          audience: form.audience,
+          voice: form.voice,
+          creators_followed: form.creators_followed
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+          things_to_avoid: form.things_to_avoid,
+          onboarded_at: new Date().toISOString(),
+        };
+      flushSync(() => {
+        setProfileAndOnboarded(freshProfile, true);
+      });
       navigate("/make", { replace: true });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save profile.");

@@ -23,6 +23,11 @@ type AuthState = {
   loading: boolean;
   recovering: boolean;
   refreshProfile: () => Promise<void>;
+  /** Synchronously mark the user as onboarded with a freshly-returned profile.
+   *  Use immediately after a successful POST /auth/onboard so that the very next
+   *  render (e.g. after a navigate call) sees onboarded=true — avoids the race
+   *  where RequireAuth reads stale context and bounces back to /onboarding. */
+  setProfileAndOnboarded: (profile: Profile, onboarded: boolean) => void;
   signOut: () => Promise<void>;
 };
 
@@ -90,6 +95,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     recovering,
     refreshProfile,
+    setProfileAndOnboarded: (p, ob) => {
+      setProfile(p);
+      setOnboarded(ob);
+    },
     signOut: async () => {
       await supabase.auth.signOut();
     },

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from jose import jwt
 from pydantic import BaseModel, Field
 
-from app.deps import user_client
+from app.deps import service_client, user_client
 from app.middleware.auth import current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -30,9 +30,31 @@ class OnboardResponse(BaseModel):
     profile: dict | None
 
 
+async def _ensure_user_rows(user_id: str) -> dict | None:
+    """Bootstrap public.users + public.user_profiles if the handle_new_user()
+    trigger didn't run (missing or pre-trigger account). Idempotent.
+
+    Uses the service client because public.users has no INSERT RLS policy.
+    Returns the freshly-ensured user_profiles row, or None if the upsert yields
+    nothing.
+    """
+    admin = await service_client()
+    await (
+        admin.from_("users")
+        .upsert({"id": user_id}, on_conflict="id")
+        .execute()
+    )
+    result = await (
+        admin.from_("user_profiles")
+        .upsert({"user_id": user_id}, on_conflict="user_id")
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(ctx: tuple = Depends(current_user)) -> MeResponse:
-    """Return the current user + profile. Creates the profile row on first call."""
+    """Return the current user + profile. Creates the rows on first call if missing."""
     user_id, token = ctx
     client = await user_client(token)
 
@@ -51,11 +73,24 @@ async def me(ctx: tuple = Depends(current_user)) -> MeResponse:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
 
+    # supabase-py 2.x: maybe_single().execute() returns None when no row matches.
+    # Older versions returned an object with data=None. Handle both.
+    profile_data = getattr(profile, "data", None) if profile is not None else None
+
+    # Self-heal: if the trigger didn't create the rows, do it now.
+    if profile_data is None:
+        try:
+            profile_data = await _ensure_user_rows(str(user_id))
+        except Exception as e:
+            raise HTTPException(
+                status_code=400, detail=f"Supabase error (bootstrap): {e}"
+            ) from e
+
     return MeResponse(
         user_id=str(user_id),
         email=email,
-        profile=profile.data,
-        onboarded=bool(profile.data and profile.data.get("onboarded_at")),
+        profile=profile_data,
+        onboarded=bool(profile_data and profile_data.get("onboarded_at")),
     )
 
 
@@ -65,6 +100,16 @@ async def onboard(
 ) -> OnboardResponse:
     """Upsert the user_profiles row and mark onboarded_at. RLS enforces ownership."""
     user_id, token = ctx
+
+    # Self-heal: ensure public.users + public.user_profiles rows exist. Belt-and-
+    # suspenders — /auth/me already does this, but this covers direct onboard hits.
+    try:
+        await _ensure_user_rows(str(user_id))
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, detail=f"Supabase error (bootstrap): {e}"
+        ) from e
+
     client = await user_client(token)
 
     row = {

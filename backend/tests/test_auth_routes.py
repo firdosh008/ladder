@@ -56,6 +56,19 @@ def _make_upsert_client(upserted_row: dict | None) -> tuple[AsyncMock, MagicMock
     return AsyncMock(return_value=client), upsert_mock
 
 
+def _make_noop_service_client() -> AsyncMock:
+    """service_client() mock whose .from_(...).upsert(...).execute() is a no-op."""
+    response = MagicMock()
+    response.data = []
+    upsert_chain = MagicMock()
+    upsert_chain.execute = AsyncMock(return_value=response)
+    table = MagicMock()
+    table.upsert.return_value = upsert_chain
+    sb = MagicMock()
+    sb.from_.return_value = table
+    return AsyncMock(return_value=sb)
+
+
 # ---------------------------------------------------------------------------
 # GET /auth/me
 # ---------------------------------------------------------------------------
@@ -119,13 +132,46 @@ async def test_me_onboarded_false_when_no_profile(
     client: Any, make_jwt: Callable[..., str]
 ) -> None:
     token = make_jwt()
-    with patch("app.routes.auth.user_client", _make_select_client(None)):
+    with patch("app.routes.auth.user_client", _make_select_client(None)), patch(
+        "app.routes.auth.service_client", _make_noop_service_client()
+    ):
         resp = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["onboarded"] is False
+    # When the profile row is missing, _ensure_user_rows bootstraps one; the no-op
+    # service_client mock returns [], so profile ends up None (acceptable signal).
     assert body["profile"] is None
+
+
+async def test_me_handles_none_execute_result(
+    client: Any, make_jwt: Callable[..., str]
+) -> None:
+    """supabase-py 2.x returns None (not an obj with data=None) from
+    maybe_single().execute() when no row matches. Route must not AttributeError."""
+    token = make_jwt()
+    # Build a client whose execute() returns None entirely.
+    from unittest.mock import AsyncMock as _AM
+    from unittest.mock import MagicMock as _MM
+    builder = _MM()
+    builder.select.return_value = builder
+    builder.eq.return_value = builder
+    builder.maybe_single.return_value = builder
+    builder.execute = _AM(return_value=None)
+    sb = _MM()
+    sb.from_.return_value = builder
+    user_client_mock = _AM(return_value=sb)
+
+    with patch("app.routes.auth.user_client", user_client_mock), patch(
+        "app.routes.auth.service_client", _make_noop_service_client()
+    ):
+        resp = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["profile"] is None
+    assert body["onboarded"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +202,9 @@ async def test_onboard_valid_payload(client: Any, make_jwt: Callable[..., str]) 
         "creators_followed": ["swyx"],
         "things_to_avoid": "hype",
     }
-    with patch("app.routes.auth.user_client", user_client_mock):
+    with patch("app.routes.auth.user_client", user_client_mock), patch(
+        "app.routes.auth.service_client", _make_noop_service_client()
+    ):
         resp = await client.post(
             "/auth/onboard",
             headers={"Authorization": f"Bearer {token}"},
@@ -174,7 +222,9 @@ async def test_onboard_missing_display_name_returns_422(
     token = make_jwt()
     user_client_mock, _ = _make_upsert_client({"user_id": "x"})
 
-    with patch("app.routes.auth.user_client", user_client_mock):
+    with patch("app.routes.auth.user_client", user_client_mock), patch(
+        "app.routes.auth.service_client", _make_noop_service_client()
+    ):
         resp = await client.post(
             "/auth/onboard",
             headers={"Authorization": f"Bearer {token}"},
@@ -191,7 +241,9 @@ async def test_onboard_writes_iso_timestamp_not_now_string(
     token = make_jwt()
     user_client_mock, upsert_mock = _make_upsert_client({"user_id": "x"})
 
-    with patch("app.routes.auth.user_client", user_client_mock):
+    with patch("app.routes.auth.user_client", user_client_mock), patch(
+        "app.routes.auth.service_client", _make_noop_service_client()
+    ):
         resp = await client.post(
             "/auth/onboard",
             headers={"Authorization": f"Bearer {token}"},

@@ -87,7 +87,24 @@ async def test_valid_jwt_end_to_end(
     make_jwt: Callable[..., str],
     select_client: Callable[[dict | None], AsyncMock],
 ) -> None:
+    from unittest.mock import AsyncMock as _AM
+    from unittest.mock import MagicMock as _MM
+
+    # Stub service_client so the /auth/me self-heal (when profile is None)
+    # doesn't try to hit a real Supabase.
+    noop_resp = _MM()
+    noop_resp.data = []
+    noop_chain = _MM()
+    noop_chain.execute = _AM(return_value=noop_resp)
+    noop_table = _MM()
+    noop_table.upsert.return_value = noop_chain
+    noop_sb = _MM()
+    noop_sb.from_.return_value = noop_table
+    noop_service = _AM(return_value=noop_sb)
+
     token = make_jwt()
-    with patch("app.routes.auth.user_client", select_client(None)):
+    with patch("app.routes.auth.user_client", select_client(None)), patch(
+        "app.routes.auth.service_client", noop_service
+    ):
         resp = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
