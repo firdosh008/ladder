@@ -3,14 +3,20 @@
     async for event in run_scene_build(user_id, profile, idea, outline, script):
         ...
 
-Build flow: planner → designer. The designer's SceneSkeleton is persisted.
+Two-stage build:
 
-Event protocol:
+  1. CrewAI planner crew → SceneLayout (small/flat schema, prompted JSON
+     via `output_pydantic` is fine and gives us native streaming).
+  2. Direct Anthropic call with structured outputs → SceneSkeleton (large
+     nested schema; CrewAI's prompted JSON dropped `elements` regularly,
+     grammar-constrained sampling fixes it).
+
+Event protocol (matches the frontend SceneRunPanel agent keys):
   agent_start   — layout_planner | element_designer
-  text_delta    — LLM tokens
+  text_delta    — LLM tokens (planner only; designer is one-shot)
   task_complete — task index advance
   scene_ready   — final SceneSkeleton (designer output)
-  usage         — token + cost rollup
+  usage         — token + cost rollup (combined planner + designer)
 """
 
 from __future__ import annotations
@@ -22,9 +28,17 @@ from uuid import UUID
 from crewai import Crew, Process
 
 from app.agents.scene.agents import build_agents
-from app.agents.scene.tasks import build_tasks
+from app.agents.scene.designer import run_designer
+from app.agents.scene.tasks import build_planner_task
 from app.config import settings
-from app.models.db import IdeaSlice, Outline, SceneSkeleton, Script, UserProfileSlice
+from app.models.db import (
+    IdeaSlice,
+    Outline,
+    SceneLayout,
+    SceneSkeleton,
+    Script,
+    UserProfileSlice,
+)
 from app.services.usage import log_usage
 
 
@@ -33,7 +47,6 @@ _PRICE_OUT_PER_MTOK = 15.0
 
 _ROLE_TO_KEY = {
     "Layout planner": "layout_planner",
-    "Element designer": "element_designer",
 }
 
 
@@ -43,10 +56,10 @@ def _agent_key(role: str | None) -> str | None:
     return _ROLE_TO_KEY.get(role, role)
 
 
-async def _stream_crew_events(
+async def _stream_planner(
     crew: Crew,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Run a crew with stream=True and yield wire events."""
+    """Run the planner crew with stream=True and yield wire events."""
 
     streaming = await crew.akickoff()
     current_agent_key: str | None = None
@@ -110,14 +123,10 @@ def _extract_pydantic(tasks_output: list[Any], expected_type: type) -> Any | Non
     return None
 
 
-def _bill_usage(entry: Any, metrics: Any) -> None:
-    if metrics is None:
-        return
-    entry.input_tokens = int(getattr(metrics, "prompt_tokens", 0) or 0)
-    entry.output_tokens = int(getattr(metrics, "completion_tokens", 0) or 0)
-    entry.cost_usd = round(
-        (entry.input_tokens / 1_000_000) * _PRICE_IN_PER_MTOK
-        + (entry.output_tokens / 1_000_000) * _PRICE_OUT_PER_MTOK,
+def _bill(input_tokens: int, output_tokens: int) -> float:
+    return round(
+        (input_tokens / 1_000_000) * _PRICE_IN_PER_MTOK
+        + (output_tokens / 1_000_000) * _PRICE_OUT_PER_MTOK,
         6,
     )
 
@@ -129,7 +138,7 @@ async def run_scene_build(
     outline: Outline,
     script: Script,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Plan → design. Designer's SceneSkeleton is the only scene output."""
+    """Plan (CrewAI) → design (Anthropic structured outputs)."""
 
     async with log_usage(
         user_id=user_id,
@@ -138,32 +147,54 @@ async def run_scene_build(
         provider="anthropic",
     ) as entry:
         agents = build_agents(profile, idea)
-        tasks = build_tasks(outline, script, agents)
+        planner_task = build_planner_task(outline, script, agents)
 
         crew = Crew(
-            agents=[agents["layout_planner"], agents["element_designer"]],
-            tasks=tasks,
+            agents=[agents["layout_planner"]],
+            tasks=[planner_task],
             process=Process.sequential,
             stream=True,
             verbose=False,
         )
 
         crew_result: Any = None
-        async for ev in _stream_crew_events(crew):
+        async for ev in _stream_planner(crew):
             if ev.get("type") == "_result":
                 crew_result = ev["result"]
                 continue
             yield ev
 
         tasks_output = list(getattr(crew_result, "tasks_output", []) or [])
-        skeleton = _extract_pydantic(tasks_output, SceneSkeleton)
-
-        if skeleton is None:
+        layout = _extract_pydantic(tasks_output, SceneLayout)
+        if layout is None:
             raise RuntimeError(
-                "element_designer did not produce a SceneSkeleton payload"
+                "layout_planner did not produce a SceneLayout payload"
             )
 
-        _bill_usage(entry, getattr(crew_result, "token_usage", None))
+        planner_usage = getattr(crew_result, "token_usage", None)
+        planner_in = int(getattr(planner_usage, "prompt_tokens", 0) or 0)
+        planner_out = int(getattr(planner_usage, "completion_tokens", 0) or 0)
+
+        # Designer — direct Anthropic call with grammar-constrained JSON.
+        yield {"type": "agent_start", "agent": "element_designer"}
+
+        skeleton, designer_in, designer_out = await run_designer(
+            profile=profile,
+            idea=idea,
+            layout=layout,
+            script=script,
+            outline=outline,
+        )
+
+        yield {
+            "type": "task_complete",
+            "agent": "element_designer",
+            "preview": (skeleton.notes or "")[-240:],
+        }
+
+        entry.input_tokens = planner_in + designer_in
+        entry.output_tokens = planner_out + designer_out
+        entry.cost_usd = _bill(entry.input_tokens, entry.output_tokens)
 
         yield {"type": "scene_ready", "scene": skeleton.model_dump()}
         yield {

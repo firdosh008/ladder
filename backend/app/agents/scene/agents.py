@@ -1,10 +1,10 @@
 """Agents for the Scene crew (PRD §5.5 / §11.4).
 
-Two roles, sequential handoff:
-
-  layout_planner   → produces SceneLayout: canvas, flow, per-frame regions.
-  element_designer → produces SceneSkeleton (Excalidraw element list) — this
-                     is what the user sees; no critic pass.
+Only one CrewAI agent now: the layout planner. The element designer used to
+be a CrewAI agent with `output_pydantic=SceneSkeleton`, but that path
+relies on prompted JSON which dropped the top-level `elements` array on a
+large fraction of runs. The designer is now a direct Anthropic call with
+grammar-constrained structured outputs — see `app/agents/scene/designer.py`.
 
 Founder context (positioning / voice / brand) is interpolated into every
 backstory — PRD §11 cardinal rule: no hardcoded user identifiers.
@@ -73,39 +73,4 @@ def build_agents(
         max_iter=3,
     )
 
-    element_designer = Agent(
-        role="Element designer",
-        goal=(
-            "Inside each layout frame, draw the right Excalidraw primitives "
-            "for that frame's kind (flow, table, decision, architecture, "
-            "checklist, title, cta, diagram). Connect frames with arrows "
-            "that bind to element ids. You MUST return a full SceneSkeleton "
-            "JSON with a non-empty `elements` array (minimum 2 items). "
-            "Use the Ladder palette: Cinnabar #E8442A for accents, near-white "
-            "#F5F5F5 for strokes/text on the dark canvas, no fills unless the "
-            "frame is a title or CTA card."
-        ),
-        backstory=(
-            "You produce ExcalidrawElementSkeleton JSON. You assign every "
-            "element a stable string id ('f1-box', 'f2-diamond', 'arrow-1') "
-            "so arrows can bind by id. Text labels on shapes match the "
-            "outline frame label EXACTLY — that's how screenshot-to-edit "
-            "later finds them. You use roughness=1 (hand-drawn) and "
-            "strokeWidth=2 unless a frame demands emphasis. You never "
-            "overlap regions: shapes stay inside their frame's bounding "
-            "box with at least 24px internal padding. Never omit the top-level "
-            "`elements` key — the app validates your output and will fail if "
-            "it is missing.\n\n"
-            "Founder context:\n" + profile_ctx + "\n\n"
-            "Video idea:\n" + idea_ctx
-        ),
-        llm=llm,
-        allow_delegation=False,
-        verbose=False,
-        max_iter=4,
-    )
-
-    return {
-        "layout_planner": layout_planner,
-        "element_designer": element_designer,
-    }
+    return {"layout_planner": layout_planner}

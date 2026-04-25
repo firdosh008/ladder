@@ -1,6 +1,8 @@
 # Ladder Content OS — Handoff / Context Doc
 
-Last updated: 2026-04-25 (overnight — Studio (script + outline) and Content-extract verticals shipped end-to-end). Purpose: bring a fresh Claude session (or a human contributor) up to speed without re-reading the whole chat history.
+Last updated: 2026-04-25. Purpose: bring a fresh session (or a human contributor) up to speed without re-reading the whole chat history.
+
+**Recent (scene vertical):** Excalidraw **build_scene** is wired end-to-end as a hybrid crew: **planner is CrewAI** (`layout_planner` → `SceneLayout`), **designer is a direct Anthropic structured-outputs call** (`element_designer` → `SceneSkeleton`). The designer used to be a CrewAI task with `output_pydantic`, but prompted JSON dropped the top-level `elements` array on a large fraction of runs. Grammar-constrained sampling (`output_format: json_schema`) makes that failure mode mathematically impossible. `SceneSkeleton` persisted as `artifacts.type = excalidraw`, embed + “open in excalidraw.com” on the studio page. **No critic / fixer** in the current pipeline.
 
 ---
 
@@ -57,7 +59,10 @@ See `backend-dys.md` for the full data-layer spec (source of truth — read it) 
 6. **Retrieval always passes explicit `user_id`.** The `match_knowledge_nodes` RPC filters `WHERE user_id = query_user_id` *before* similarity — RLS is the second layer, not the first.
 7. **WebSockets auth via `?token=<jwt>` query param**, verified with the same JWKS cache as HTTP routes (`app/middleware/ws_auth.py`). Browsers cannot set `Authorization` on `new WebSocket()`, so the query param is the only viable channel. Close codes: `4401` unauthorized, `4400` bad request, `1011` server error.
 8. **Every agent run writes exactly one `usage_log` row** via the `log_usage()` async context manager (`app/services/usage.py`) with `function_name`, `model`, `provider`, token counts, latency, and cost. This is non-negotiable — it's how we'll bill BYOK later.
-9. **Every LLM is constructed through `services/llm.py`**, never inline. That's the single place where model ID, provider, and API key get bound. When BYOK lands in v2, only this factory changes.
+9. **Every LLM is constructed through `services/llm.py`**, never inline. That's the single place where model ID, provider, and API key get bound. When BYOK lands in v2, only this factory changes. Two factories live there:
+   - `anthropic_llm()` — CrewAI `LLM` (litellm under the hood). Use inside Crews.
+   - `anthropic_client()` — raw `AsyncAnthropic` SDK client. Use when you need features CrewAI's wrapper can't express — most importantly **structured outputs** (grammar-constrained JSON via `output_format: json_schema`).
+10. **Structured artifacts use Anthropic structured outputs, not CrewAI `output_pydantic`.** CrewAI's `output_pydantic` injects the schema into the system prompt and asks nicely. That's fine for small/flat schemas (`Script`, `Outline`, `ResearchIdeas`). For **large nested schemas** like `SceneSkeleton` it fails — the model regularly drops required arrays under in-context bias from prior tasks. Use `client.messages.create(extra_body={"output_format": {"type": "json_schema", "schema": <pydantic>.model_json_schema()}}, extra_headers={"anthropic-beta": "structured-outputs-2025-11-13"})` for those. Strip Anthropic-unsupported keywords (`minimum`/`maximum`/`minLength`/`maxLength`/`pattern`/`format`/`default`) from the schema before sending; Pydantic still validates server-side.
 
 ---
 
@@ -74,7 +79,7 @@ ladder-os/
 │   │   │   ├── auth.py                   # HTTP JWT (JWKS) — current_user dep
 │   │   │   └── ws_auth.py                # WebSocket JWT verification (?token=)
 │   │   ├── models/
-│   │   │   └── db.py                     # Pydantic mirrors — IdeaSlice, IdeaDraft/ResearchIdeas, Script/ScriptSection, Outline/OutlineItem, ContentAnalysis, ExtractedVideo, UserProfileSlice
+│   │   │   └── db.py                     # Pydantic mirrors — IdeaSlice, IdeaDraft/ResearchIdeas, Script/ScriptSection, Outline/OutlineItem, SceneLayout/SceneFrame/SceneSkeleton/SceneSkeletonElement, ContentAnalysis, ExtractedVideo, UserProfileSlice
 │   │   ├── providers/
 │   │   │   └── exa.py                    # async wrapper around exa-py neural search
 │   │   ├── services/
@@ -83,13 +88,14 @@ ladder-os/
 │   │   ├── agents/
 │   │   │   ├── research/                 # research crew (3 agents → ResearchIdeas)
 │   │   │   ├── studio/                   # studio crew (script_writer → outline_planner)
-│   │   │   └── content_extract/          # content_extract crew (analyzer → extractor)
+│   │   │   ├── content_extract/          # content_extract crew (analyzer → extractor)
+│   │   │   └── scene/                    # scene crew (layout_planner → element_designer) → SceneSkeleton
 │   │   └── routes/
 │   │       ├── health.py                 # GET /health
 │   │       ├── auth.py                   # GET /auth/me, POST /auth/onboard
 │   │       ├── ideas.py                  # GET/POST/PATCH/DELETE /ideas
-│   │       ├── studio_sessions.py        # GET /studio-sessions/by-idea/{idea_id}
-│   │       └── agents.py                 # WebSocket /ws/agents/{research,studio,extract}
+│   │       ├── studio_sessions.py        # GET /studio-sessions/by-idea/{id}, POST …/scene/share
+│   │       └── agents.py                 # WebSocket /ws/agents/{research,studio,extract,scene}
 │   ├── tests/                            # pytest-asyncio + httpx + starlette TestClient
 │   ├── pyproject.toml
 │   ├── .python-version                   # 3.12 (pyo3/pydantic-core 3.14 pin)
@@ -103,7 +109,7 @@ ladder-os/
 │   │   │   ├── auth.tsx                  # AuthProvider, useAuth, RequireAuth
 │   │   │   ├── api.ts                    # fetch wrapper injecting Supabase access token
 │   │   │   ├── useIdeas.ts               # ideas hook (list/create/update/delete + refresh)
-│   │   │   ├── agents.ts                 # runResearchStream() WebSocket client
+│   │   │   ├── agents.ts                 # WS clients: research, studio, extract, scene; publishScene()
 │   │   │   ├── motion.ts                 # fadeUp/stagger presets
 │   │   │   └── cn.ts
 │   │   ├── components/
@@ -111,8 +117,8 @@ ladder-os/
 │   │   │   │   └── ResearchRunPanel.tsx       # inline on /make (PRD §2 Option 2)
 │   │   │   ├── extract/
 │   │   │   │   └── ContentExtractPanel.tsx    # inline on /make Option 3
-│   │   │   ├── studio/
-│   │   │   │   └── StudioScriptStream.tsx     # useStudioStream + ScriptView/OutlineView
+│   │   │   ├── studio/StudioScriptStream.tsx
+│   │   │   ├── scene/SceneRunPanel.tsx, SceneView.tsx  # Excalidraw embed + build CTA
 │   │   │   ├── kanban/                   # Videos.tsx board
 │   │   │   ├── ui/                       # Button, Badge, Input, Card, ...
 │   │   │   └── app/Shell.tsx             # layout shell
@@ -123,7 +129,7 @@ ladder-os/
 │   │   │   ├── Videos.tsx                # WORKS (Kanban on ideas, hover-delete)
 │   │   │   ├── Library.tsx               # DUMMY
 │   │   │   ├── Settings.tsx              # PARTIAL — Profile tab works, others dummy
-│   │   │   └── Studio.tsx                # WORKS (auto-streams or hydrates script + outline; chat panel still placeholder)
+│   │   │   └── Studio.tsx                # WORKS: script + outline + scene column (Build scene, Excalidraw); chat placeholder
 │   │   └── vite-env.d.ts
 │   ├── .env                              # gitignored, filled with VITE_SUPABASE_*
 │   └── .env.example
@@ -132,7 +138,8 @@ ladder-os/
 │       ├── 20260423000001_init.sql          # tables + trigger
 │       ├── 20260423000002_rls_policies.sql  # RLS on everything
 │       ├── 20260423000003_indexes.sql       # performance
-│       └── 20260423000004_match_function.sql# pgvector RPC
+│       ├── 20260423000004_match_function.sql# pgvector RPC
+│       └── 20260425000001_excalidraw_bucket.sql  # public Storage bucket for published .excalidraw
 ├── backend-dys.md              # data layer spec (read this)
 ├── design-sys.md               # visual language
 └── HANDOFF.md                  # this file
@@ -216,43 +223,104 @@ PRD §2 Option 3 is now fully live. Paste long-form content on `/make`, get an i
 - `frontend/src/components/extract/ContentExtractPanel.tsx` — inline panel on `/make` Option 3. 2-agent timeline + extracted-video preview card + source rail. Auto-navigates to `/studio/:idea_id` ~700ms after `persisted` so the user sees the success state, then lands in studio with the script already hydrated from artifacts (no re-run).
 - `frontend/src/pages/Make.tsx` — Option 3 is now live: input enabled, button gated on ≥80 chars, character counter when below threshold. Research and content-extract panels are mutually exclusive (starting one clears the other's setup state).
 
+### AI — Scene (Excalidraw) vertical (shipped 2026-04-25, hybrid rewrite 2026-04-25 late)
+End-to-end **build_scene**: outline + script in → Excalidraw **skeleton** out → persisted + embedded in Studio.
+
+- **Data shape:** `SceneSkeleton` in `app/models/db.py` mirrors `@excalidraw/excalidraw`’s `ExcalidrawElementSkeleton` (camelCase fields) so the frontend can call `convertToExcalidrawElements()` with no translation. Persisted as `artifacts.type = excalidraw` (versioned JSON in `content_json`).
+- **Hybrid pipeline** (`backend/app/agents/scene/`):
+  1. **Planner — CrewAI** (`agents.py` + `tasks.py`). Single `layout_planner` agent, single sequential task with `output_pydantic=SceneLayout`. Streams `agent_start` / `text_delta` / `task_complete` via `Crew(stream=True)`.
+  2. **Designer — direct Anthropic** (`designer.py`). `client.messages.create(...)` with `output_format: json_schema(SceneSkeleton)` and the `structured-outputs-2025-11-13` beta header. Grammar-constrained sampling guarantees `elements` exists. One-shot, non-streaming (the artifact is structural, not narrative).
+- The crew has **no critic**. Don't reintroduce one without a strong reason — the original critic + `output_pydantic` design was the source of the validation noise that motivated this rewrite.
+- **WebSocket** `GET /ws/agents/scene?token=...&session_id=...` — loads session + latest script + outline + idea + profile, runs `run_scene_build`, streams the usual `agent_start` / `text_delta` / `task_complete`, then `scene_ready` + `usage`, then persists and emits `persisted` with `scene_artifact_id` and `complete`. The frontend `SceneRunPanel` agent keys (`layout_planner`, `element_designer`) are unchanged — only the implementation behind the designer key shifted.
+- **Open in Excalidraw:** frontend inflates the skeleton, then `POST /studio-sessions/{session_id}/scene/share` uploads the full Excalidraw file JSON to Storage bucket `excalidraw_scenes` (public read; RLS path-scoped write). Public URL is opened as `excalidraw.com/#url=<encodeURIComponent(url)>`. Migration: `20260425000001_excalidraw_bucket.sql`.
+- **Hydration:** `GET /studio-sessions/by-idea/{idea_id}` returns `scene` = latest `excalidraw` artifact (or null). No separate critique row.
+- **Frontend:** `SceneRunPanel` + lazy `SceneView` (`@excalidraw/excalidraw`), download + share affordances. `useStudioStream` holds `sessionId` + `scene` for the scene column.
+
+#### Postmortem — why the second agent had to leave CrewAI
+
+What we kept hitting (every other run, 2026-04-25):
+
+```
+ERROR:root:Anthropic API call failed: 1 validation error for SceneSkeleton
+elements
+  Field required [type=missing, input_value={'canvas_width': 2000, 'c...able (pricing models).'}]
+```
+
+…and intermittently the planner's `frames[].description` blew past its 400-char cap.
+
+Two real problems, one architectural:
+
+1. **In-context contamination.** `Task(context=[plan_task])` puts the planner's `SceneLayout` (with `frames[].description`) directly into the designer's prompt. The model then mirrors that shape and emits `{canvas_width, ..., frames-style-descriptions}` instead of `{..., elements: [...]}`. Prompted JSON has no defense against this — the schema is just text in the system prompt fighting more recent text in the user prompt.
+2. **CrewAI retry doesn't help.** `output_pydantic` retries re-prompt with the same conceptual mistake; the model converges on the wrong shape, not the right one.
+
+The correct fix was structural, not prompt-engineering:
+
+- **Planner stayed as CrewAI** — its schema (`SceneLayout`) is small and flat; prompted JSON is fine and we keep token-by-token streaming for the UI.
+- **Designer became a direct Anthropic call** with `output_format: {type: "json_schema", schema: SceneSkeleton.model_json_schema()}`. The schema is compiled into a grammar that constrains token sampling; the model literally cannot emit JSON missing `elements`. This is Anthropic's "Structured Outputs" feature (beta header `structured-outputs-2025-11-13`, GA on Sonnet 4.6).
+- **Schema cleaning.** Anthropic's grammar compiler is fussy about JSON Schema. `designer._clean_schema()` walks the Pydantic-emitted schema and:
+  - **Strips unsupported keywords** (`minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `format`, `default`, `not`, `if`/`then`/`else`).
+  - **Forces `additionalProperties: false` on every `object` node.** Without this Anthropic 400s with `"For 'object' type, 'additionalProperties' must be explicitly set to false"`. Pydantic only emits it when the model has `extra="forbid"` — walking the schema is more defensive than touching every model class.
+  - `SceneSkeleton.model_validate()` still runs server-side as defence in depth.
+- **Resilience.** Structured outputs is beta and the grammar compiler can return transient `503 overloaded_error` / `"Grammar compilation is temporarily unavailable"`. The designer handles this in three layers:
+  1. **Retry** the structured-outputs call up to 3 times with 1.5s + 4s backoff on `overloaded_error` / 429 / 503 / 529.
+  2. **Fall back to prompted JSON** if structured outputs stays unavailable. Same system prompt + the JSON Schema appended; we extract the first `{...}` blob (handles fenced output) and validate with Pydantic.
+  3. **Self-correction pass** on the prompted-JSON path — if validation fails, re-prompt once with the Pydantic error injected and a hard reminder that `elements` is required.
+
+  Every other (non-overload) `APIError` raises immediately.
+
+- **Visible/invisible-constraint trap (don't repeat this).** Pydantic post-validation MUST NOT enforce constraints we strip from the schema we send to Anthropic. We hit this with `string_too_long` on a label cap: the model produced a perfectly grammar-valid output, our schema cleaner stripped `maxLength` so the model had no way to know the cap existed, and Pydantic then rejected. The fix has two halves:
+  1. **Caps on `SceneElementLabel.text` / `SceneSkeletonElement.text` / `SceneSkeleton.notes` are now generous** — sanity ceilings (2000 / 4000 / 4000), not UX guidelines. Aesthetic guidance lives in the system prompt, not the validator.
+  2. **`_validate_with_salvage()`** in `designer.py` truncates over-cap strings rather than raising, but only when *every* validation error is a length cap — real shape mismatches still raise loudly. A truncated scene is better than a 500.
+
+  General rule: anything `_clean_schema()` strips before sending should be a soft constraint on our side too (loose, salvageable) — never a hard reject.
+- **`SceneFrame.description` cap raised** 400 → 1000 in `app/models/db.py`. The planner reasonably writes longer-form intent notes; the cap was producing false validation failures upstream of the real bug.
+
+**Standing rule going forward** (also encoded in §3 #10): any agent step that produces a large nested artifact (Script + Scene + future Sharpen edits + edit_scene diffs) should use `anthropic_client()` + structured outputs, not CrewAI `output_pydantic`. Reserve `output_pydantic` for small/flat schemas where prompted JSON is reliable.
+
 ### Shared agent plumbing
-- `frontend/src/lib/agents.ts` — added `runStudioStream(ideaId, duration, onEvent)`, `runExtractStream(source, onEvent)`, `fetchStudioByIdea(ideaId)`, plus typed `Script` / `Outline` / `ExtractedVideo` / new event variants (`script_ready`, `outline_ready`, `extract_ready`, `usage`, `persisted`). Common WS pump factored into `consumeStream(url, onEvent, finalise, initialPayload?)`.
-- `backend/app/routes/agents.py` — three WS endpoints share `_load_profile` / `_load_idea` / `_ensure_studio_session` / `_persist_script_outline` / `_safe_send_json`. Versioning lives in `_next_artifact_version` (per-session, per-type).
+- `frontend/src/lib/agents.ts` — `runStudioStream`, `runExtractStream`, `runSceneStream`, `fetchStudioByIdea`, `publishScene`, plus event types. Common WS pump: `consumeStream(url, onEvent, finalise, initialPayload?)`.
+- `backend/app/routes/agents.py` — WS routes share helpers: `_load_profile`, `_load_idea`, `_load_session`, `_load_latest_artifact`, `_ensure_studio_session`, `_persist_script_outline`, `_persist_scene_skeleton`, `_safe_send_json`, `_next_artifact_version`.
 
 ### Tests
-- `tests/test_studio_crew.py` — 9 cases covering Script/Outline/IdeaSlice Pydantic bounds, WS auth/idea-id validation, full happy path with mocked supabase tables (asserts `persisted` event ids match the inserted rows), and both branches of `GET /studio-sessions/by-idea/{idea_id}`.
-- `tests/test_extract_crew.py` — 5 cases covering ContentAnalysis/ExtractedVideo Pydantic, WS auth, blank-source rejection, and the full happy path (1 ideas insert + 1 session insert + 2 artifacts).
-- Full backend suite: **52 passed, 2 xfail (expected), 3 xpass (legacy)**. Frontend `tsc --noEmit` clean.
+- `tests/test_studio_crew.py` — script/outline hydration, Pydantic bounds, WS, `GET /studio-sessions/by-idea/{id}`.
+- `tests/test_extract_crew.py` — content-extract crew + WS.
+- `tests/test_scene_crew.py` — `SceneSkeleton` / layout Pydantic, scene WS (mocked `run_scene_build`), `POST …/scene/share` Storage path.
+- Full backend: run `uv run pytest -q` (expect **~62** passed, a few xfail/xpass per legacy tests). Frontend: `npx tsc --noEmit`.
 
 ---
 
 ## 6. What's NOT built yet — priority-ordered backlog
 
 ### P0 — close the studio loop
-1. **Sharpen crew** — Studio chat sidebar. Small streaming crew that rewrites script sections on request. The studio's `ChatPanel` is the last placeholder. Stream protocol is identical; persist messages to `chat_messages`.
-2. **build_scene + edit_scene + gen_thumbnail** — Excalidraw scene generation + thumbnail variants. Outline → Excalidraw URL → image gen. Out-of-scope for the just-shipped overnight.
+1. **Sharpen crew** — Studio chat sidebar. Small streaming crew that rewrites script sections on request; persist to `chat_messages` (`ChatPanel` still placeholder in Studio).
+2. **gen_outline polish** — Inline editing for the scene outline (rename / reorder / add / delete frames) per PRD.
+3. **gen_thumbnail** — DALL·E 3 (or product-chosen) variants, refinement loops, reference URL flow.
+4. **Approve-and-build gating** — `outline_approved` + button semantics so regens are intentional.
+5. **Studio header pills** — Output type, brand, duration: interactive pills + regen affordances, three-zone duration slider.
+6. **Error recovery** — e.g. retry from step, “taking longer” copy (no silent fallbacks; align with product rules).
+7. **edit_scene (screenshot-to-edit)** — Vision parse → label→element map → JSON diff + artifact update.
+8. **Optional later:** reintroduce a **critic** or post-validator only if we need automated QA on skeletons (e.g. arrow-binding sanity, label uniqueness). Don't put it back in CrewAI's `output_pydantic` path — run it as a second Anthropic structured-outputs call so a critic failure can't silently corrupt the designer's grammar-valid output.
 
 ### P1 — knowledge + retrieval
-5. **Embedding pipeline** — OpenAI `text-embedding-3-small` (1536 dims) writes to `knowledge_nodes`. Triggered on new newsletter_items, ideas, artifacts. OpenAI SDK is already installed.
-6. **Retrieval agent** — calls `match_knowledge_nodes` RPC with explicit `user_id`, feeds results into Script/Scene crews.
-7. **Newsletter ingestion** — `sources` + `newsletter_items` + forwarding alias flow. `user_profiles.forwarding_alias` already surfaces in the Make page.
+9. **Embedding pipeline** — OpenAI `text-embedding-3-small` (1536 dims) writes to `knowledge_nodes`. Triggered on new newsletter_items, ideas, artifacts. OpenAI SDK is already installed.
+10. **Retrieval agent** — calls `match_knowledge_nodes` RPC with explicit `user_id`, feeds results into script/scene/sharpen crews.
+11. **Newsletter ingestion** — `sources` + `newsletter_items` + forwarding alias flow. `user_profiles.forwarding_alias` already surfaces on Make.
 
 ### P1 — still-dummy surfaces
-8. **Projects + brands CRUD** — simple tables, used by sessions. Settings → Brands tab is dummy.
-9. **Library.tsx** — all four tabs (What I know / Knowledge graph / Sources / Insights) are placeholder.
-10. **Settings.tsx** — only Profile works; Brands/Models/Skill files/Integrations tabs are dummy.
+12. **Projects + brands CRUD** — simple tables, used by sessions. Settings → Brands tab is dummy.
+13. **Library.tsx** — all four tabs are still mostly placeholder/empty-state (see dummy-data sweep notes above for partial honesty).
+14. **Settings.tsx** — only Profile is fully real; other tabs partial/dummy.
 
 ### P1 — ancillary
-11. **YouTube metrics fetcher** — `yt_metrics` table is empty; needs YouTube Data API wiring + background refresh.
-12. **Storage flows** — image uploads (thumbnails, chat images, excalidraw exports) into Supabase Storage; update `*_storage_path` columns on relevant rows.
-13. **BYOK via Supabase Vault** — per `backend-dys.md`; swap the server-default keys in `services/llm.py` for per-user Vault reads.
+15. **YouTube metrics fetcher** — `yt_metrics` table is empty; needs YouTube Data API wiring + background refresh.
+16. **Storage flows** — image uploads (thumbnails, chat images) into Supabase Storage; `excalidraw_scenes` exists for published scene files.
+17. **BYOK via Supabase Vault** — per `backend-dys.md`; swap server-default keys in `services/llm.py` for per-user Vault reads.
 
 ### P2 — polish
-14. Magic link or passkey as alternate auth path.
-15. `/auth/callback` route if we move away from `emailRedirectTo` pointing at `/onboarding` directly.
-16. Proper error boundaries and toast UI (Make page already surfaces crew errors in the drawer, but there's no global toast yet).
-17. Real cost accounting in `usage_log` — today we use a flat Sonnet price map in `crew.py`. When CrewAI surfaces per-provider token details cleanly, replace with actuals.
+18. Magic link or passkey as alternate auth path.
+19. `/auth/callback` route if we move away from `emailRedirectTo` pointing at `/onboarding` directly.
+20. Proper error boundaries and global toast UI.
+21. **Real cost accounting** in `usage_log` — today crews use a flat model price map; replace with actuals when provider usage is clean.
 
 ---
 
@@ -309,23 +377,17 @@ Project ref: `lqjlfuhucwgsxerulqlf`.
 
 ---
 
-## 10. What to do next session (suggested first task)
+## 10. What to do next session (suggested)
 
-**Ship the Studio vertical: Script + Scene crews backed by the knowledge graph.**
+Pick one vertical from **§6 P0** — most product leverage next:
 
-This is the next high-leverage slice because it:
-- unblocks the core loop (Make → Studio → Videos),
-- is the first consumer of `match_knowledge_nodes` (so it forces the embedding pipeline to land), and
-- reuses every abstraction the Research vertical already shipped (LLM factory, `log_usage`, WS auth, event protocol, drawer).
+- **Sharpen (chat) crew** + `chat_messages` persistence — unblocks in-flow script/outline edits from Studio.
+- **gen_thumbnail** — closes the Loom + social slice after scene + script are stable.
+- **edit_scene** — vision on screenshot → diff on `SceneSkeleton` (depends on stable labels/ids in designer output).
 
-Rough shape:
-1. Backend `routes/studio_sessions.py` — `GET/POST/PATCH /studio-sessions` + `GET /studio-sessions/:id/artifacts` (same CRUD pattern as `ideas.py`).
-2. Embedding pipeline: trigger on new `newsletter_items`, `ideas`, `artifacts` rows → chunk → `text-embedding-3-small` → `knowledge_nodes` with explicit `user_id` + `source_type` / `source_id`.
-3. `app/agents/script/` — Retrieval agent (calls `match_knowledge_nodes` via `service_client` with the user_id from the verified JWT) → Outline agent → Script writer. Structured `output_pydantic` for each stage.
-4. `WebSocket /ws/agents/script?token=...&idea_id=...` — same event protocol as the research WS. Stream outline first, then scene cards, persist into `studio_sessions` + `artifacts`.
-5. Frontend: replace the hardcoded `SCRIPT` / `OUTLINE` / `CHAT_SEED` in `Studio.tsx` with a component shaped like `ResearchRunPanel` — the event protocol is already generic. Good factoring candidate: extract the shared Agent/Source/Timeline subcomponents into `components/agents/` and let each vertical compose its own header + final-output section.
+**Embedding + retrieval (§6 P1 #9–11)** is the parallel track: first real consumer of `match_knowledge_nodes` for personalized script/scene context.
 
-The Research vertical is the template. Copy its structure file-for-file.
+When touching agents: follow the existing **native `Crew(stream=True)`** pattern in `research/`, `studio/`, `content_extract/`, and `scene/` — do not reintroduce threaded `step_callback` bridges. For any step that returns a **large nested artifact** (anything Skeleton-shaped), follow `scene/designer.py` and call Anthropic directly with `output_format: json_schema` — do not put it back inside CrewAI `output_pydantic` (see §5 scene postmortem and §3 #10).
 
 ---
 
@@ -344,4 +406,10 @@ Every `/ws/agents/*` endpoint emits events in this shape. The frontend drawer is
 {"type": "error",         "message": "..."}
 ```
 
-`ideas_ready` is research-specific — for the Script vertical swap in `outline_ready` / `script_ready`, etc. Keep `agent_start`, `tool_call`, `sources`, `text_delta`, `task_complete`, `complete`, and `error` identical so the drawer renders the timeline without changes. Tools that want their results on the wire (not just their call arguments) should read `app.agents.research.streaming.sources_emitter_var` and push a `SourceRef` list — the runner translates that into a `sources` event.
+**Vertical-specific terminal payloads (examples):**
+- Research: `ideas_ready`
+- Studio: `script_ready`, `outline_ready`, then `persisted` with `script_artifact_id` + `outline_artifact_id`
+- Extract: `extract_ready`, then `persisted` with `idea_id` + `session_id` + artifact ids
+- Scene: `scene_ready` (payload: `Scene` / skeleton), then `usage`, then `persisted` with `scene_artifact_id` (no critique in current build)
+
+Shared: `agent_start`, `text_delta`, `task_complete`, `usage`, `complete`, `error`. Research also emits `tool_call`, `sources` when Exa runs — see `app.agents.research.streaming.sources_emitter_var` for wiring tool *results* to the stream.

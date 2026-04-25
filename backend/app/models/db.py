@@ -151,9 +151,16 @@ SceneFrameKind = Literal[
 
 
 class SceneElementLabel(BaseModel):
-    """Inline label on a shape (becomes a bound text element on inflate)."""
+    """Inline label on a shape (becomes a bound text element on inflate).
 
-    text: str = Field(min_length=1, max_length=160)
+    Length cap is generous on purpose: Anthropic's structured-outputs grammar
+    compiler doesn't enforce maxLength, so a tight Pydantic cap creates a
+    visible/invisible-constraint mismatch (model produces fine output, we
+    reject it). The designer prompt steers the model toward short captions;
+    this cap is a sanity ceiling, not a UX guideline.
+    """
+
+    text: str = Field(min_length=1, max_length=2000)
 
 
 class SceneElementBinding(BaseModel):
@@ -176,7 +183,7 @@ class SceneSkeletonElement(BaseModel):
     y: float
     width: float = Field(ge=0, le=8000)
     height: float = Field(ge=0, le=8000)
-    text: str | None = Field(default=None, max_length=400)  # type='text'
+    text: str | None = Field(default=None, max_length=4000)  # type='text'
     label: SceneElementLabel | None = None  # bound label on shapes
     strokeColor: str | None = None
     backgroundColor: str | None = None
@@ -202,7 +209,7 @@ class SceneFrame(BaseModel):
     y: float = Field(ge=0)
     width: float = Field(gt=0, le=8000)
     height: float = Field(gt=0, le=8000)
-    description: str = Field(min_length=1, max_length=400)
+    description: str = Field(min_length=1, max_length=1000)
 
 
 class SceneLayout(BaseModel):
@@ -231,4 +238,4 @@ class SceneSkeleton(BaseModel):
     canvas_height: int = Field(ge=600, le=4800)
     background_color: str = Field(default="#1A1A2E", max_length=12)
     elements: list[SceneSkeletonElement] = Field(min_length=2, max_length=200)
-    notes: str | None = Field(default=None, max_length=600)
+    notes: str | None = Field(default=None, max_length=4000)
