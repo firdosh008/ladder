@@ -15,6 +15,7 @@ import {
   runStudioStream,
   type AgentEvent,
   type Outline,
+  type Scene,
   type Script,
 } from "../../lib/agents";
 
@@ -73,6 +74,8 @@ export type StudioStreamState = {
   status: Status;
   script: Script | null;
   outline: Outline | null;
+  scene: Scene | null;
+  sessionId: string | null;
   runtime: Record<AgentKey, AgentRuntime>;
   error: string | null;
   cost: number | null;
@@ -91,6 +94,8 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
   const [status, setStatus] = useState<Status>("loading");
   const [script, setScript] = useState<Script | null>(null);
   const [outline, setOutline] = useState<Outline | null>(null);
+  const [scene, setScene] = useState<Scene | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<Record<AgentKey, AgentRuntime>>(
     initialRuntime,
   );
@@ -106,6 +111,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
     setHydratedFromDb(false);
     setScript(null);
     setOutline(null);
+    setScene(null);
     setRuntime(initialRuntime());
 
     const handle = (ev: AgentEvent) => {
@@ -151,6 +157,9 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
         case "outline_ready":
           setOutline(ev.outline);
           break;
+        case "persisted":
+          if (ev.session_id) setSessionId(ev.session_id);
+          break;
         case "usage":
           setCost(ev.token_usage.cost_usd);
           break;
@@ -194,6 +203,8 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
     setError(null);
     setScript(null);
     setOutline(null);
+    setScene(null);
+    setSessionId(null);
     setHydratedFromDb(false);
     setRuntime(initialRuntime());
 
@@ -203,6 +214,12 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
         const existingScript = (res.script?.content_json as Script | undefined) ?? null;
         const existingOutline =
           (res.outline?.content_json as Outline | undefined) ?? null;
+        const existingScene =
+          (res.scene?.content_json as Scene | undefined) ?? null;
+        const existingSessionId =
+          (res.session?.id as string | undefined) ?? null;
+        if (existingSessionId) setSessionId(existingSessionId);
+        if (existingScene) setScene(existingScene);
         if (existingScript && existingOutline) {
           setScript(existingScript);
           setOutline(existingOutline);
@@ -238,13 +255,26 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       status,
       script,
       outline,
+      scene,
+      sessionId,
       runtime,
       error,
       cost,
       hydratedFromDb,
       rerun,
     }),
-    [status, script, outline, runtime, error, cost, hydratedFromDb, rerun],
+    [
+      status,
+      script,
+      outline,
+      scene,
+      sessionId,
+      runtime,
+      error,
+      cost,
+      hydratedFromDb,
+      rerun,
+    ],
   );
 }
 

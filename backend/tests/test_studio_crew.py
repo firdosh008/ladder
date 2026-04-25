@@ -352,7 +352,12 @@ async def test_studio_session_get_returns_nulls_when_no_session(
 
     assert res.status_code == 200
     body = res.json()
-    assert body == {"session": None, "script": None, "outline": None}
+    assert body == {
+        "session": None,
+        "script": None,
+        "outline": None,
+        "scene": None,
+    }
 
 
 async def test_studio_session_get_returns_latest_artifacts(

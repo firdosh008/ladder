@@ -129,3 +129,106 @@ class ExtractedVideo(BaseModel):
     derived_duration_min: int = Field(ge=3, le=30)
     script: Script
     outline: Outline
+
+
+# ─── Studio scene (Excalidraw skeleton) ────────────────────────────────────
+
+# Map 1:1 to the @excalidraw/excalidraw `ExcalidrawElementSkeleton` shape.
+# We persist this lean format and inflate it on the frontend via the official
+# `convertToExcalidrawElements()` helper. PRD §5.5 / §11.4.
+
+SceneElementType = Literal["rectangle", "ellipse", "diamond", "text", "arrow", "line"]
+SceneFrameKind = Literal[
+    "title",
+    "flow",
+    "table",
+    "decision",
+    "architecture",
+    "checklist",
+    "diagram",
+    "cta",
+]
+
+
+class SceneElementLabel(BaseModel):
+    """Inline label on a shape (becomes a bound text element on inflate)."""
+
+    text: str = Field(min_length=1, max_length=160)
+
+
+class SceneElementBinding(BaseModel):
+    """Reference to another scene element by id (for arrow start/end)."""
+
+    id: str = Field(min_length=1, max_length=64)
+
+
+class SceneSkeletonElement(BaseModel):
+    """One ExcalidrawElementSkeleton row.
+
+    Field names match the Excalidraw skeleton API verbatim (camelCase) so the
+    frontend can hand the JSON to `convertToExcalidrawElements()` with no
+    translation step.
+    """
+
+    id: str = Field(min_length=1, max_length=64)
+    type: SceneElementType
+    x: float
+    y: float
+    width: float = Field(ge=0, le=8000)
+    height: float = Field(ge=0, le=8000)
+    text: str | None = Field(default=None, max_length=400)  # type='text'
+    label: SceneElementLabel | None = None  # bound label on shapes
+    strokeColor: str | None = None
+    backgroundColor: str | None = None
+    fillStyle: Literal["solid", "hachure", "cross-hatch"] | None = None
+    strokeWidth: float | None = Field(default=None, ge=0.5, le=8)
+    roughness: int | None = Field(default=None, ge=0, le=2)
+    fontSize: int | None = Field(default=None, ge=10, le=72)
+    start: SceneElementBinding | None = None  # arrow only
+    end: SceneElementBinding | None = None  # arrow only
+
+
+class SceneFrame(BaseModel):
+    """One layout cell from the planner — bounding region for a frame.
+
+    The element_designer fills each frame with the appropriate primitives
+    (rect/diamond/arrow/text).
+    """
+
+    number: int = Field(ge=1)
+    label: str = Field(min_length=1, max_length=160)
+    kind: SceneFrameKind
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+    width: float = Field(gt=0, le=8000)
+    height: float = Field(gt=0, le=8000)
+    description: str = Field(min_length=1, max_length=400)
+
+
+class SceneLayout(BaseModel):
+    """Planner output — overall canvas + per-frame regions.
+
+    Drives the designer's spatial decisions. Critic consumes this to verify
+    the designer respected the regions.
+    """
+
+    canvas_width: int = Field(ge=800, le=4800)
+    canvas_height: int = Field(ge=600, le=4800)
+    background_color: str = Field(default="#1A1A2E", max_length=12)
+    flow_direction: Literal["left-to-right", "top-to-bottom"] = "top-to-bottom"
+    frames: list[SceneFrame] = Field(min_length=2, max_length=12)
+
+
+class SceneSkeleton(BaseModel):
+    """Final scene artifact persisted to `artifacts.content_json`.
+
+    The frontend reads this and calls `convertToExcalidrawElements(elements)`
+    to render. The same elements + a Excalidraw header are uploaded to
+    Storage on the user's request to produce an `excalidraw.com#url=...` link.
+    """
+
+    canvas_width: int = Field(ge=800, le=4800)
+    canvas_height: int = Field(ge=600, le=4800)
+    background_color: str = Field(default="#1A1A2E", max_length=12)
+    elements: list[SceneSkeletonElement] = Field(min_length=2, max_length=200)
+    notes: str | None = Field(default=None, max_length=600)

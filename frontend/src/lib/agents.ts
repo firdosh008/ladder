@@ -64,6 +64,49 @@ export type ExtractedVideo = {
   outline: Outline;
 };
 
+// ─── Scene (Excalidraw) types ──────────────────────────────────────────────
+// Field names are camelCase to mirror @excalidraw/excalidraw's
+// `ExcalidrawElementSkeleton` shape exactly — the SceneView component hands
+// `scene.elements` straight to `convertToExcalidrawElements()` with no
+// translation step.
+
+export type SceneElementType =
+  | "rectangle"
+  | "ellipse"
+  | "diamond"
+  | "text"
+  | "arrow"
+  | "line";
+
+export type SceneElementBinding = { id: string };
+
+export type SceneSkeletonElement = {
+  id: string;
+  type: SceneElementType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  text?: string | null;
+  label?: { text: string } | null;
+  strokeColor?: string | null;
+  backgroundColor?: string | null;
+  fillStyle?: "solid" | "hachure" | "cross-hatch" | null;
+  strokeWidth?: number | null;
+  roughness?: 0 | 1 | 2 | null;
+  fontSize?: number | null;
+  start?: SceneElementBinding | null;
+  end?: SceneElementBinding | null;
+};
+
+export type Scene = {
+  canvas_width: number;
+  canvas_height: number;
+  background_color: string;
+  elements: SceneSkeletonElement[];
+  notes?: string | null;
+};
+
 export type TokenUsage = {
   input: number;
   output: number;
@@ -89,13 +132,15 @@ export type AgentEvent =
   | { type: "script_ready"; script: Script }
   | { type: "outline_ready"; outline: Outline }
   | { type: "extract_ready"; extracted: ExtractedVideo }
+  | { type: "scene_ready"; scene: Scene }
   | { type: "usage"; token_usage: TokenUsage }
   | {
       type: "persisted";
       idea_id?: string;
       session_id: string;
-      script_artifact_id: string;
-      outline_artifact_id: string;
+      script_artifact_id?: string;
+      outline_artifact_id?: string;
+      scene_artifact_id?: string;
     }
   | { type: "complete"; count?: number; cost_usd: number }
   | { type: "error"; message: string };
@@ -215,6 +260,57 @@ export async function runStudioStream(
   return consumeStream(url, onEvent, (ev) => ({ cost_usd: ev.cost_usd }));
 }
 
+// ─── runSceneStream ───────────────────────────────────────────────────────
+
+export type SceneRunResult = {
+  cost_usd: number;
+};
+
+export async function runSceneStream(
+  sessionId: string,
+  onEvent: (ev: AgentEvent) => void,
+): Promise<SceneRunResult> {
+  const token = await authToken();
+  const params = new URLSearchParams({ token, session_id: sessionId });
+  const url = `${wsBaseUrl()}/ws/agents/scene?${params.toString()}`;
+
+  return consumeStream(url, onEvent, (ev) => ({ cost_usd: ev.cost_usd }));
+}
+
+// ─── publishScene ─────────────────────────────────────────────────────────
+
+export type ScenePublishResult = {
+  public_url: string;
+  storage_path: string;
+};
+
+/**
+ * Upload a fully-inflated `.excalidraw` envelope to Storage and return the
+ * public URL. Pair with `excalidraw.com/#url=<encodeURIComponent(url)>` to
+ * open the scene in the public Excalidraw web app.
+ */
+export async function publishScene(
+  sessionId: string,
+  envelope: Record<string, unknown>,
+): Promise<ScenePublishResult> {
+  const token = await authToken();
+  const res = await fetch(
+    `${API_URL}/studio-sessions/${encodeURIComponent(sessionId)}/scene/share`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ envelope }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to publish scene (${res.status})`);
+  }
+  return (await res.json()) as ScenePublishResult;
+}
+
 // ─── runExtractStream ─────────────────────────────────────────────────────
 
 export type ExtractRunResult = {
@@ -246,6 +342,7 @@ export type StudioHydration = {
   session: Record<string, unknown> | null;
   script: { id: string; content_json: Script; version: number } | null;
   outline: { id: string; content_json: Outline; version: number } | null;
+  scene: { id: string; content_json: Scene; version: number } | null;
 };
 
 export async function fetchStudioByIdea(
