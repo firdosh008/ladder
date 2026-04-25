@@ -181,7 +181,7 @@ async def publish_scene(
         ) from e
 
     try:
-        public_url = sb_admin.storage.from_(_SCENE_BUCKET).get_public_url(
+        public_url = await sb_admin.storage.from_(_SCENE_BUCKET).get_public_url(
             storage_path
         )
     except Exception as e:

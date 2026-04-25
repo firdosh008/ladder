@@ -393,7 +393,7 @@ async def test_scene_share_uploads_envelope_and_returns_public_url(
     # service_client: storage upload + public URL.
     storage_bucket = MagicMock()
     storage_bucket.upload = AsyncMock(return_value=None)
-    storage_bucket.get_public_url = MagicMock(
+    storage_bucket.get_public_url = AsyncMock(
         return_value="https://test.supabase.co/storage/v1/object/public/excalidraw_scenes/some/path.excalidraw"
     )
     sb_admin = MagicMock()
