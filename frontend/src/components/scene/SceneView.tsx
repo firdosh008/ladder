@@ -4,7 +4,13 @@ import {
   convertToExcalidrawElements,
 } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
-import { DownloadSimple, ArrowSquareOut, Spinner } from "@phosphor-icons/react";
+import {
+  DownloadSimple,
+  ArrowSquareOut,
+  Spinner,
+  Copy,
+  Check,
+} from "@phosphor-icons/react";
 import { Button } from "../ui/Button";
 import { publishScene, type Scene } from "../../lib/agents";
 
@@ -27,8 +33,6 @@ type Props = {
   scene: Scene;
   sessionId: string;
 };
-
-const EXCALIDRAW_OPEN_BASE = "https://excalidraw.com/#url=";
 
 function buildEnvelope(scene: Scene): {
   type: "excalidraw";
@@ -71,7 +75,10 @@ function downloadBlob(filename: string, blob: Blob): void {
 export function SceneView({ scene, sessionId }: Props) {
   const envelope = useMemo(() => buildEnvelope(scene), [scene]);
   const [opening, setOpening] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const apiRef = useRef<unknown>(null);
 
   useEffect(() => {
@@ -92,26 +99,58 @@ export function SceneView({ scene, sessionId }: Props) {
     downloadBlob(`scene-${sessionId.slice(0, 8)}.excalidraw`, blob);
   }, [envelope, sessionId]);
 
+  // Single source of truth for "publish if needed, return the URL". The first
+  // caller pays the upload cost; later callers (Open, Copy) reuse the cached
+  // shareUrl until the scene prop changes.
+  const ensureShareUrl = useCallback(async (): Promise<string> => {
+    if (shareUrl) return shareUrl;
+    const { excalidraw_url } = await publishScene(
+      sessionId,
+      envelope as unknown as Record<string, unknown>,
+    );
+    setShareUrl(excalidraw_url);
+    return excalidraw_url;
+  }, [shareUrl, sessionId, envelope]);
+
   const onOpenInExcalidraw = useCallback(async () => {
     setOpening(true);
     setError(null);
+    setCopied(false);
     try {
-      const { public_url } = await publishScene(
-        sessionId,
-        envelope as unknown as Record<string, unknown>,
-      );
-      const url = `${EXCALIDRAW_OPEN_BASE}${encodeURIComponent(public_url)}`;
+      const url = await ensureShareUrl();
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setOpening(false);
     }
-  }, [envelope, sessionId]);
+  }, [ensureShareUrl]);
+
+  const onCopyShareUrl = useCallback(async () => {
+    setCopying(true);
+    setError(null);
+    try {
+      const url = await ensureShareUrl();
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCopying(false);
+    }
+  }, [ensureShareUrl]);
+
+  // Reset the share link whenever the scene changes (re-run produces a new
+  // skeleton; the old URL points at a stale Storage object).
+  useEffect(() => {
+    setShareUrl(null);
+    setCopied(false);
+  }, [scene]);
 
   return (
     <div className="flex flex-col gap-3 min-h-0">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <Button size="sm" variant="secondary" onClick={onDownload}>
           <DownloadSimple size={12} weight="bold" />
           Download .excalidraw
@@ -120,7 +159,7 @@ export function SceneView({ scene, sessionId }: Props) {
           size="sm"
           variant="primary"
           onClick={onOpenInExcalidraw}
-          disabled={opening}
+          disabled={opening || copying}
         >
           {opening ? (
             <Spinner size={12} weight="bold" className="animate-spin" />
@@ -129,12 +168,60 @@ export function SceneView({ scene, sessionId }: Props) {
           )}
           {opening ? "Uploading…" : "Open in Excalidraw"}
         </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={onCopyShareUrl}
+          disabled={opening || copying}
+          title="Upload + copy excalidraw.com link"
+        >
+          {copying ? (
+            <Spinner size={12} weight="bold" className="animate-spin" />
+          ) : copied ? (
+            <Check size={12} weight="bold" />
+          ) : (
+            <Copy size={12} weight="bold" />
+          )}
+          {copying ? "Uploading…" : copied ? "Copied" : "Copy share link"}
+        </Button>
         {error ? (
           <span className="font-mono text-[11px] text-cinnabar">
             {error}
           </span>
         ) : null}
       </div>
+
+      {shareUrl ? (
+        <div className="flex items-center gap-2 rounded-lg border border-cinnabar/40 bg-cinnabar/[0.06] px-2.5 py-1.5">
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-cinnabar shrink-0">
+            share
+          </span>
+          <input
+            readOnly
+            value={shareUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            className="flex-1 min-w-0 bg-transparent font-mono text-[11px] text-white outline-none truncate"
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onCopyShareUrl}
+            title="Copy excalidraw.com link"
+          >
+            {copied ? (
+              <>
+                <Check size={12} weight="bold" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy size={12} weight="bold" />
+                Copy
+              </>
+            )}
+          </Button>
+        </div>
+      ) : null}
 
       <div
         className="rounded-lg border border-hairline overflow-hidden"

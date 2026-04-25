@@ -280,14 +280,15 @@ export async function runSceneStream(
 // ─── publishScene ─────────────────────────────────────────────────────────
 
 export type ScenePublishResult = {
-  public_url: string;
+  public_url: string;       // raw Storage URL (the .excalidraw file)
   storage_path: string;
+  excalidraw_url: string;   // ready-to-share https://excalidraw.com/#url=<...>
 };
 
 /**
- * Upload a fully-inflated `.excalidraw` envelope to Storage and return the
- * public URL. Pair with `excalidraw.com/#url=<encodeURIComponent(url)>` to
- * open the scene in the public Excalidraw web app.
+ * Upload a fully-inflated `.excalidraw` envelope to Storage and return both
+ * the raw Storage URL (`public_url`) and the ready-to-share Excalidraw deep
+ * link (`excalidraw_url`).
  */
 export async function publishScene(
   sessionId: string,

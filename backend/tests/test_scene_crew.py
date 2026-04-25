@@ -432,6 +432,9 @@ async def test_scene_share_uploads_envelope_and_returns_public_url(
     body = res.json()
     assert body["public_url"].endswith(".excalidraw")
     assert body["storage_path"].startswith(f"{USER_A}/{SESSION_A}/")
+    assert body["excalidraw_url"].startswith("https://excalidraw.com/#url=")
+    # Storage URL must be percent-encoded inside the deep link.
+    assert "%3A%2F%2F" in body["excalidraw_url"]
 
     # Upload was called with bytes that decode to the envelope.
     storage_bucket.upload.assert_awaited_once()

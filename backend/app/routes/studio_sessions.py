@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -45,8 +46,9 @@ class ScenePublishBody(BaseModel):
 
 
 class ScenePublishResponse(BaseModel):
-    public_url: str
+    public_url: str  # raw Storage URL (the .excalidraw file)
     storage_path: str
+    excalidraw_url: str  # full https://excalidraw.com/#url=<encoded> — copy/share
 
 
 @router.get("/by-idea/{idea_id}", response_model=StudioSessionByIdea)
@@ -207,4 +209,9 @@ async def publish_scene(
     except Exception:
         pass
 
-    return ScenePublishResponse(public_url=public_url, storage_path=storage_path)
+    excalidraw_url = f"https://excalidraw.com/#url={quote(public_url, safe='')}"
+    return ScenePublishResponse(
+        public_url=public_url,
+        storage_path=storage_path,
+        excalidraw_url=excalidraw_url,
+    )
