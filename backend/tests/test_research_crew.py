@@ -112,7 +112,7 @@ def test_exa_tool_emits_sources_when_emitter_set() -> None:
     assert len(sources) == 2
     assert sources[0].url == "https://x.test/outlier"
     assert sources[0].title == "Outlier finding"
-    assert sources[0].snippet and len(sources[0].snippet) <= 220
+    assert sources[0].snippet and len(sources[0].snippet) <= 280
 
 
 def test_exa_tool_is_a_noop_when_no_emitter() -> None:

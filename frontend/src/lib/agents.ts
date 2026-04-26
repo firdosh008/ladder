@@ -29,12 +29,48 @@ export type IdeaDraft = {
 
 export type SourcePlatform = "web" | "reddit" | "youtube" | "x" | "instagram";
 
+/**
+ * Platform-specific extras carried in `Source.meta`. Every field is optional
+ * — older backend payloads will simply omit them and the renderer falls back
+ * to bare URL/title chips.
+ */
+export type SourceMeta = {
+  // common
+  domain?: string | null;
+  // Exa
+  score?: number | null;
+  // Reddit
+  subreddit?: string | null;
+  num_comments?: number | null;
+  author?: string | null;
+  // YouTube
+  channel?: string | null;
+  view_count_text?: string | null;
+  duration?: string | null;
+  video_id?: string | null;
+  // X / Twitter
+  handle?: string | null;
+  like_count?: number | null;
+  view_count?: number | null;
+  reply_count?: number | null;
+  retweet_count?: number | null;
+  full_text?: string | null;
+  // Instagram
+  owner_handle?: string | null;
+  owner_full_name?: string | null;
+  play_count?: number | null;
+  comment_count?: number | null;
+  duration_sec?: number | null;
+};
+
 export type Source = {
   title: string;
   url: string;
   published_date?: string | null;
   snippet?: string | null;
   platform?: SourcePlatform;
+  thumbnail?: string | null;
+  meta?: SourceMeta;
 };
 
 export type ScriptSection = {

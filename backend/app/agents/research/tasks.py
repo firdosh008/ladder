@@ -3,6 +3,8 @@ search → score → formulate."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from crewai import Agent, Task
 
 from app.models.db import ResearchIdeas
@@ -12,13 +14,25 @@ def build_tasks(
     topic: str,
     agents: dict[str, Agent],
 ) -> list[Task]:
+    today = datetime.now(tz=timezone.utc)
+    year = today.year
+    today_str = today.strftime("%B %Y")
+
     search_task = Task(
         description=(
-            f"Research this topic across the web AND social platforms: "
-            f"'{topic}'.\n\n"
+            f"Today is {today_str}. Research this topic across the web AND "
+            f"social platforms: '{topic}'.\n\n"
+            f"FRESHNESS RULE — every signal must be from {year} or the past "
+            "few weeks. Reject anything that smells stale (old papers, "
+            f"pre-{year} listicles, evergreen vendor blogs). When you call "
+            "web_search, ALWAYS bake the current year or a 'this month' / "
+            f"'past 30 days' / '{year}' phrase into the query so the index "
+            "returns recent results. Web results are server-side filtered "
+            "to the last 90 days but query phrasing still matters.\n\n"
             "Cast a wide net using ALL FIVE tools. Aim for at least:\n"
-            "  • 2 `web_search` queries on different angles (tactics, "
-            "contrarian takes, recent shifts)\n"
+            f"  • 2 `web_search` queries on different angles, each phrased "
+            f"with '{year}' or 'recent' (tactics, contrarian takes, "
+            "recent shifts)\n"
             "  • 1-2 `reddit_trending` calls on subreddits where the "
             "founder's audience actually hangs out (derive these from their "
             "audience + positioning — not generic 'Entrepreneur' or 'CEO' "

@@ -15,21 +15,28 @@ propagate through `asyncio.to_thread` and `run_in_executor` via
 from __future__ import annotations
 
 from contextvars import ContextVar
-from dataclasses import dataclass
-from typing import Callable, Literal
+from dataclasses import dataclass, field
+from typing import Any, Callable, Literal
 
 Platform = Literal["web", "reddit", "youtube", "x", "instagram"]
 
 
 @dataclass(frozen=True)
 class SourceRef:
-    """A single source discovered by a search tool during a crew run."""
+    """A single source discovered by a search tool during a crew run.
+
+    `thumbnail` and `meta` are platform-specific previews so the UI can show
+    real cards (YT thumbnail, tweet engagement, Reddit score, ...) instead of
+    bare URL chips. Older clients ignore these fields safely.
+    """
 
     title: str
     url: str
     published_date: str | None = None
     snippet: str | None = None
     platform: Platform = "web"
+    thumbnail: str | None = None
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 SourcesEmitter = Callable[[str, list[SourceRef]], None]

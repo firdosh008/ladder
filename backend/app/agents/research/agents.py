@@ -10,6 +10,8 @@ Three roles, sequential handoff:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from crewai import Agent
 
 from app.agents.research.tools import (
@@ -21,6 +23,22 @@ from app.agents.research.tools import (
 )
 from app.models.db import UserProfileSlice
 from app.services.llm import anthropic_llm
+
+
+def _today_context() -> str:
+    """A short prose block telling the agent what 'today' means.
+
+    LLMs default to their training-cutoff sense of 'recent', which is usually
+    a year or two stale. We bind today's UTC date into every backstory so the
+    search agent phrases queries like 'X 2026' instead of 'X 2024'.
+    """
+    today = datetime.now(tz=timezone.utc)
+    return (
+        f"Today's date: {today.strftime('%A, %B %d, %Y')} "
+        f"(year {today.year}). When you write search queries, ALWAYS "
+        f"include the current year or 'this week' / 'past month' so you "
+        f"surface fresh signal rather than 2023/2024 artefacts."
+    )
 
 
 def _profile_context(profile: UserProfileSlice) -> str:
@@ -43,27 +61,35 @@ def _profile_context(profile: UserProfileSlice) -> str:
 def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
     llm = anthropic_llm(temperature=0.4)
     context = _profile_context(profile)
+    today = _today_context()
 
     search_agent = Agent(
         role="Trend researcher",
         goal=(
             "Surface 12-18 fresh, specific signals about the user's research "
-            "topic by fanning out across the public web AND the three social "
-            "platforms where founder-relevant signal lives: Reddit, YouTube, "
-            "and X. Cover multiple angles through at least one query per "
+            "topic — published or posted within the last few weeks — by "
+            "fanning out across the public web AND the four social platforms "
+            "where founder-relevant signal lives: Reddit, YouTube, X, and "
+            "Instagram. Cover multiple angles through at least one query per "
             "platform."
         ),
         backstory=(
+            f"{today}\n\n"
             "You are an obsessive multi-platform trend-watcher with taste "
             "for outlier signals. You always prefer concrete, recent, and "
             "unusual findings over generic overviews. You never paraphrase "
             "URLs — you copy them verbatim from the tool output.\n\n"
             "You have five search tools:\n"
-            "  • web_search — public web (Exa neural search)\n"
+            "  • web_search — public web (Exa neural search). Already "
+            "filtered to the last 90 days, but you must still phrase "
+            "queries with the current year or 'this month' / 'recent' so "
+            "the index returns fresh signal.\n"
             "  • reddit_trending — posts from a chosen subreddit\n"
-            "  • youtube_trending — recent videos on a query\n"
+            "  • youtube_trending — recent videos on a query (use "
+            "upload_date='this_week' or 'this_month')\n"
             "  • x_user_tweets — top tweets from a chosen X handle\n"
-            "  • instagram_reels — short-form video trend on a query\n\n"
+            "  • instagram_reels — short-form video trend on a query "
+            "(use date_posted='last-week' or 'last-month')\n\n"
             "For each crew run, derive subreddits / handles / video queries "
             "yourself from the topic AND the founder's audience and "
             "positioning. Pick subreddits the audience actually reads and X "
@@ -93,10 +119,13 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
             "founder-operator's content."
         ),
         backstory=(
+            f"{today}\n\n"
             "You are a sceptical editor who rejects filler. You reward "
             "signals that are specific, non-obvious, and tied to a founder "
             "decision or tactic. You reject listicles, platitudes, and "
-            "recycled LinkedIn takes.\n\n"
+            "recycled LinkedIn takes. Heavily prefer signals that are from "
+            "the current calendar year — older signals must clear a higher "
+            "bar.\n\n"
             "Context:\n" + context
         ),
         llm=llm,
@@ -113,6 +142,7 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
             "multi-sentence rationale grounded in specific signals."
         ),
         backstory=(
+            f"{today}\n\n"
             "You turn trend signals into specific, punchy video ideas that "
             "a founder-operator would actually record. Every idea sounds "
             "like it came from THEIR voice, targets THEIR audience, and "

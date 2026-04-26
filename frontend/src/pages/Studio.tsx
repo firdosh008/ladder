@@ -17,6 +17,7 @@ import {
   OutlineView,
 } from "../components/studio/StudioScriptStream";
 import { SceneRunPanel } from "../components/scene/SceneRunPanel";
+import { StudioResearchPanel } from "../components/research/StudioResearchPanel";
 
 export default function StudioPage() {
   const { id } = useParams();
@@ -113,6 +114,7 @@ function ScriptPanelLive({
       />
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
         <IdeaHeader idea={idea} />
+        <StudioResearchPanel ideaId={idea.id} />
         <StudioRunStrip state={state} />
         <ScriptView script={state.script} state={state} />
       </div>

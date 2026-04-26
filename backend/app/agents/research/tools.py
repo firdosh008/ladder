@@ -26,6 +26,31 @@ from app.agents.research.streaming import SourceRef, sources_emitter_var
 from app.providers import exa, scrapecreators
 
 
+def _domain_of(url: str) -> str | None:
+    """Return the bare hostname of a URL, or None if unparseable."""
+    if not url:
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        host = urlparse(url).hostname or ""
+        return host[4:] if host.startswith("www.") else host or None
+    except Exception:
+        return None
+
+
+def _iso_from_unix(ts: int | None) -> str | None:
+    """Convert a Reddit-style epoch second timestamp into ISO date (UTC)."""
+    if not ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Exa — public web search
 # ───────────────────────────────────────────────────────────────────────────
@@ -58,8 +83,12 @@ class ExaSearchTool(BaseTool):
                         title=r.title,
                         url=r.url,
                         published_date=r.published_date,
-                        snippet=(r.text or "")[:220] or None,
+                        snippet=(r.text or "")[:280] or None,
                         platform="web",
+                        meta={
+                            "domain": _domain_of(r.url),
+                            "score": r.score,
+                        },
                     )
                     for r in results
                 ],
@@ -136,9 +165,15 @@ class RedditTrendsTool(BaseTool):
                     SourceRef(
                         title=p.title,
                         url=p.url,
-                        published_date=None,
-                        snippet=(p.selftext or p.title)[:220] or None,
+                        published_date=_iso_from_unix(p.created_utc),
+                        snippet=(p.selftext or p.title)[:280] or None,
                         platform="reddit",
+                        meta={
+                            "subreddit": p.subreddit,
+                            "score": p.score,
+                            "num_comments": p.num_comments,
+                            "author": p.author,
+                        },
                     )
                     for p in posts
                 ],
@@ -218,6 +253,17 @@ class YouTubeTrendsTool(BaseTool):
                             or None
                         ),
                         platform="youtube",
+                        thumbnail=(
+                            f"https://i.ytimg.com/vi/{v.video_id}/mqdefault.jpg"
+                            if v.video_id
+                            else None
+                        ),
+                        meta={
+                            "channel": v.channel,
+                            "view_count_text": v.view_count_text,
+                            "duration": v.duration,
+                            "video_id": v.video_id,
+                        },
                     )
                     for v in videos
                 ],
@@ -275,8 +321,16 @@ class XUserTweetsTool(BaseTool):
                         title=(t.text[:120] or f"@{handle}"),
                         url=t.url,
                         published_date=t.created_at,
-                        snippet=t.text[:220] or None,
+                        snippet=t.text[:280] or None,
                         platform="x",
+                        meta={
+                            "handle": t.handle,
+                            "like_count": t.like_count,
+                            "view_count": t.view_count,
+                            "reply_count": t.reply_count,
+                            "retweet_count": t.retweet_count,
+                            "full_text": t.text,
+                        },
                     )
                     for t in tweets
                 ],
@@ -348,8 +402,16 @@ class InstagramReelsTool(BaseTool):
                         title=(r.caption[:120] or f"@{r.owner_handle or 'reel'}"),
                         url=r.url,
                         published_date=r.taken_at,
-                        snippet=r.caption[:220] or None,
+                        snippet=r.caption[:280] or None,
                         platform="instagram",
+                        meta={
+                            "owner_handle": r.owner_handle,
+                            "owner_full_name": r.owner_full_name,
+                            "play_count": r.play_count,
+                            "like_count": r.like_count,
+                            "comment_count": r.comment_count,
+                            "duration_sec": r.duration_sec,
+                        },
                     )
                     for r in reels
                 ],

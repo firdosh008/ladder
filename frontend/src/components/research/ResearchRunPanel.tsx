@@ -8,7 +8,6 @@ import {
   Sparkle,
   CheckCircle,
   Warning,
-  Link as LinkIcon,
   Globe,
   Stack,
   Lightning,
@@ -22,8 +21,11 @@ import {
   type IdeaDraft,
   type ResearchSetup,
   type Source,
+  type SourcePlatform,
 } from "../../lib/agents";
 import { api, ApiError } from "../../lib/api";
+import { SourcePreview } from "./SourcePreview";
+import { writeIdeaResearchSnapshot } from "../../lib/researchSnapshot";
 
 /**
  * Inline research panel shown on /make per PRD §2 Option 2.
@@ -163,6 +165,7 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
   const [savingAll, setSavingAll] = useState(false);
   const [savedAllCount, setSavedAllCount] = useState<number | null>(null);
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
+  const [platformFilter, setPlatformFilter] = useState<SourcePlatform | null>(null);
   const keyRef = useRef(0);
   const hasStartedRef = useRef<string | null>(null);
   const storedTopic = stored?.topic ?? null;
@@ -190,6 +193,7 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
     setSavingAll(false);
     setSavedAllCount(null);
     setSourcesExpanded(false);
+    setPlatformFilter(null);
 
     const push = (entry: Omit<TimelineEntry, "id">) => {
       keyRef.current += 1;
@@ -352,6 +356,13 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
     try {
       const payload = buildIdeaPayload(draft, currentTopic);
       const res = await api.post<{ idea: { id: string } }>("/ideas", payload);
+      writeIdeaResearchSnapshot({
+        ideaId: res.idea.id,
+        topic: currentTopic,
+        sources,
+        queries,
+        costUsd: cost,
+      });
       onIdeasChanged?.();
       clearStoredRun();
       navigate(`/studio/${res.idea.id}`);
@@ -381,6 +392,17 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
           ),
         ),
       );
+      results.forEach((r) => {
+        if (r.status === "fulfilled") {
+          writeIdeaResearchSnapshot({
+            ideaId: r.value.idea.id,
+            topic: currentTopic,
+            sources,
+            queries,
+            costUsd: cost,
+          });
+        }
+      });
       const saved = results.filter((r) => r.status === "fulfilled").length;
       const failed = results.length - saved;
       setSavedAllCount(saved);
@@ -409,7 +431,31 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
     [runtime],
   );
 
-  const visibleSources = sourcesExpanded ? sources : sources.slice(0, 6);
+  const platformCounts = useMemo(() => {
+    const counts = new Map<SourcePlatform, number>();
+    for (const s of sources) {
+      const p = (s.platform ?? "web") as SourcePlatform;
+      counts.set(p, (counts.get(p) ?? 0) + 1);
+    }
+    return counts;
+  }, [sources]);
+
+  const filteredSources = useMemo(
+    () =>
+      platformFilter
+        ? sources.filter((s) => (s.platform ?? "web") === platformFilter)
+        : sources,
+    [sources, platformFilter],
+  );
+
+  // Default ('all' filter, collapsed) interleaves by platform so visual
+  // platforms (yt / x / ig) aren't buried behind whichever search tool fired
+  // first. Filtered or expanded views show the natural arrival order.
+  const visibleSources = useMemo(() => {
+    if (platformFilter || sourcesExpanded) return filteredSources;
+    return roundRobinByPlatform(sources).slice(0, 8);
+  }, [filteredSources, sources, platformFilter, sourcesExpanded]);
+
   const isRestored = !setup && stored !== null;
 
   return (
@@ -557,18 +603,31 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
             </p>
           ) : (
             <>
-              <ol className="mt-3 grid grid-cols-1 gap-1.5">
+              {platformCounts.size > 1 ? (
+                <PlatformFilterRow
+                  counts={platformCounts}
+                  active={platformFilter}
+                  total={sources.length}
+                  onChange={(p) => {
+                    setPlatformFilter(p);
+                    setSourcesExpanded(false);
+                  }}
+                />
+              ) : null}
+              <ol className="mt-2 grid grid-cols-1 gap-1.5">
                 {visibleSources.map((source, i) => (
-                  <SourceRow key={source.url + i} index={i + 1} source={source} />
+                  <li key={source.url + i}>
+                    <SourcePreview source={source} index={i + 1} variant="compact" />
+                  </li>
                 ))}
               </ol>
-              {sources.length > visibleSources.length ? (
+              {!platformFilter && filteredSources.length > visibleSources.length ? (
                 <button
                   type="button"
                   onClick={() => setSourcesExpanded(true)}
                   className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.2em] text-mist hover:text-white transition-colors"
                 >
-                  + show {sources.length - visibleSources.length} more
+                  + show {filteredSources.length - visibleSources.length} more
                 </button>
               ) : null}
             </>
@@ -706,76 +765,6 @@ function AgentRow({ runtime }: { runtime: AgentRuntime }) {
   );
 }
 
-function SourceRow({ source, index }: { source: Source; index: number }) {
-  const domain = (() => {
-    try {
-      return new URL(source.url).hostname.replace(/^www\./, "");
-    } catch {
-      return "";
-    }
-  })();
-  const platform = source.platform ?? "web";
-  return (
-    <li>
-      <a
-        href={source.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="group flex items-start gap-2.5 rounded-md border border-hairline bg-white/[0.015] px-2.5 py-2 hover:border-hairline-strong hover:bg-white/[0.03] transition-colors"
-      >
-        <span className="font-mono text-[10.5px] text-mist tabular-nums mt-[2px] shrink-0 w-5 text-right">
-          {index}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start gap-1.5">
-            <PlatformPill platform={platform} />
-            <div className="text-[12.5px] text-white/90 leading-[1.35] line-clamp-2 group-hover:text-white">
-              {source.title || source.url}
-            </div>
-          </div>
-          <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-mist">
-            <LinkIcon size={9} weight="bold" className="shrink-0" />
-            <span className="truncate">{domain || source.url}</span>
-            {source.published_date ? (
-              <>
-                <span>·</span>
-                <span className="shrink-0">{source.published_date}</span>
-              </>
-            ) : null}
-          </div>
-        </div>
-      </a>
-    </li>
-  );
-}
-
-function PlatformPill({ platform }: { platform: NonNullable<Source["platform"]> }) {
-  const styles: Record<NonNullable<Source["platform"]>, string> = {
-    web: "bg-white/8 text-white/70",
-    reddit: "bg-[#ff4500]/15 text-[#ff7a3d]",
-    youtube: "bg-[#ff0000]/15 text-[#ff5c5c]",
-    x: "bg-white/15 text-white",
-    instagram: "bg-[#E1306C]/15 text-[#f06292]",
-  };
-  const labels: Record<NonNullable<Source["platform"]>, string> = {
-    web: "web",
-    reddit: "reddit",
-    youtube: "yt",
-    x: "x",
-    instagram: "ig",
-  };
-  return (
-    <span
-      className={cn(
-        "shrink-0 rounded px-1.5 py-[1px] font-mono text-[9.5px] uppercase tracking-[0.12em] mt-[1px]",
-        styles[platform],
-      )}
-    >
-      {labels[platform]}
-    </span>
-  );
-}
-
 function TimelineRow({ entry }: { entry: TimelineEntry }) {
   const dotColor =
     entry.kind === "error"
@@ -896,4 +885,118 @@ function DraftCard({
       </div>
     </button>
   );
+}
+
+// ─── platform filter row ──────────────────────────────────────────────────
+//
+// Subtle chip row that surfaces every platform that returned at least one
+// source. Each chip mirrors the SourcePreview pill colors so the rail stays
+// visually quiet but the user can drill into IG / YT / X without hunting
+// behind a "show more". Only renders when sources span >1 platform.
+
+const PLATFORM_ORDER: SourcePlatform[] = [
+  "youtube",
+  "x",
+  "instagram",
+  "reddit",
+  "web",
+];
+
+const PLATFORM_CHIP_LABEL: Record<SourcePlatform, string> = {
+  web: "web",
+  reddit: "reddit",
+  youtube: "yt",
+  x: "x",
+  instagram: "ig",
+};
+
+const PLATFORM_CHIP_TONE: Record<SourcePlatform, string> = {
+  web: "bg-white/[0.04] text-white/65 hover:text-white",
+  reddit: "bg-[#ff4500]/[0.10] text-[#ff7a3d] hover:bg-[#ff4500]/[0.18]",
+  youtube: "bg-[#ff0000]/[0.10] text-[#ff5c5c] hover:bg-[#ff0000]/[0.18]",
+  x: "bg-white/[0.08] text-white/85 hover:bg-white/[0.14]",
+  instagram: "bg-[#E1306C]/[0.10] text-[#f06292] hover:bg-[#E1306C]/[0.18]",
+};
+
+function PlatformFilterRow({
+  counts,
+  active,
+  total,
+  onChange,
+}: {
+  counts: Map<SourcePlatform, number>;
+  active: SourcePlatform | null;
+  total: number;
+  onChange: (next: SourcePlatform | null) => void;
+}) {
+  const platforms = PLATFORM_ORDER.filter((p) => (counts.get(p) ?? 0) > 0);
+  return (
+    <div className="mt-3 -mx-1 flex flex-wrap items-center gap-1">
+      <button
+        type="button"
+        onClick={() => onChange(null)}
+        className={cn(
+          "rounded px-1.5 py-[2px] font-mono text-[10px] uppercase tracking-[0.14em] transition-colors",
+          active === null
+            ? "bg-white/[0.10] text-white"
+            : "text-mist hover:text-white",
+        )}
+      >
+        all · {total}
+      </button>
+      {platforms.map((p) => {
+        const isActive = active === p;
+        const count = counts.get(p) ?? 0;
+        return (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onChange(isActive ? null : p)}
+            className={cn(
+              "rounded px-1.5 py-[2px] font-mono text-[10px] uppercase tracking-[0.14em] transition-colors",
+              isActive
+                ? "ring-1 ring-white/40"
+                : "ring-1 ring-transparent",
+              PLATFORM_CHIP_TONE[p],
+            )}
+          >
+            {PLATFORM_CHIP_LABEL[p]} · {count}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── round-robin interleave ───────────────────────────────────────────────
+//
+// Group sources by platform, then walk groups in PLATFORM_ORDER picking one
+// at a time. Visual platforms (yt / x / ig) come first so they always claim
+// the prime slots even when reddit/web flooded the stream early.
+
+function roundRobinByPlatform(sources: Source[]): Source[] {
+  if (sources.length <= 1) return sources;
+  const groups = new Map<SourcePlatform, Source[]>();
+  for (const s of sources) {
+    const p = (s.platform ?? "web") as SourcePlatform;
+    const existing = groups.get(p);
+    if (existing) existing.push(s);
+    else groups.set(p, [s]);
+  }
+  const buckets = PLATFORM_ORDER.map((p) => groups.get(p) ?? []).filter(
+    (b) => b.length > 0,
+  );
+  const out: Source[] = [];
+  let added = true;
+  while (added) {
+    added = false;
+    for (const bucket of buckets) {
+      const next = bucket.shift();
+      if (next) {
+        out.push(next);
+        added = true;
+      }
+    }
+  }
+  return out;
 }
