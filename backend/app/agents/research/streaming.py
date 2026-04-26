@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Literal
+
+Platform = Literal["web", "reddit", "youtube", "x", "instagram"]
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class SourceRef:
     url: str
     published_date: str | None = None
     snippet: str | None = None
+    platform: Platform = "web"
 
 
 SourcesEmitter = Callable[[str, list[SourceRef]], None]

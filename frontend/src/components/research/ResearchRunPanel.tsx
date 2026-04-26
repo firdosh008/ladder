@@ -714,6 +714,7 @@ function SourceRow({ source, index }: { source: Source; index: number }) {
       return "";
     }
   })();
+  const platform = source.platform ?? "web";
   return (
     <li>
       <a
@@ -726,8 +727,11 @@ function SourceRow({ source, index }: { source: Source; index: number }) {
           {index}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[12.5px] text-white/90 leading-[1.35] line-clamp-2 group-hover:text-white">
-            {source.title || source.url}
+          <div className="flex items-start gap-1.5">
+            <PlatformPill platform={platform} />
+            <div className="text-[12.5px] text-white/90 leading-[1.35] line-clamp-2 group-hover:text-white">
+              {source.title || source.url}
+            </div>
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-mist">
             <LinkIcon size={9} weight="bold" className="shrink-0" />
@@ -742,6 +746,33 @@ function SourceRow({ source, index }: { source: Source; index: number }) {
         </div>
       </a>
     </li>
+  );
+}
+
+function PlatformPill({ platform }: { platform: NonNullable<Source["platform"]> }) {
+  const styles: Record<NonNullable<Source["platform"]>, string> = {
+    web: "bg-white/8 text-white/70",
+    reddit: "bg-[#ff4500]/15 text-[#ff7a3d]",
+    youtube: "bg-[#ff0000]/15 text-[#ff5c5c]",
+    x: "bg-white/15 text-white",
+    instagram: "bg-[#E1306C]/15 text-[#f06292]",
+  };
+  const labels: Record<NonNullable<Source["platform"]>, string> = {
+    web: "web",
+    reddit: "reddit",
+    youtube: "yt",
+    x: "x",
+    instagram: "ig",
+  };
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded px-1.5 py-[1px] font-mono text-[9.5px] uppercase tracking-[0.12em] mt-[1px]",
+        styles[platform],
+      )}
+    >
+      {labels[platform]}
+    </span>
   );
 }
 

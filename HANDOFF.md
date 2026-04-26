@@ -1,8 +1,10 @@
 # Ladder Content OS — Handoff / Context Doc
 
-Last updated: 2026-04-25. Purpose: bring a fresh session (or a human contributor) up to speed without re-reading the whole chat history.
+Last updated: 2026-04-26. Purpose: bring a fresh session (or a human contributor) up to speed without re-reading the whole chat history.
 
-**Recent (scene vertical):** Excalidraw **build_scene** is wired end-to-end as a hybrid crew: **planner is CrewAI** (`layout_planner` → `SceneLayout`), **designer is a direct Anthropic structured-outputs call** (`element_designer` → `SceneSkeleton`). The designer used to be a CrewAI task with `output_pydantic`, but prompted JSON dropped the top-level `elements` array on a large fraction of runs. Grammar-constrained sampling (`output_format: json_schema`) makes that failure mode mathematically impossible. `SceneSkeleton` persisted as `artifacts.type = excalidraw`, embed + “open in excalidraw.com” on the studio page. **No critic / fixer** in the current pipeline.
+**Recent (research vertical, 2026-04-26):** Research crew now fans out across **5 platforms in parallel** — Exa (web), Reddit, YouTube, X, Instagram. Single async HTTP wrapper at `app/providers/scrapecreators.py` covers the four social platforms via the **ScrapeCreators API** (`SCRAPECREATORS_API_KEY`); provider returns normalized dataclasses (`RedditPost`, `YouTubeVideo`, `XTweet`, `InstagramReel`) so swapping to official APIs later only changes that file. Each tool emits **platform-tagged** `SourceRef`s through the existing `sources_emitter_var` side-channel; the `ResearchRunPanel` source rail renders a colored pill (web/reddit/yt/x/ig) on every card. ScrapeCreators is intended as the temporary unified backend until per-platform official APIs come online (Reddit OAuth, YouTube Data API v3, etc.).
+
+**Earlier (scene vertical, 2026-04-25):** Excalidraw **build_scene** is wired end-to-end as a hybrid crew: **planner is CrewAI** (`layout_planner` → `SceneLayout`), **designer is a direct Anthropic structured-outputs call** (`element_designer` → `SceneSkeleton`). The designer used to be a CrewAI task with `output_pydantic`, but prompted JSON dropped the top-level `elements` array on a large fraction of runs. Grammar-constrained sampling (`output_format: json_schema`) makes that failure mode mathematically impossible. `SceneSkeleton` persisted as `artifacts.type = excalidraw`, embed + “open in excalidraw.com” on the studio page. **No critic / fixer** in the current pipeline.
 
 ---
 
@@ -37,7 +39,7 @@ See `backend-dys.md` for the full data-layer spec (source of truth — read it) 
 - python-jose[cryptography] for JWT verification via Supabase's JWKS
 - httpx for the JWKS fetch + any outbound LLM calls
 - Native FastAPI WebSockets for streaming agent runs to the UI
-- **AI stack:** CrewAI (multi-agent orchestration), Anthropic SDK (`claude-sonnet-4-6` as default via CrewAI's LLM factory), OpenAI SDK (reserved for embeddings), `exa-py` for neural web search
+- **AI stack:** CrewAI (multi-agent orchestration), Anthropic SDK (`claude-sonnet-4-6` as default via CrewAI's LLM factory), OpenAI SDK (reserved for embeddings), `exa-py` for neural web search, **ScrapeCreators REST API for Reddit / YouTube / X / Instagram** (single API key, see `app/providers/scrapecreators.py`)
 
 ### Data
 - Supabase (Postgres + pgvector + Auth + Storage + RLS)
@@ -63,6 +65,7 @@ See `backend-dys.md` for the full data-layer spec (source of truth — read it) 
    - `anthropic_llm()` — CrewAI `LLM` (litellm under the hood). Use inside Crews.
    - `anthropic_client()` — raw `AsyncAnthropic` SDK client. Use when you need features CrewAI's wrapper can't express — most importantly **structured outputs** (grammar-constrained JSON via `output_format: json_schema`).
 10. **Structured artifacts use Anthropic structured outputs, not CrewAI `output_pydantic`.** CrewAI's `output_pydantic` injects the schema into the system prompt and asks nicely. That's fine for small/flat schemas (`Script`, `Outline`, `ResearchIdeas`). For **large nested schemas** like `SceneSkeleton` it fails — the model regularly drops required arrays under in-context bias from prior tasks. Use `client.messages.create(extra_body={"output_format": {"type": "json_schema", "schema": <pydantic>.model_json_schema()}}, extra_headers={"anthropic-beta": "structured-outputs-2025-11-13"})` for those. Strip Anthropic-unsupported keywords (`minimum`/`maximum`/`minLength`/`maxLength`/`pattern`/`format`/`default`) from the schema before sending; Pydantic still validates server-side.
+11. **Per-platform providers wrap a single backend.** `app/providers/scrapecreators.py` is the only file that talks to ScrapeCreators. Each platform-shaped async function (`reddit_subreddit`, `youtube_search`, `x_user_tweets`, `instagram_reels_search`) returns a normalized frozen dataclass. When the official APIs land (Reddit OAuth via `asyncpraw`, YouTube Data API v3, Twikit for X, …), the swap is **module-internal**: signatures and dataclasses don't change, just the HTTP plumbing under each function. Tools, `SourceRef`, frontend types, and the WS event protocol must stay stable across the transition.
 
 ---
 
@@ -81,7 +84,8 @@ ladder-os/
 │   │   ├── models/
 │   │   │   └── db.py                     # Pydantic mirrors — IdeaSlice, IdeaDraft/ResearchIdeas, Script/ScriptSection, Outline/OutlineItem, SceneLayout/SceneFrame/SceneSkeleton/SceneSkeletonElement, ContentAnalysis, ExtractedVideo, UserProfileSlice
 │   │   ├── providers/
-│   │   │   └── exa.py                    # async wrapper around exa-py neural search
+│   │   │   ├── exa.py                    # async wrapper around exa-py neural search
+│   │   │   └── scrapecreators.py         # async wrapper for Reddit/YouTube/X/IG via ScrapeCreators
 │   │   ├── services/
 │   │   │   ├── llm.py                    # anthropic_llm() — CrewAI LLM factory
 │   │   │   └── usage.py                  # log_usage() async context manager
@@ -172,15 +176,27 @@ ladder-os/
 - [x] Frontend `useIdeas()` hook — optimistic updates, `refresh()` exposed.
 - [x] `Videos.tsx` Kanban board (add, drag to reorder/move, delete cards).
 
-### AI — Research vertical (first crew, 2026-04-25)
-- [x] Shared agent foundation: `providers/exa.py`, `services/llm.py`, `services/usage.py`, `middleware/ws_auth.py`, `models/db.py`.
-- [x] `backend/app/agents/research/` — `ExaSearchTool` + three-agent crew (trend researcher, outlier scorer, idea architect) producing `ResearchIdeas` via `output_pydantic`.
+### AI — Research vertical (first crew, 2026-04-25; multi-platform 2026-04-26)
+- [x] Shared agent foundation: `providers/exa.py`, `providers/scrapecreators.py`, `services/llm.py`, `services/usage.py`, `middleware/ws_auth.py`, `models/db.py`.
+- [x] `backend/app/agents/research/` — five tools (`ExaSearchTool`, `RedditTrendsTool`, `YouTubeTrendsTool`, `XUserTweetsTool`, `InstagramReelsTool`) + three-agent crew (trend researcher, outlier scorer, idea architect) producing `ResearchIdeas` via `output_pydantic`. `search_agent` derives subreddits / handles / video queries / IG queries from the user's profile + topic on the fly (no separate entity-resolver agent yet — was discussed in research, deferred until result quality demands it).
 - [x] `IdeaDraft` schema expanded to full PRD §11.8 shape: `title, rationale, idea_type, opportunity_score, outlier_score (0-10), why_now (≤280 chars), suggested_tags[]`. Dropped the non-PRD `body` field (reserved for user notes post-save).
 - [x] `WebSocket /ws/agents/research?token=...&topic=...` — verifies JWT, loads profile, streams events. **No longer auto-persists drafts** — per PRD §2.1 the user picks one inline; the frontend POSTs it to `/ideas` and navigates to `/studio/:id`. Route now only touches `user_profiles` (read).
 - [x] Research run surface moved inline per PRD §2 Option 2: `ResearchRunPanel` renders directly on `/make` (no drawer). Completed runs mirror to `sessionStorage` so a refresh doesn't lose drafts. "New research" button clears it. "Save all to /videos" button bulk-creates ideas in one click. Per-draft pick still saves and opens studio.
 - [x] Make page deviation fixed: StudioSetupDialog gate removed from research path (PRD: no modal between click and run). Extract button honestly disabled ("extract crew ships next"). Fake `gpt-4o · ~$0.03` caption replaced with `exa · sonnet-4.6`. Dead `StudioSetupDialog.tsx` + `components/studio/` directory deleted.
-- [x] Tests (`tests/test_research_crew.py`): Exa tool JSON, event mappers, Pydantic bounds (inc. new `outlier_score` + `suggested_tags` default), WS auth + topic validation, streaming happy path asserting no ideas-table writes + full §11.8 shape on the wire.
-- [x] Full backend test suite: **39 passing, 0 failing** (`uv run pytest -q`).
+- [x] Tests (`tests/test_research_crew.py`): Exa tool JSON, event mappers, Pydantic bounds (inc. new `outlier_score` + `suggested_tags` default), WS auth + topic validation, streaming happy path asserting no ideas-table writes + full §11.8 shape on the wire. Per-tool serialization + platform-tag emission tests for Reddit / YouTube / X / Instagram. IG provider's 404→empty-list path verified (ScrapeCreators returns 404 + `error: not_found` for queries with zero matches; the provider swallows that).
+- [x] Full backend test suite: **68 passing, 0 failing** (`uv run pytest -q`).
+
+#### Multi-platform research (shipped 2026-04-26)
+- **Provider** — `app/providers/scrapecreators.py` exposes four platform-shaped async functions: `reddit_subreddit(subreddit, sort, timeframe, limit)`, `youtube_search(query, upload_date, sort_by, limit)`, `x_user_tweets(handle, limit)`, `instagram_reels_search(query, date_posted, limit)`. Each returns a normalized frozen dataclass (`RedditPost` / `YouTubeVideo` / `XTweet` / `InstagramReel`). All four endpoints cost **1 credit / call** on the ScrapeCreators free tier (100 credits to start; pay-as-you-go after).
+- **Endpoint quirks captured in code:**
+  - Reddit: `timeframe` is only valid when `sort='top'` (provider only sends it in that case). Subreddit names ARE case-sensitive — agent prompt hardened to use canonical capitalisation.
+  - X: only the **~100 most-popular tweets** per account are publicly available, not chronological/latest. Tool description reflects this.
+  - Instagram: returns **404 + `error: not_found`** (with 200-shaped body) when the query matches zero reels. Provider treats this as `[]` rather than raising — niche queries should degrade gracefully, not blow up the crew.
+- **Tools** — `app/agents/research/tools.py` adds `RedditTrendsTool`, `YouTubeTrendsTool`, `XUserTweetsTool`, `InstagramReelsTool` alongside the existing `ExaSearchTool`. Each tool wraps the provider call with `asyncio.run()`, emits platform-tagged `SourceRef`s through `sources_emitter_var`, and returns a JSON-serialised list back to the LLM. `SourceRef` gained a `platform: Literal["web","reddit","youtube","x","instagram"]` field (default `"web"`) so the existing Exa flow is unchanged.
+- **Search agent** — `tools=[Exa, Reddit, YouTube, X, Instagram]`, `max_iter=14`. Backstory + task prompt direct it to fan out: 2 web queries + 1-2 reddit + 1 youtube + 1 x + 1 ig per crew run, deriving subreddits/handles/queries from the founder's audience + positioning. Output bullets carry a `platform` tag.
+- **Frontend** — `Source.platform?: SourcePlatform` added to `lib/agents.ts`; `ResearchRunPanel` source rail renders a `PlatformPill` (`web` neutral, `reddit` orange `#ff4500`, `youtube` red `#ff0000`, `x` white, `instagram` pink `#E1306C`). The pill labels are `web/reddit/yt/x/ig`. The shared `'sources'` event protocol (§11) is unchanged — clients on older builds simply see `platform=undefined` and default to web.
+- **Smoke tests** — `backend/probe_provider.py` (uses the actual provider module) and `backend/probe_scrapecreators.py` (raw httpx) both verified end-to-end against the live API as of 2026-04-26. Real signal observed: r/startups top-of-week posts; the *Gemini Enterprise Agent Platform* announcement (333k views); OpenAI's *"GPT-5.5 and GPT-5.5 Pro are now available in the API"* tweet (441k views); IG reels at 22k+ plays for `query='startup'`. Probe scripts are intentionally throwaway — delete once stable.
+- **Forward-compat note** — when official provider APIs come online (Reddit OAuth via `asyncpraw`, YouTube Data API v3, Twikit/BYOK for X, no plan for IG), only `app/providers/scrapecreators.py` and the corresponding tool's import need to change. Tool surface, `SourceRef` shape, frontend types, and the WebSocket event protocol stay identical. See §3 #11 for the rule.
 
 ### Dummy-data sweep (2026-04-25 evening)
 - [x] `Library.tsx` — all four tabs rewritten. KnowTab: real profile completeness % + per-field rendering from `useAuth()`. SourcesTab: alias driven by real `profile.forwarding_alias` with a pending state when null. Graph/Insights: honest empty states naming what ships next. Fabricated `{1,284 nodes / +62 / alex+ladder@ingest.ladder.so}` gone.
@@ -346,6 +362,7 @@ npm run dev
 ### Environment files (already filled, gitignored)
 - `backend/.env` — `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CORS_ORIGINS`. **No JWT secret needed** (JWKS verification). Old `SUPABASE_JWT_SECRET` line can stay unused.
   - **Required to run any agent vertical:** `ANTHROPIC_API_KEY`, `EXA_API_KEY`. The factories intentionally raise `RuntimeError` on missing keys rather than silently falling back to a cheaper provider.
+  - **Required for the multi-platform research crew (Reddit/YouTube/X/Instagram):** `SCRAPECREATORS_API_KEY` (sign up at scrapecreators.com — 100 free credits, then $10 / 5k credits, 1 credit per call across all four platforms).
   - Optional: `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`), `OPENAI_API_KEY` (for embeddings, not used yet).
 - `frontend/.env` — `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_URL=http://localhost:8000`. The frontend derives the WebSocket base URL from `VITE_API_URL` (`http://` → `ws://`, `https://` → `wss://`).
 
@@ -412,4 +429,4 @@ Every `/ws/agents/*` endpoint emits events in this shape. The frontend drawer is
 - Extract: `extract_ready`, then `persisted` with `idea_id` + `session_id` + artifact ids
 - Scene: `scene_ready` (payload: `Scene` / skeleton), then `usage`, then `persisted` with `scene_artifact_id` (no critique in current build)
 
-Shared: `agent_start`, `text_delta`, `task_complete`, `usage`, `complete`, `error`. Research also emits `tool_call`, `sources` when Exa runs — see `app.agents.research.streaming.sources_emitter_var` for wiring tool *results* to the stream.
+Shared: `agent_start`, `text_delta`, `task_complete`, `usage`, `complete`, `error`. Research emits `tool_call` + `sources` for **every** search tool — Exa (`platform=web`), Reddit (`platform=reddit`), YouTube (`platform=youtube`), X (`platform=x`), Instagram (`platform=instagram`) — all flowing through the same `app.agents.research.streaming.sources_emitter_var` ContextVar. Each emitted `SourceRef` carries its `platform` tag; older clients that don't read `platform` simply default-render as `web`.

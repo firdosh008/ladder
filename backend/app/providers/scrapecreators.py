@@ -1,0 +1,304 @@
+"""ScrapeCreators provider — single async HTTP wrapper for the three social
+platforms we ingest (Reddit, YouTube, X).
+
+Per-platform fetchers return *normalized* dataclasses (RedditPost,
+YouTubeVideo, XTweet). When official provider APIs come online — Reddit
+OAuth / asyncpraw, YouTube Data API v3, X via Twikit or paid alternates —
+only this module changes. Tool signatures and return shapes stay identical,
+so the swap is mechanical.
+
+ScrapeCreators billing: every successful call = 1 credit. 4xx responses
+that fail validation are *not* charged (verified during the probe).
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any, Literal
+
+import httpx
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+_BASE = "https://api.scrapecreators.com"
+
+
+# ─── Normalized result shapes ───────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class RedditPost:
+    title: str
+    url: str
+    subreddit: str
+    score: int
+    num_comments: int
+    created_utc: int
+    selftext: str
+    author: str | None
+
+
+@dataclass(frozen=True)
+class YouTubeVideo:
+    video_id: str
+    url: str
+    title: str
+    channel: str | None
+    published_time: str | None
+    view_count_text: str | None
+    duration: str | None
+
+
+@dataclass(frozen=True)
+class XTweet:
+    tweet_id: str
+    url: str
+    text: str
+    handle: str
+    created_at: str | None
+    like_count: int | None
+    view_count: int | None
+    reply_count: int | None
+    retweet_count: int | None
+
+
+@dataclass(frozen=True)
+class InstagramReel:
+    reel_id: str
+    url: str
+    caption: str
+    owner_handle: str | None
+    owner_full_name: str | None
+    play_count: int | None
+    like_count: int | None
+    comment_count: int | None
+    duration_sec: float | None
+    taken_at: str | None
+
+
+# ─── HTTP plumbing ──────────────────────────────────────────────────────────
+
+
+def _headers() -> dict[str, str]:
+    if not settings.SCRAPECREATORS_API_KEY:
+        raise RuntimeError(
+            "SCRAPECREATORS_API_KEY is not configured. Set it in backend/.env."
+        )
+    return {"x-api-key": settings.SCRAPECREATORS_API_KEY}
+
+
+async def _get(path: str, params: dict[str, Any]) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(f"{_BASE}{path}", headers=_headers(), params=params)
+        if r.status_code >= 400:
+            logger.warning(
+                "scrapecreators %s -> %d: %s", path, r.status_code, r.text[:200]
+            )
+            r.raise_for_status()
+        return r.json()
+
+
+# ─── Reddit ─────────────────────────────────────────────────────────────────
+
+
+async def reddit_subreddit(
+    subreddit: str,
+    sort: Literal["hot", "new", "top", "rising"] = "hot",
+    timeframe: Literal["day", "week", "month", "year", "all"] = "week",
+    limit: int = 15,
+) -> list[RedditPost]:
+    """Fetch posts from a subreddit. `timeframe` only applies when sort='top'."""
+    params: dict[str, Any] = {"subreddit": subreddit, "sort": sort, "trim": "true"}
+    if sort == "top":
+        params["timeframe"] = timeframe
+    data = await _get("/v1/reddit/subreddit", params)
+    posts = data.get("posts") or []
+    out: list[RedditPost] = []
+    for p in posts[:limit]:
+        permalink = p.get("permalink") or ""
+        out.append(
+            RedditPost(
+                title=p.get("title") or "",
+                url=(
+                    f"https://reddit.com{permalink}"
+                    if permalink
+                    else (p.get("url") or "")
+                ),
+                subreddit=p.get("subreddit") or subreddit,
+                score=int(p.get("score") or p.get("ups") or 0),
+                num_comments=int(p.get("num_comments") or 0),
+                created_utc=int(p.get("created") or 0),
+                selftext=(p.get("selftext") or "")[:500],
+                author=p.get("author"),
+            )
+        )
+    return out
+
+
+# ─── YouTube ────────────────────────────────────────────────────────────────
+
+
+async def youtube_search(
+    query: str,
+    upload_date: Literal["today", "this_week", "this_month", "this_year"] = "this_week",
+    sort_by: Literal["relevance", "popular"] = "popular",
+    limit: int = 10,
+) -> list[YouTubeVideo]:
+    """Search YouTube for recent videos matching `query`."""
+    params: dict[str, Any] = {
+        "query": query,
+        "uploadDate": upload_date,
+        "sortBy": sort_by,
+        "type": "videos",
+    }
+    data = await _get("/v1/youtube/search", params)
+    videos = data.get("videos") or []
+    out: list[YouTubeVideo] = []
+    for v in videos[:limit]:
+        vid = v.get("id") or ""
+        channel_obj = v.get("channel")
+        channel = (
+            channel_obj.get("title")
+            if isinstance(channel_obj, dict)
+            else (v.get("channelTitle") or v.get("channel"))
+        )
+        out.append(
+            YouTubeVideo(
+                video_id=vid,
+                url=v.get("url")
+                or (f"https://www.youtube.com/watch?v={vid}" if vid else ""),
+                title=v.get("title") or "",
+                channel=channel if isinstance(channel, str) else None,
+                published_time=v.get("publishedTimeText") or v.get("publishedTime"),
+                view_count_text=v.get("viewCountText") or v.get("viewCount"),
+                duration=v.get("lengthText") or v.get("duration"),
+            )
+        )
+    return out
+
+
+# ─── X / Twitter ────────────────────────────────────────────────────────────
+
+
+async def x_user_tweets(handle: str, limit: int = 15) -> list[XTweet]:
+    """Fetch a user's most-popular tweets (Twitter only exposes ~100 publicly)."""
+    data = await _get(
+        "/v1/twitter/user-tweets", {"handle": handle, "trim": "true"}
+    )
+    tweets = data.get("tweets") or []
+    out: list[XTweet] = []
+    for t in tweets[:limit]:
+        legacy = t.get("legacy") or {}
+        rest_id = t.get("rest_id") or legacy.get("id_str") or ""
+        text = (
+            legacy.get("full_text")
+            or t.get("full_text")
+            or t.get("text")
+            or ""
+        )
+        view_count: int | None = None
+        views = t.get("views") or {}
+        if isinstance(views, dict) and views.get("count"):
+            try:
+                view_count = int(views["count"])
+            except (TypeError, ValueError):
+                view_count = None
+        out.append(
+            XTweet(
+                tweet_id=rest_id,
+                url=f"https://x.com/{handle}/status/{rest_id}" if rest_id else "",
+                text=text[:500],
+                handle=handle,
+                created_at=legacy.get("created_at"),
+                like_count=_int_or_none(legacy.get("favorite_count")),
+                view_count=view_count,
+                reply_count=_int_or_none(legacy.get("reply_count")),
+                retweet_count=_int_or_none(legacy.get("retweet_count")),
+            )
+        )
+    return out
+
+
+def _int_or_none(v: Any) -> int | None:
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(v: Any) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# ─── Instagram ──────────────────────────────────────────────────────────────
+
+
+async def instagram_reels_search(
+    query: str,
+    date_posted: Literal[
+        "last-hour", "last-day", "last-week", "last-month", "last-year"
+    ] = "last-week",
+    limit: int = 10,
+) -> list[InstagramReel]:
+    """Search Instagram reels by keyword. Returns recent + popular matches.
+
+    ScrapeCreators returns 404 + `error: not_found` when the query matches no
+    reels (semantically "empty result", not "endpoint missing"). We swallow
+    that into an empty list so the crew degrades gracefully on niche queries.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"{_BASE}/v2/instagram/reels/search",
+            headers=_headers(),
+            params={"query": query, "date_posted": date_posted},
+        )
+        if r.status_code == 404:
+            try:
+                body = r.json()
+            except ValueError:
+                body = {}
+            if body.get("error") == "not_found":
+                return []
+        if r.status_code >= 400:
+            logger.warning(
+                "scrapecreators ig/reels/search -> %d: %s",
+                r.status_code,
+                r.text[:200],
+            )
+            r.raise_for_status()
+        data = r.json()
+    reels = data.get("reels") or data.get("items") or data.get("results") or []
+    out: list[InstagramReel] = []
+    for r in reels[:limit]:
+        owner = r.get("owner") or {}
+        rid = r.get("id") or r.get("shortcode") or ""
+        out.append(
+            InstagramReel(
+                reel_id=str(rid),
+                url=r.get("url")
+                or (
+                    f"https://www.instagram.com/reel/{r.get('shortcode')}"
+                    if r.get("shortcode")
+                    else ""
+                ),
+                caption=(r.get("caption") or "")[:500],
+                owner_handle=owner.get("username") if isinstance(owner, dict) else None,
+                owner_full_name=owner.get("full_name") if isinstance(owner, dict) else None,
+                play_count=_int_or_none(r.get("video_play_count")),
+                like_count=_int_or_none(r.get("like_count")),
+                comment_count=_int_or_none(r.get("comment_count")),
+                duration_sec=_float_or_none(r.get("video_duration")),
+                taken_at=r.get("taken_at"),
+            )
+        )
+    return out

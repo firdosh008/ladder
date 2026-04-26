@@ -27,11 +27,14 @@ export type IdeaDraft = {
   suggested_tags?: string[];
 };
 
+export type SourcePlatform = "web" | "reddit" | "youtube" | "x" | "instagram";
+
 export type Source = {
   title: string;
   url: string;
   published_date?: string | null;
   snippet?: string | null;
+  platform?: SourcePlatform;
 };
 
 export type ScriptSection = {

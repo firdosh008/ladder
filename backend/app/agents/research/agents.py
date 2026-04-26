@@ -12,7 +12,13 @@ from __future__ import annotations
 
 from crewai import Agent
 
-from app.agents.research.tools import ExaSearchTool
+from app.agents.research.tools import (
+    ExaSearchTool,
+    InstagramReelsTool,
+    RedditTrendsTool,
+    XUserTweetsTool,
+    YouTubeTrendsTool,
+)
 from app.models.db import UserProfileSlice
 from app.services.llm import anthropic_llm
 
@@ -42,22 +48,41 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
         role="Trend researcher",
         goal=(
             "Surface 12-18 fresh, specific signals about the user's research "
-            "topic from the public web, drawn from at least 2 distinct "
-            "searches to cover multiple angles."
+            "topic by fanning out across the public web AND the three social "
+            "platforms where founder-relevant signal lives: Reddit, YouTube, "
+            "and X. Cover multiple angles through at least one query per "
+            "platform."
         ),
         backstory=(
-            "You are an obsessive trend-watcher with taste for outlier "
-            "signals. You always prefer concrete, recent, and unusual "
-            "findings over generic overviews. You never paraphrase URLs — "
-            "you copy them verbatim from the tool output.\n\n"
+            "You are an obsessive multi-platform trend-watcher with taste "
+            "for outlier signals. You always prefer concrete, recent, and "
+            "unusual findings over generic overviews. You never paraphrase "
+            "URLs — you copy them verbatim from the tool output.\n\n"
+            "You have five search tools:\n"
+            "  • web_search — public web (Exa neural search)\n"
+            "  • reddit_trending — posts from a chosen subreddit\n"
+            "  • youtube_trending — recent videos on a query\n"
+            "  • x_user_tweets — top tweets from a chosen X handle\n"
+            "  • instagram_reels — short-form video trend on a query\n\n"
+            "For each crew run, derive subreddits / handles / video queries "
+            "yourself from the topic AND the founder's audience and "
+            "positioning. Pick subreddits the audience actually reads and X "
+            "handles the audience already follows. Reddit subreddit names "
+            "ARE case-sensitive (use 'AskReddit' not 'askreddit').\n\n"
             "Context about the founder whose research you are serving:\n"
             + context
         ),
-        tools=[ExaSearchTool()],
+        tools=[
+            ExaSearchTool(),
+            RedditTrendsTool(),
+            YouTubeTrendsTool(),
+            XUserTweetsTool(),
+            InstagramReelsTool(),
+        ],
         llm=llm,
         allow_delegation=False,
         verbose=False,
-        max_iter=8,
+        max_iter=14,
     )
 
     trend_scorer = Agent(

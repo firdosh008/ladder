@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     GOOGLE_API_KEY: str | None = None
     EXA_API_KEY: str | None = None
+    SCRAPECREATORS_API_KEY: str | None = None
 
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 

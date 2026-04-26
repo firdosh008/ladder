@@ -20,9 +20,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agents.research.streaming import SourceRef, sources_emitter_var
-from app.agents.research.tools import ExaSearchTool
+from app.agents.research.tools import (
+    ExaSearchTool,
+    InstagramReelsTool,
+    RedditTrendsTool,
+    XUserTweetsTool,
+    YouTubeTrendsTool,
+)
 from app.models.db import IdeaDraft, ResearchIdeas
 from app.providers.exa import ExaResult
+from app.providers.scrapecreators import (
+    InstagramReel,
+    RedditPost,
+    XTweet,
+    YouTubeVideo,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +127,247 @@ def test_exa_tool_is_a_noop_when_no_emitter() -> None:
     with patch("app.agents.research.tools.exa.search", fake_search):
         out = ExaSearchTool()._run(query="x")
     assert json.loads(out)[0]["url"] == "https://x.test/1"
+
+
+def test_exa_tool_tags_sources_with_web_platform() -> None:
+    fake = [ExaResult(title="t", url="https://x.test/1", text="b", published_date=None, score=None)]
+    emissions: list[tuple[str, list[SourceRef]]] = []
+
+    async def fake_search(query: str, num_results: int = 8) -> list[ExaResult]:
+        del query, num_results
+        return fake
+
+    token = sources_emitter_var.set(lambda q, s: emissions.append((q, s)))
+    try:
+        with patch("app.agents.research.tools.exa.search", fake_search):
+            ExaSearchTool()._run(query="ai")
+    finally:
+        sources_emitter_var.reset(token)
+    assert emissions[0][1][0].platform == "web"
+
+
+# ---------------------------------------------------------------------------
+# RedditTrendsTool
+# ---------------------------------------------------------------------------
+
+
+def test_reddit_tool_serialises_and_emits_platform_tagged_sources() -> None:
+    fake = [
+        RedditPost(
+            title="Ex-founders moving back to corporate — what roles?",
+            url="https://reddit.com/r/startups/comments/abc/test",
+            subreddit="startups",
+            score=79,
+            num_comments=42,
+            created_utc=1776977641,
+            selftext="long body " * 20,
+            author="Full_Marketing9298",
+        ),
+    ]
+    emissions: list[tuple[str, list[SourceRef]]] = []
+
+    async def fake_fetch(
+        subreddit: str,
+        sort: str = "hot",
+        timeframe: str = "week",
+        limit: int = 15,
+    ) -> list[RedditPost]:
+        assert subreddit == "startups"
+        assert sort == "top"
+        assert timeframe == "week"
+        del limit
+        return fake
+
+    token = sources_emitter_var.set(lambda q, s: emissions.append((q, s)))
+    try:
+        with patch(
+            "app.agents.research.tools.scrapecreators.reddit_subreddit",
+            fake_fetch,
+        ):
+            out = RedditTrendsTool()._run(
+                subreddit="startups", sort="top", timeframe="week"
+            )
+    finally:
+        sources_emitter_var.reset(token)
+
+    payload = json.loads(out)
+    assert payload[0]["url"] == "https://reddit.com/r/startups/comments/abc/test"
+    assert payload[0]["score"] == 79
+    assert payload[0]["subreddit"] == "startups"
+
+    assert len(emissions) == 1
+    label, sources = emissions[0]
+    assert label == "r/startups · top"
+    assert sources[0].platform == "reddit"
+    assert sources[0].url == "https://reddit.com/r/startups/comments/abc/test"
+
+
+# ---------------------------------------------------------------------------
+# YouTubeTrendsTool
+# ---------------------------------------------------------------------------
+
+
+def test_youtube_tool_serialises_and_emits_platform_tagged_sources() -> None:
+    fake = [
+        YouTubeVideo(
+            video_id="3wMwdzxIyN0",
+            url="https://www.youtube.com/watch?v=3wMwdzxIyN0",
+            title="Google Announces Gemini Enterprise Agent Platform",
+            channel="Some Channel",
+            published_time="1 day ago",
+            view_count_text="42K views",
+            duration="12:30",
+        )
+    ]
+    emissions: list[tuple[str, list[SourceRef]]] = []
+
+    async def fake_fetch(
+        query: str,
+        upload_date: str = "this_week",
+        sort_by: str = "popular",
+        limit: int = 10,
+    ) -> list[YouTubeVideo]:
+        assert query == "ai agents"
+        assert sort_by == "popular"
+        del upload_date, limit
+        return fake
+
+    token = sources_emitter_var.set(lambda q, s: emissions.append((q, s)))
+    try:
+        with patch(
+            "app.agents.research.tools.scrapecreators.youtube_search", fake_fetch
+        ):
+            out = YouTubeTrendsTool()._run(query="ai agents")
+    finally:
+        sources_emitter_var.reset(token)
+
+    payload = json.loads(out)
+    assert payload[0]["url"] == "https://www.youtube.com/watch?v=3wMwdzxIyN0"
+    assert payload[0]["channel"] == "Some Channel"
+
+    label, sources = emissions[0]
+    assert label == "YouTube · ai agents"
+    assert sources[0].platform == "youtube"
+    assert sources[0].published_date == "1 day ago"
+
+
+# ---------------------------------------------------------------------------
+# XUserTweetsTool
+# ---------------------------------------------------------------------------
+
+
+def test_x_tool_serialises_and_emits_platform_tagged_sources() -> None:
+    fake = [
+        XTweet(
+            tweet_id="2047743592278745425",
+            url="https://x.com/OpenAI/status/2047743592278745425",
+            text="Some tweet body",
+            handle="OpenAI",
+            created_at="Fri Apr 24 18:24:52 +0000 2026",
+            like_count=1234,
+            view_count=440886,
+            reply_count=10,
+            retweet_count=42,
+        )
+    ]
+    emissions: list[tuple[str, list[SourceRef]]] = []
+
+    async def fake_fetch(handle: str, limit: int = 15) -> list[XTweet]:
+        assert handle == "OpenAI"
+        del limit
+        return fake
+
+    token = sources_emitter_var.set(lambda q, s: emissions.append((q, s)))
+    try:
+        with patch(
+            "app.agents.research.tools.scrapecreators.x_user_tweets", fake_fetch
+        ):
+            out = XUserTweetsTool()._run(handle="OpenAI")
+    finally:
+        sources_emitter_var.reset(token)
+
+    payload = json.loads(out)
+    assert payload[0]["url"] == "https://x.com/OpenAI/status/2047743592278745425"
+    assert payload[0]["view_count"] == 440886
+
+    label, sources = emissions[0]
+    assert label == "@OpenAI"
+    assert sources[0].platform == "x"
+
+
+# ---------------------------------------------------------------------------
+# InstagramReelsTool
+# ---------------------------------------------------------------------------
+
+
+def test_instagram_tool_serialises_and_emits_platform_tagged_sources() -> None:
+    fake = [
+        InstagramReel(
+            reel_id="DOq6eV6iIgD",
+            url="https://www.instagram.com/reel/DOq6eV6iIgD",
+            caption="A long caption about ai agents",
+            owner_handle="some_creator",
+            owner_full_name="Some Creator",
+            play_count=120000,
+            like_count=4200,
+            comment_count=88,
+            duration_sec=42.5,
+            taken_at="2026-04-20T12:00:00Z",
+        )
+    ]
+    emissions: list[tuple[str, list[SourceRef]]] = []
+
+    async def fake_fetch(
+        query: str,
+        date_posted: str = "last-week",
+        limit: int = 10,
+    ) -> list[InstagramReel]:
+        assert query == "ai agents"
+        del date_posted, limit
+        return fake
+
+    token = sources_emitter_var.set(lambda q, s: emissions.append((q, s)))
+    try:
+        with patch(
+            "app.agents.research.tools.scrapecreators.instagram_reels_search",
+            fake_fetch,
+        ):
+            out = InstagramReelsTool()._run(query="ai agents")
+    finally:
+        sources_emitter_var.reset(token)
+
+    payload = json.loads(out)
+    assert payload[0]["url"] == "https://www.instagram.com/reel/DOq6eV6iIgD"
+    assert payload[0]["play_count"] == 120000
+    assert payload[0]["owner_handle"] == "some_creator"
+
+    label, sources = emissions[0]
+    assert label == "IG · ai agents"
+    assert sources[0].platform == "instagram"
+
+
+def test_instagram_provider_swallows_404_not_found_as_empty() -> None:
+    """ScrapeCreators returns 404 + error:not_found for niche queries with no
+    matches. The provider should treat this as an empty result, not raise."""
+    import httpx
+    from app.providers import scrapecreators
+
+    async def fake_get(self: Any, url: str, headers: Any = None, params: Any = None) -> httpx.Response:  # noqa: ARG001
+        del self, url, headers, params
+        return httpx.Response(
+            404,
+            json={"success": False, "error": "not_found", "message": "No reels found"},
+        )
+
+    async def run() -> list[InstagramReel]:
+        with patch("app.providers.scrapecreators.settings.SCRAPECREATORS_API_KEY", "k"):
+            with patch.object(httpx.AsyncClient, "get", fake_get):
+                return await scrapecreators.instagram_reels_search("nichequery")
+
+    import asyncio as _asyncio
+
+    result = _asyncio.run(run())
+    assert result == []
 
 
 # ---------------------------------------------------------------------------
