@@ -775,7 +775,13 @@ def ws_client() -> Callable[[], TestClient]:
 
 
 def _fake_run_research(ideas_payload: list[dict]):
-    async def _gen(_user_id: Any, _profile: Any, topic: str):
+    async def _gen(
+        _user_id: Any,
+        _profile: Any,
+        topic: str,
+        target_duration_min: int = 10,
+    ):
+        del target_duration_min
         yield {"type": "agent_start", "agent": "search_agent"}
         yield {
             "type": "tool_call",

@@ -106,7 +106,7 @@ async def _load_idea(idea_id: str, jwt: str) -> IdeaSlice | None:
         await client.from_("ideas")
         .select(
             "id, title, body, rationale, idea_type, opportunity_score, "
-            "source_type, source_content"
+            "source_type, source_content, target_duration_min"
         )
         .eq("id", idea_id)
         .maybe_single()
@@ -124,6 +124,7 @@ async def _load_idea(idea_id: str, jwt: str) -> IdeaSlice | None:
         opportunity_score=data.get("opportunity_score"),
         source_type=data.get("source_type"),
         source_content=data.get("source_content"),
+        target_duration_min=data.get("target_duration_min"),
     )
 
 
@@ -335,6 +336,7 @@ async def research_stream(
     websocket: WebSocket,
     token: str | None = None,
     topic: str | None = None,
+    duration: int | None = None,
 ) -> None:
     await websocket.accept()
 
@@ -352,6 +354,11 @@ async def research_stream(
         )
         return
 
+    # Founder-chosen runtime gates how the idea_formulator scopes each draft.
+    # Out-of-range or missing values quietly snap to the default so a stale
+    # client can't break the run.
+    target_duration_min = duration if duration and 3 <= duration <= 60 else 10
+
     try:
         profile = await _load_profile(user_id, jwt)
     except Exception as e:
@@ -365,7 +372,9 @@ async def research_stream(
     cost_usd = 0.0
 
     try:
-        async for event in run_research(user_id, profile, cleaned_topic):
+        async for event in run_research(
+            user_id, profile, cleaned_topic, target_duration_min
+        ):
             if event.get("type") == "ideas_ready":
                 token_usage = event.get("token_usage") or {}
                 cost_usd = float(token_usage.get("cost_usd") or 0.0)
@@ -413,8 +422,6 @@ async def studio_stream(
         await websocket.close(code=_CLOSE_BAD_REQUEST, reason="idea_id required")
         return
 
-    target_duration_min = duration if duration and 3 <= duration <= 60 else 20
-
     try:
         idea = await _load_idea(idea_id, jwt)
     except Exception as e:
@@ -427,6 +434,15 @@ async def studio_stream(
     if idea is None:
         await websocket.close(code=_CLOSE_BAD_REQUEST, reason="idea not found")
         return
+
+    # Resolution order: explicit URL override → idea row's stored preference
+    # → 20-minute default. URL value still must be in-range to win.
+    if duration and 3 <= duration <= 60:
+        target_duration_min = duration
+    elif idea.target_duration_min and 3 <= idea.target_duration_min <= 60:
+        target_duration_min = idea.target_duration_min
+    else:
+        target_duration_min = 20
 
     try:
         profile = await _load_profile(user_id, jwt)

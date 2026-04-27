@@ -40,6 +40,11 @@ class IdeaSlice(BaseModel):
     opportunity_score: int | None = None
     source_type: str | None = None
     source_content: str | None = None  # research topic OR pasted source content
+    # Founder-chosen target runtime (3-60 min). Set from /make's research
+    # tile dropdown or the content_extract analyzer's derived duration. The
+    # Studio crew uses it as the script_writer's `target_duration_min` when
+    # the WS URL doesn't override it. Null = "let Studio default".
+    target_duration_min: int | None = Field(default=None, ge=3, le=60)
 
 
 # ─── Research vertical ─────────────────────────────────────────────────────

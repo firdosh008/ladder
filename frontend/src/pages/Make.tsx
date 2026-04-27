@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Sparkle,
   TrendUp,
+  Clock,
 } from "@phosphor-icons/react";
 import { Shell, PageHeader, PageContainer } from "../components/app/Shell";
 import { Button } from "../components/ui/Button";
@@ -28,9 +29,27 @@ import type { ResearchSetup } from "../lib/agents";
 
 type Option = "ideas" | "research" | "content";
 
+// Founder-friendly preset durations. 10 min is the default — matches the
+// PRD's "essay-length founder video" framing and keeps cost predictable.
+// Anything outside this set is still possible by hand-editing on /studio.
+const DURATION_OPTIONS: { value: number; label: string; hint: string }[] = [
+  { value: 5, label: "5 min", hint: "hot take · 1 sharp claim" },
+  { value: 10, label: "10 min", hint: "framework · 2-3 beats" },
+  { value: 15, label: "15 min", hint: "essay · with examples" },
+  { value: 20, label: "20 min", hint: "founder essay · default" },
+  { value: 30, label: "30 min", hint: "deep dive · multi-arc" },
+  { value: 45, label: "45 min", hint: "masterclass · full system" },
+];
+
+const DEFAULT_DURATION_MIN = 10;
+
 export default function MakePage() {
   const [active, setActive] = useState<Option>("research");
   const [topic, setTopic] = useState("");
+  const [duration, setDuration] = useState<number>(() => {
+    const restored = loadStoredRun();
+    return restored?.durationMin ?? DEFAULT_DURATION_MIN;
+  });
   const [content, setContent] = useState("");
   const [researchSetup, setResearchSetup] = useState<ResearchSetup | null>(null);
   const [extractSetup, setExtractSetup] = useState<ContentExtractSetup | null>(null);
@@ -44,7 +63,7 @@ export default function MakePage() {
     const cleaned = topic.trim();
     if (!cleaned) return;
     setExtractSetup(null);
-    setResearchSetup({ topic: cleaned });
+    setResearchSetup({ topic: cleaned, duration_min: duration });
     setHasRestoredRun(false);
     requestAnimationFrame(() => {
       panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -192,6 +211,11 @@ export default function MakePage() {
                 }}
                 disabled={researchSetup !== null}
               />
+              <DurationSelect
+                value={duration}
+                onChange={setDuration}
+                disabled={researchSetup !== null}
+              />
               <Button
                 size="sm"
                 onClick={startResearch}
@@ -206,7 +230,8 @@ export default function MakePage() {
                     : "Research & stream"}
               </Button>
               <p className="text-[11.5px] text-mist font-mono pt-0.5">
-                exa · sonnet-4.6
+                exa · sonnet-4.6 ·{" "}
+                <span className="text-white/75">{duration}-min target</span>
                 {hasRestoredRun && !researchSetup ? " · last run restored below" : ""}
               </p>
             </div>
@@ -282,6 +307,54 @@ export default function MakePage() {
         </div>
       </PageContainer>
     </Shell>
+  );
+}
+
+function DurationSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+}) {
+  const active = DURATION_OPTIONS.find((o) => o.value === value) ?? DURATION_OPTIONS[1];
+  return (
+    <label
+      className={cn(
+        "relative flex items-center gap-2 rounded-md bg-surface-input",
+        "border border-transparent focus-within:border-cinnabar",
+        "transition-colors duration-150 px-3 h-9",
+        disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
+      )}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <span className="sr-only">Target video duration</span>
+      <Clock size={13} weight="bold" className="text-mist shrink-0" />
+      <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-mist shrink-0">
+        length
+      </span>
+      <span className="text-[13.5px] text-white tabular-nums shrink-0">
+        {active.label}
+      </span>
+      <span className="text-[11.5px] text-mist truncate min-w-0 flex-1">
+        · {active.hint}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        disabled={disabled}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+        aria-label="Target video duration"
+      >
+        {DURATION_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label} — {o.hint}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

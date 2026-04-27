@@ -19,6 +19,12 @@ export type Idea = {
   source_content_url: string | null;
   position: number | null;
   /**
+   * Founder-chosen target video runtime (3-60 min). Set from the /make
+   * research tile dropdown. Studio crew uses it as the script_writer's
+   * target duration when no override is passed in the WS URL.
+   */
+  target_duration_min: number | null;
+  /**
    * Snapshot of what the research crew scraped to seed this idea (sources,
    * queries, topic, cost). Null for ideas created before the column existed
    * or for manually-created ideas. Rendered by `<StudioResearchPanel>`.
@@ -41,6 +47,7 @@ export type IdeaCreate = {
   source_content_url?: string;
   project_id?: string;
   position?: number;
+  target_duration_min?: number;
   research_snapshot?: IdeaResearchSnapshotPayload;
 };
 
@@ -56,6 +63,7 @@ export type IdeaUpdate = Partial<
     | "rationale"
     | "project_id"
     | "position"
+    | "target_duration_min"
   >
 >;
 

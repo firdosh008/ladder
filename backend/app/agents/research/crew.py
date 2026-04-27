@@ -56,8 +56,14 @@ async def run_research(
     user_id: UUID,
     profile: UserProfileSlice,
     topic: str,
+    target_duration_min: int = 10,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run the Research crew and stream wire events.
+
+    `target_duration_min` is the founder's intended video runtime (3-60).
+    The idea_formulator uses it to size each draft's scope — a 5-minute
+    sharp-take vs a 30-minute deep-dive carry very different rationales
+    and "why now" beats.
 
     Event types emitted:
       agent_start    — each new agent_role the stream reports
@@ -94,7 +100,7 @@ async def run_research(
 
         try:
             agents = build_agents(profile)
-            tasks = build_tasks(topic, agents)
+            tasks = build_tasks(topic, agents, target_duration_min)
 
             crew = Crew(
                 agents=[

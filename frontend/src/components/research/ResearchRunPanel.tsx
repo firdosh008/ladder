@@ -11,6 +11,7 @@ import {
   Globe,
   Stack,
   Lightning,
+  Clock,
 } from "@phosphor-icons/react";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
@@ -41,7 +42,10 @@ import {
  */
 
 const STORAGE_KEY = "ladder:research:last";
-const STORAGE_VERSION = 2;
+// Bumped to 3 when we started persisting `durationMin` alongside the rest
+// of the run snapshot. Older v=2 records are ignored on read so the UI
+// never picks up a half-shape.
+const STORAGE_VERSION = 3;
 
 type StoredRun = {
   v: number;
@@ -50,6 +54,10 @@ type StoredRun = {
   sources: Source[];
   queries: string[];
   costUsd: number | null;
+  /** Founder-chosen runtime (3-60 min) used on the run that produced these
+   *  drafts. Persisted so a refresh restores it on /make and so saving an
+   *  idea picks the same target_duration_min for the studio crew. */
+  durationMin: number | null;
   completedAt: number;
 };
 
@@ -164,6 +172,8 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
   );
   const [error, setError] = useState<string | null>(null);
   const [cost, setCost] = useState<number | null>(stored?.costUsd ?? null);
+  const durationMin =
+    setup?.duration_min ?? stored?.durationMin ?? null;
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
   const [savingAll, setSavingAll] = useState(false);
   const [savedAllCount, setSavedAllCount] = useState<number | null>(null);
@@ -331,6 +341,7 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
             sources: finalSources,
             queries: finalQueries,
             costUsd: result.cost_usd,
+            durationMin: setup.duration_min ?? null,
             completedAt: Date.now(),
           };
           window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -361,6 +372,7 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
         sources,
         queries,
         costUsd: cost,
+        durationMin,
       });
       const res = await api.post<{ idea: { id: string } }>("/ideas", payload);
       writeIdeaResearchSnapshot({
@@ -399,6 +411,7 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
               sources,
               queries,
               costUsd: cost,
+              durationMin,
             }),
           ),
         ),
@@ -480,6 +493,12 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
           <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-mist mb-1.5 flex items-center gap-2">
             <span>§ research crew</span>
             <StatusBadge status={status} />
+            {durationMin ? (
+              <Badge tone="muted">
+                <Clock size={10} weight="bold" />
+                {durationMin} min
+              </Badge>
+            ) : null}
             {isRestored ? (
               <Badge tone="muted">
                 <Stack size={10} weight="bold" />
@@ -656,6 +675,7 @@ function buildIdeaPayload(
     sources: Source[];
     queries: string[];
     costUsd: number | null;
+    durationMin: number | null;
   },
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
@@ -671,6 +691,16 @@ function buildIdeaPayload(
   }
   if (typeof draft.outlier_score === "number") {
     payload.outlier_score = draft.outlier_score;
+  }
+  // Carry the founder's chosen runtime onto the idea row so the Studio
+  // crew sizes the script for the same length the research sized the
+  // angle for. Backend caps to 3-60.
+  if (
+    research.durationMin &&
+    research.durationMin >= 3 &&
+    research.durationMin <= 60
+  ) {
+    payload.target_duration_min = research.durationMin;
   }
   // Persist the snapshot on the row itself so /studio/:id can render the
   // same source previews after a reload, on a different device, or when

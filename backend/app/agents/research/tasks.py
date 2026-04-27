@@ -13,10 +13,21 @@ from app.models.db import ResearchIdeas
 def build_tasks(
     topic: str,
     agents: dict[str, Agent],
+    target_duration_min: int = 10,
 ) -> list[Task]:
+    """Build the 3-task research pipeline.
+
+    `target_duration_min` is the founder's chosen runtime for the eventual
+    video. We thread it into the idea_formulator's prompt so each draft's
+    rationale, scope, and `why_now` line up with the depth that runtime
+    can support — a 5-min hot take has very different shape than a 30-min
+    deep-dive even on the same trigger signal.
+    """
+
     today = datetime.now(tz=timezone.utc)
     year = today.year
     today_str = today.strftime("%B %Y")
+    duration_brief = _duration_brief(target_duration_min)
 
     search_task = Task(
         description=(
@@ -115,13 +126,18 @@ def build_tasks(
             "could actually record in their own voice. Each idea must be "
             "specific enough that two different founders would produce "
             "two different videos from it.\n\n"
+            f"TARGET RUNTIME — every idea must be sized for a "
+            f"{target_duration_min}-minute video. {duration_brief} Reject "
+            "angles that obviously can't sustain that runtime (too thin) "
+            "or that would burst it (too sprawling). The rationale should "
+            "make the runtime fit feel inevitable, not forced.\n\n"
             "For each idea produce:\n"
             "  - title: 6-12 words, concrete, voice-matched. No clickbait. "
             "No 'The Ultimate Guide' / 'X Things You' template phrasing.\n"
             "  - rationale: 2-3 sentences (50-100 words) that (a) name the "
             "trigger signal, (b) explain why this angle is sharp for THIS "
-            "founder's positioning and audience, and (c) hint at the "
-            "opening beat.\n"
+            "founder's positioning and audience at the target runtime, and "
+            "(c) hint at the opening beat.\n"
             "  - idea_type: one of systems, framework, pitch, case_study.\n"
             "  - opportunity_score: 0-100 integer — anchor to the source "
             "signal's score; 60-79 = solid, 80+ = sharp outlier potential.\n"
@@ -138,8 +154,9 @@ def build_tasks(
             "Do NOT include a `body` field."
         ),
         expected_output=(
-            "JSON object with key `ideas`, a list of 4-6 drafts matching "
-            "the IdeaDraft schema (title, rationale, idea_type, "
+            f"JSON object with key `ideas`, a list of 4-6 drafts sized for "
+            f"a {target_duration_min}-minute video and matching the "
+            "IdeaDraft schema (title, rationale, idea_type, "
             "opportunity_score, outlier_score, why_now, suggested_tags)."
         ),
         agent=agents["idea_formulator"],
@@ -148,3 +165,50 @@ def build_tasks(
     )
 
     return [search_task, score_task, formulate_task]
+
+
+def _duration_brief(minutes: int) -> str:
+    """Short prose describing what a video of this length looks like.
+
+    Calibrates the idea_formulator's sense of scope so the rationale +
+    `why_now` lines up with the runtime the founder picked. Buckets are
+    deliberately loose — exact transitions matter less than the shape
+    they imply (hot take vs framework vs deep-dive vs masterclass).
+    """
+
+    if minutes <= 5:
+        return (
+            "That's a punchy hot-take format: one sharp argument, one or "
+            "two examples, and a single takeaway. Pick angles that have a "
+            "single load-bearing claim — no laundry lists, no framework "
+            "tours."
+        )
+    if minutes <= 10:
+        return (
+            "That's a concise framework format: a hook, 2-3 building "
+            "blocks, and a takeaway. Pick angles with a clear thesis "
+            "that's worth maybe 2-3 layered points — enough room to "
+            "evidence a claim without sprawling into a tour."
+        )
+    if minutes <= 20:
+        return (
+            "That's a standard founder-essay length: room for a hook, "
+            "3-5 sections with examples, and a synthesis. Pick angles "
+            "that justify multiple supporting beats and at least one "
+            "concrete case study or counter-example."
+        )
+    if minutes <= 35:
+        return (
+            "That's a deep-dive length: think 5-7 sections, room for "
+            "frameworks PLUS lived examples, and a synthesis that earns "
+            "the runtime. Pick angles that genuinely benefit from depth — "
+            "tactics + counter-tactics, systems with 3+ moving parts, or "
+            "case studies with a real arc."
+        )
+    return (
+        "That's a masterclass length: expect 7-10 sections, room for a "
+        "framework, multiple case studies, and a strong narrative spine. "
+        "Pick angles that hold up to that breadth — playbooks, multi-step "
+        "operating systems, or category-level theses with several "
+        "concrete examples each."
+    )

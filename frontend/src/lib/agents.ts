@@ -186,6 +186,13 @@ export type AgentEvent =
 
 export type ResearchSetup = {
   topic: string;
+  /**
+   * Founder-chosen target runtime in minutes (3-60). Threaded into the
+   * idea_formulator's prompt so each draft's scope matches the runtime —
+   * a 5-min hot take vs a 30-min deep-dive carry very different shapes
+   * even on the same trigger signal. Optional; backend defaults to 10.
+   */
+  duration_min?: number;
 };
 
 // ─── WS helpers ───────────────────────────────────────────────────────────
@@ -270,6 +277,13 @@ export async function runResearchStream(
 ): Promise<{ count: number; cost_usd: number }> {
   const token = await authToken();
   const params = new URLSearchParams({ token, topic: setup.topic });
+  if (
+    setup.duration_min &&
+    setup.duration_min >= 3 &&
+    setup.duration_min <= 60
+  ) {
+    params.set("duration", String(setup.duration_min));
+  }
   const url = `${wsBaseUrl()}/ws/agents/research?${params.toString()}`;
 
   return consumeStream(url, onEvent, (ev) => ({

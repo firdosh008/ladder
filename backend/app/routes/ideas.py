@@ -22,6 +22,10 @@ class IdeaCreate(BaseModel):
     source_content_url: str | None = None
     project_id: str | None = None
     position: float | None = None
+    # Founder-chosen target runtime in minutes (3-60). Mirrors the dropdown
+    # on /make's research tile so the Studio crew can size the script for
+    # the same length without the user re-picking on every re-run.
+    target_duration_min: int | None = Field(default=None, ge=3, le=60)
     # Snapshot of the research crew's findings (sources + queries + topic)
     # written at idea-creation time so /studio/:id can render the same
     # rich preview cards across tabs / devices / reloads. Shape is owned by
@@ -39,6 +43,7 @@ class IdeaUpdate(BaseModel):
     rationale: str | None = None
     project_id: str | None = None
     position: float | None = None
+    target_duration_min: int | None = Field(default=None, ge=3, le=60)
 
 
 class IdeasListResponse(BaseModel):

@@ -5,6 +5,7 @@ import {
   Image as ImageIcon,
   Sparkle,
   Lightbulb,
+  Clock,
 } from "@phosphor-icons/react";
 import { Shell } from "../components/app/Shell";
 import { Button } from "../components/ui/Button";
@@ -46,7 +47,11 @@ export default function StudioPage() {
 }
 
 function StudioBody({ ideaId, idea }: { ideaId: string; idea: Idea }) {
-  const state = useStudioStream(ideaId);
+  // Honour the founder-chosen runtime stored on the idea row. The backend
+  // also has its own fallback chain (URL → idea row → 20-min default), so
+  // this is mostly belt-and-braces — but it keeps the WS URL self-describing
+  // when an admin reads access logs.
+  const state = useStudioStream(ideaId, idea.target_duration_min ?? undefined);
   return (
     <>
       <ScriptPanelLive idea={idea} state={state} />
@@ -167,6 +172,12 @@ function IdeaHeader({ idea }: { idea: Idea }) {
           <Badge tone="muted">{idea.outlier_score.toFixed(1)}× outlier</Badge>
         ) : null}
         {idea.idea_type ? <Badge tone="muted">{idea.idea_type}</Badge> : null}
+        {typeof idea.target_duration_min === "number" ? (
+          <Badge tone="muted">
+            <Clock size={10} weight="bold" />
+            {idea.target_duration_min} min
+          </Badge>
+        ) : null}
       </div>
       {idea.rationale ? (
         <p className="mt-3 text-[13px] text-white/75 leading-[1.6]">
