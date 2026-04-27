@@ -1,0 +1,20 @@
+-- Persist the per-idea research snapshot (sources, queries, topic, cost) so
+-- the Studio "research sources" panel survives across tabs / devices /
+-- reloads instead of dying with sessionStorage.
+--
+-- Stored as JSONB on the idea row itself: snapshots are small (≤ ~30
+-- sources × a few KB each), always fetched together with the idea via
+-- `select *`, and never queried independently — a child table would be
+-- pure overhead. Older rows simply have NULL here and the UI falls back to
+-- sessionStorage (or empty state).
+--
+-- Shape (matches frontend `IdeaResearchSnapshot`):
+--   {
+--     "v": 1,
+--     "topic": "...",
+--     "sources": [{ title, url, platform, thumbnail?, meta? }, ...],
+--     "queries": ["..."],
+--     "cost_usd": 0.0123,
+--     "captured_at": "2026-04-27T..."
+--   }
+ALTER TABLE ideas ADD COLUMN research_snapshot jsonb;

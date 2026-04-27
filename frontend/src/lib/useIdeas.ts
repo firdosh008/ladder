@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "./api";
+import type { IdeaResearchSnapshotPayload } from "./researchSnapshot";
 
 export type Idea = {
   id: string;
@@ -17,6 +18,12 @@ export type Idea = {
   source_content: string | null;
   source_content_url: string | null;
   position: number | null;
+  /**
+   * Snapshot of what the research crew scraped to seed this idea (sources,
+   * queries, topic, cost). Null for ideas created before the column existed
+   * or for manually-created ideas. Rendered by `<StudioResearchPanel>`.
+   */
+  research_snapshot: IdeaResearchSnapshotPayload | null;
   created_at: string;
   updated_at: string;
 };
@@ -34,6 +41,7 @@ export type IdeaCreate = {
   source_content_url?: string;
   project_id?: string;
   position?: number;
+  research_snapshot?: IdeaResearchSnapshotPayload;
 };
 
 export type IdeaUpdate = Partial<

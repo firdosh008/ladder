@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -20,6 +22,11 @@ class IdeaCreate(BaseModel):
     source_content_url: str | None = None
     project_id: str | None = None
     position: float | None = None
+    # Snapshot of the research crew's findings (sources + queries + topic)
+    # written at idea-creation time so /studio/:id can render the same
+    # rich preview cards across tabs / devices / reloads. Shape is owned by
+    # the frontend; backend just persists it as JSONB.
+    research_snapshot: dict[str, Any] | None = None
 
 
 class IdeaUpdate(BaseModel):

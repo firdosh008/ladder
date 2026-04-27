@@ -114,7 +114,7 @@ function ScriptPanelLive({
       />
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
         <IdeaHeader idea={idea} />
-        <StudioResearchPanel ideaId={idea.id} />
+        <StudioResearchPanel idea={idea} />
         <StudioRunStrip state={state} />
         <ScriptView script={state.script} state={state} />
       </div>

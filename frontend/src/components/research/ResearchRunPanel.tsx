@@ -25,7 +25,10 @@ import {
 } from "../../lib/agents";
 import { api, ApiError } from "../../lib/api";
 import { SourcePreview } from "./SourcePreview";
-import { writeIdeaResearchSnapshot } from "../../lib/researchSnapshot";
+import {
+  buildSnapshotPayload,
+  writeIdeaResearchSnapshot,
+} from "../../lib/researchSnapshot";
 
 /**
  * Inline research panel shown on /make per PRD §2 Option 2.
@@ -354,7 +357,11 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
     setSavingIdx(index);
     setError(null);
     try {
-      const payload = buildIdeaPayload(draft, currentTopic);
+      const payload = buildIdeaPayload(draft, currentTopic, {
+        sources,
+        queries,
+        costUsd: cost,
+      });
       const res = await api.post<{ idea: { id: string } }>("/ideas", payload);
       writeIdeaResearchSnapshot({
         ideaId: res.idea.id,
@@ -388,7 +395,11 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
         drafts.map((d) =>
           api.post<{ idea: { id: string } }>(
             "/ideas",
-            buildIdeaPayload(d, currentTopic),
+            buildIdeaPayload(d, currentTopic, {
+              sources,
+              queries,
+              costUsd: cost,
+            }),
           ),
         ),
       );
@@ -638,7 +649,15 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
   );
 }
 
-function buildIdeaPayload(draft: IdeaDraft, topic: string): Record<string, unknown> {
+function buildIdeaPayload(
+  draft: IdeaDraft,
+  topic: string,
+  research: {
+    sources: Source[];
+    queries: string[];
+    costUsd: number | null;
+  },
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     title: draft.title,
     status: "new",
@@ -652,6 +671,17 @@ function buildIdeaPayload(draft: IdeaDraft, topic: string): Record<string, unkno
   }
   if (typeof draft.outlier_score === "number") {
     payload.outlier_score = draft.outlier_score;
+  }
+  // Persist the snapshot on the row itself so /studio/:id can render the
+  // same source previews after a reload, on a different device, or when
+  // sessionStorage gets nuked.
+  if (research.sources.length > 0) {
+    payload.research_snapshot = buildSnapshotPayload({
+      topic,
+      sources: research.sources,
+      queries: research.queries,
+      costUsd: research.costUsd,
+    });
   }
   return payload;
 }
