@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkle,
   Cpu,
@@ -80,6 +80,15 @@ export type StudioStreamState = {
   error: string | null;
   cost: number | null;
   hydratedFromDb: boolean;
+  /**
+   * Force a fresh agent run, bypassing the DB-hydrate path. The next
+   * effect cycle will skip `fetchStudioByIdea` and open the WS directly,
+   * so any saved script/outline gets superseded by a new versioned
+   * artifact. Used when the founder changes the target runtime, or when
+   * they explicitly hit "re-run".
+   */
+  regenerate: () => void;
+  /** @deprecated alias of `regenerate`, kept so existing callers compile. */
   rerun: () => void;
 };
 
@@ -103,6 +112,11 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
   const [cost, setCost] = useState<number | null>(null);
   const [hydratedFromDb, setHydratedFromDb] = useState(false);
   const [runEpoch, setRunEpoch] = useState(0);
+  // Set synchronously by `regenerate()` so the very next effect cycle
+  // skips the GET-and-hydrate path and opens a fresh WS instead. Reset
+  // to false the moment the new stream starts, so subsequent
+  // navigation/refresh still rehydrate the latest saved artifact.
+  const forceFreshRef = useRef(false);
 
   const startStream = useCallback(() => {
     let cancelled = false;
@@ -208,6 +222,15 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
     setHydratedFromDb(false);
     setRuntime(initialRuntime());
 
+    if (forceFreshRef.current) {
+      forceFreshRef.current = false;
+      teardown = startStream();
+      return () => {
+        cancelled = true;
+        if (teardown) teardown();
+      };
+    }
+
     fetchStudioByIdea(ideaId)
       .then((res) => {
         if (cancelled) return;
@@ -246,9 +269,11 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
     };
   }, [ideaId, runEpoch, startStream]);
 
-  const rerun = useCallback(() => {
+  const regenerate = useCallback(() => {
+    forceFreshRef.current = true;
     setRunEpoch((e) => e + 1);
   }, []);
+  const rerun = regenerate;
 
   return useMemo(
     () => ({
@@ -261,6 +286,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       error,
       cost,
       hydratedFromDb,
+      regenerate,
       rerun,
     }),
     [
@@ -273,6 +299,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       error,
       cost,
       hydratedFromDb,
+      regenerate,
       rerun,
     ],
   );

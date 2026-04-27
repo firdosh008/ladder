@@ -167,18 +167,34 @@ async def _ensure_studio_session(
     idea_id: str,
     target_duration_min: int,
 ) -> str:
-    """Return the studio_sessions.id for (user_id, idea_id), creating if missing."""
+    """Return the studio_sessions.id for (user_id, idea_id), creating if missing.
+
+    If a session already exists but the founder has since picked a new
+    runtime (via the duration control on /studio), refresh the row's
+    `target_duration_min` so downstream crews — notably the scene crew,
+    which reads from `studio_sessions` — see the up-to-date value rather
+    than the duration this session was originally created with.
+    """
     client = await user_client(jwt)
     existing = (
         await client.from_("studio_sessions")
-        .select("id")
+        .select("id, target_duration_min")
         .eq("idea_id", idea_id)
         .order("created_at", desc=True)
         .limit(1)
         .execute()
     )
     if existing.data:
-        return str(existing.data[0]["id"])
+        row = existing.data[0]
+        session_id = str(row["id"])
+        if row.get("target_duration_min") != target_duration_min:
+            await (
+                client.from_("studio_sessions")
+                .update({"target_duration_min": target_duration_min})
+                .eq("id", session_id)
+                .execute()
+            )
+        return session_id
 
     insert = (
         await client.from_("studio_sessions")

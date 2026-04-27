@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -6,11 +6,13 @@ import {
   Sparkle,
   Lightbulb,
   Clock,
+  CaretDown,
+  Check,
 } from "@phosphor-icons/react";
 import { Shell } from "../components/app/Shell";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
-import { useIdeas, type Idea } from "../lib/useIdeas";
+import { useIdeas, type Idea, type IdeaUpdate } from "../lib/useIdeas";
 import {
   useStudioStream,
   StudioRunStrip,
@@ -19,10 +21,23 @@ import {
 } from "../components/studio/StudioScriptStream";
 import { SceneRunPanel } from "../components/scene/SceneRunPanel";
 import { StudioResearchPanel } from "../components/research/StudioResearchPanel";
+import { cn } from "../lib/cn";
+
+// Mirror of /make's preset durations so the founder sees a stable set
+// across both surfaces. Out-of-range custom values are still accepted
+// by the backend (3-60), but only these are exposed in the picker.
+const DURATION_OPTIONS: { value: number; label: string; hint: string }[] = [
+  { value: 5, label: "5 min", hint: "hot take" },
+  { value: 10, label: "10 min", hint: "framework" },
+  { value: 15, label: "15 min", hint: "essay" },
+  { value: 20, label: "20 min", hint: "founder essay" },
+  { value: 30, label: "30 min", hint: "deep dive" },
+  { value: 45, label: "45 min", hint: "masterclass" },
+];
 
 export default function StudioPage() {
   const { id } = useParams();
-  const { ideas, loading } = useIdeas();
+  const { ideas, loading, updateIdea, patchLocal } = useIdeas();
   const idea = useMemo<Idea | null>(
     () => (id ? ideas.find((i) => i.id === id) ?? null : null),
     [ideas, id],
@@ -33,7 +48,12 @@ export default function StudioPage() {
       <StudioHeader idea={idea} loading={loading} />
       <div className="flex-1 grid grid-cols-[1fr_1fr_380px] min-h-0 divide-x divide-hairline">
         {idea ? (
-          <StudioBody ideaId={idea.id} idea={idea} />
+          <StudioBody
+            ideaId={idea.id}
+            idea={idea}
+            updateIdea={updateIdea}
+            patchLocal={patchLocal}
+          />
         ) : (
           <>
             <ScriptShell loading={loading} idea={null} />
@@ -46,15 +66,53 @@ export default function StudioPage() {
   );
 }
 
-function StudioBody({ ideaId, idea }: { ideaId: string; idea: Idea }) {
+function StudioBody({
+  ideaId,
+  idea,
+  updateIdea,
+  patchLocal,
+}: {
+  ideaId: string;
+  idea: Idea;
+  updateIdea: (id: string, patch: IdeaUpdate) => Promise<Idea>;
+  patchLocal: (id: string, patch: IdeaUpdate) => void;
+}) {
   // Honour the founder-chosen runtime stored on the idea row. The backend
   // also has its own fallback chain (URL → idea row → 20-min default), so
   // this is mostly belt-and-braces — but it keeps the WS URL self-describing
   // when an admin reads access logs.
   const state = useStudioStream(ideaId, idea.target_duration_min ?? undefined);
+
+  // Picking a new runtime: optimistically update the local cache so the
+  // badge + the WS query string flip immediately, persist it via PATCH,
+  // and force-fresh the studio stream so the next script/outline are
+  // generated against the new target. We snapshot the previous value so
+  // we can roll back if the PATCH fails (rare, but keeps the UI honest).
+  const onDurationChange = useCallback(
+    async (newMin: number) => {
+      if (newMin === idea.target_duration_min) return;
+      const previous = idea.target_duration_min;
+      patchLocal(idea.id, { target_duration_min: newMin });
+      state.regenerate();
+      try {
+        await updateIdea(idea.id, { target_duration_min: newMin });
+      } catch {
+        patchLocal(idea.id, { target_duration_min: previous });
+      }
+    },
+    [idea.id, idea.target_duration_min, patchLocal, state, updateIdea],
+  );
+
+  const isRunning = state.status === "running" || state.status === "loading";
+
   return (
     <>
-      <ScriptPanelLive idea={idea} state={state} />
+      <ScriptPanelLive
+        idea={idea}
+        state={state}
+        onDurationChange={onDurationChange}
+        durationLocked={isRunning}
+      />
       <ScenePanelLive state={state} />
       <ChatPlaceholder />
     </>
@@ -99,9 +157,13 @@ function StudioHeader({ idea, loading }: { idea: Idea | null; loading: boolean }
 function ScriptPanelLive({
   idea,
   state,
+  onDurationChange,
+  durationLocked,
 }: {
   idea: Idea;
   state: ReturnType<typeof useStudioStream>;
+  onDurationChange: (minutes: number) => void;
+  durationLocked: boolean;
 }) {
   return (
     <section className="flex flex-col min-h-0 bg-night">
@@ -118,7 +180,11 @@ function ScriptPanelLive({
         }
       />
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-        <IdeaHeader idea={idea} />
+        <IdeaHeader
+          idea={idea}
+          onDurationChange={onDurationChange}
+          durationLocked={durationLocked}
+        />
         <StudioResearchPanel idea={idea} />
         <StudioRunStrip state={state} />
         <ScriptView script={state.script} state={state} />
@@ -155,7 +221,15 @@ function ScenePanelLive({ state }: { state: ReturnType<typeof useStudioStream> }
   );
 }
 
-function IdeaHeader({ idea }: { idea: Idea }) {
+function IdeaHeader({
+  idea,
+  onDurationChange,
+  durationLocked,
+}: {
+  idea: Idea;
+  onDurationChange: (minutes: number) => void;
+  durationLocked: boolean;
+}) {
   return (
     <div>
       <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-mist mb-2">
@@ -172,17 +246,141 @@ function IdeaHeader({ idea }: { idea: Idea }) {
           <Badge tone="muted">{idea.outlier_score.toFixed(1)}× outlier</Badge>
         ) : null}
         {idea.idea_type ? <Badge tone="muted">{idea.idea_type}</Badge> : null}
-        {typeof idea.target_duration_min === "number" ? (
-          <Badge tone="muted">
-            <Clock size={10} weight="bold" />
-            {idea.target_duration_min} min
-          </Badge>
-        ) : null}
+        <DurationControl
+          current={idea.target_duration_min}
+          onChange={onDurationChange}
+          locked={durationLocked}
+        />
       </div>
       {idea.rationale ? (
         <p className="mt-3 text-[13px] text-white/75 leading-[1.6]">
           {idea.rationale}
         </p>
+      ) : null}
+    </div>
+  );
+}
+
+function DurationControl({
+  current,
+  onChange,
+  locked,
+}: {
+  current: number | null;
+  onChange: (minutes: number) => void;
+  locked: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClickOutside(e: MouseEvent) {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const label = current ? `${current} min` : "set runtime";
+  const activeHint = current
+    ? (DURATION_OPTIONS.find((o) => o.value === current)?.hint ?? null)
+    : null;
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "inline-flex items-center gap-1 rounded h-[18px] px-1.5",
+          "text-[10.5px] font-mono font-semibold tabular-nums",
+          "bg-transparent text-mist border border-hairline",
+          "hover:text-white hover:border-hairline-strong transition-colors",
+          open && "text-white border-hairline-strong bg-white/[0.03]",
+        )}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={
+          locked
+            ? "regenerating now — picking a new runtime starts another fresh run"
+            : "change target runtime · regenerates the script"
+        }
+      >
+        <Clock size={10} weight="bold" />
+        <span>{label}</span>
+        <CaretDown size={9} weight="bold" className="opacity-70" />
+      </button>
+
+      {open ? (
+        <div
+          className={cn(
+            "absolute z-20 top-full mt-1.5 left-0 min-w-[220px]",
+            "rounded-md border border-hairline bg-night shadow-xl",
+            "overflow-hidden",
+          )}
+          role="listbox"
+        >
+          <div className="px-3 pt-2.5 pb-1.5 border-b border-hairline">
+            <div className="font-mono text-[9.5px] uppercase tracking-[0.2em] text-mist">
+              change runtime
+            </div>
+            <div className="mt-0.5 text-[11px] text-white/70 leading-[1.45]">
+              re-runs the script writer + outline planner against the new
+              target. previous versions stay in history.
+            </div>
+            {activeHint ? (
+              <div className="mt-1 font-mono text-[9.5px] text-mist">
+                current · {activeHint}
+              </div>
+            ) : null}
+          </div>
+          <ul className="py-1">
+            {DURATION_OPTIONS.map((opt) => {
+              const isCurrent = opt.value === current;
+              return (
+                <li key={opt.value}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      if (!isCurrent) onChange(opt.value);
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-1.5",
+                      "text-left transition-colors",
+                      isCurrent
+                        ? "bg-white/[0.03]"
+                        : "hover:bg-white/[0.04] cursor-pointer",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "text-[12.5px] tabular-nums w-[44px] shrink-0",
+                        isCurrent ? "text-white" : "text-white/85",
+                      )}
+                    >
+                      {opt.label}
+                    </span>
+                    <span className="text-[11.5px] text-mist truncate flex-1">
+                      {opt.hint}
+                    </span>
+                    {isCurrent ? (
+                      <Check size={11} weight="bold" className="text-cinnabar shrink-0" />
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       ) : null}
     </div>
   );
