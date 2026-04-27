@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from collections import defaultdict
 from typing import Any
 
 from crewai.tools import BaseTool
@@ -49,6 +51,30 @@ def _iso_from_unix(ts: int | None) -> str | None:
         return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d")
     except Exception:
         return None
+
+
+def _hours_since(ts: int | None) -> float:
+    """Hours between unix timestamp and now. Returns 1.0 when ts is missing
+    or in the future — treats those as 'very fresh' so they aren't penalised
+    by the velocity ranker."""
+    if not ts:
+        return 1.0
+    try:
+        delta = time.time() - float(ts)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(delta / 3600.0, 1.0)
+
+
+# Numeric quality gates. Tuned conservatively — the goal is to drop the
+# obvious noise (zero-engagement posts, ancient stragglers) without
+# starving niche topics. Tighten later if signal still feels muddy.
+REDDIT_MIN_SCORE = 10
+REDDIT_MAX_AGE_HOURS = 28 * 24  # 28 days
+YOUTUBE_MIN_VIEWS = 5_000
+YOUTUBE_MAX_AGE_HOURS = 90 * 24
+INSTAGRAM_MIN_PLAYS = 5_000
+X_MIN_ENGAGEMENT = 30  # likes + retweets*2
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -156,6 +182,19 @@ class RedditTrendsTool(BaseTool):
             )
         )
 
+        # Quality gate + velocity rank. Drop low-engagement / stale posts
+        # before the LLM scorer ever sees them — cheaper and more reliable
+        # than letting the LLM judge raw counts.
+        filtered = [
+            p
+            for p in posts
+            if p.score >= REDDIT_MIN_SCORE
+            and _hours_since(p.created_utc) <= REDDIT_MAX_AGE_HOURS
+        ]
+        filtered.sort(
+            key=lambda p: p.score / _hours_since(p.created_utc), reverse=True
+        )
+
         label = f"r/{subreddit} · {sort}"
         emitter = sources_emitter_var.get()
         if emitter is not None:
@@ -175,7 +214,7 @@ class RedditTrendsTool(BaseTool):
                             "author": p.author,
                         },
                     )
-                    for p in posts
+                    for p in filtered
                 ],
             )
 
@@ -189,8 +228,142 @@ class RedditTrendsTool(BaseTool):
                 "selftext": p.selftext,
                 "author": p.author,
             }
-            for p in posts
+            for p in filtered
         ]
+        return json.dumps(payload, ensure_ascii=False)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Reddit — cross-subreddit keyword search (community discovery)
+# ───────────────────────────────────────────────────────────────────────────
+
+
+class _RedditSearchInput(BaseModel):
+    query: str = Field(
+        description="Keyword/phrase to search across all of Reddit.",
+    )
+    timeframe: str = Field(
+        default="week",
+        description="Recency window: day, week, month, year, all.",
+    )
+    sort: str = Field(
+        default="top",
+        description="One of: relevance, new, top, comment_count.",
+    )
+    limit: int = Field(default=25, ge=5, le=50)
+
+
+class RedditSearchTool(BaseTool):
+    name: str = "reddit_search"
+    description: str = (
+        "Search ALL of Reddit for posts matching a topic — use this BEFORE "
+        "calling reddit_trending so you can discover which subreddits are "
+        "actually discussing the topic instead of guessing community names. "
+        "Returns a JSON object with two keys: `discovered_subreddits` (the "
+        "communities ranked by post-density and total upvote weight on this "
+        "topic — pick the top 2-3 to drill into with reddit_trending) and "
+        "`posts` (top matching threads across Reddit). Cite `url` verbatim."
+    )
+    args_schema: type[BaseModel] = _RedditSearchInput
+
+    def _run(
+        self,
+        query: str,
+        timeframe: str = "week",
+        sort: str = "top",
+        limit: int = 25,
+    ) -> str:
+        hits = asyncio.run(
+            scrapecreators.reddit_search(
+                query=query,
+                sort=sort,  # type: ignore[arg-type]
+                timeframe=timeframe,  # type: ignore[arg-type]
+                limit=limit,
+            )
+        )
+
+        # Same quality gate as reddit_trending so weak threads don't sway
+        # subreddit ranking.
+        filtered = [
+            h
+            for h in hits
+            if h.score >= REDDIT_MIN_SCORE
+            and _hours_since(h.created_utc) <= REDDIT_MAX_AGE_HOURS
+        ]
+
+        # Group by subreddit → post_count + summed score + highest-score
+        # post title. The agent uses this ranking to choose which subreddits
+        # to drill into.
+        by_sub: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {
+                "post_count": 0,
+                "total_score": 0,
+                "top_post_title": "",
+                "_top_score": -1,
+            }
+        )
+        for h in filtered:
+            sub = h.subreddit or "unknown"
+            entry = by_sub[sub]
+            entry["post_count"] += 1
+            entry["total_score"] += h.score
+            if h.score > entry["_top_score"]:
+                entry["_top_score"] = h.score
+                entry["top_post_title"] = h.title
+        for entry in by_sub.values():
+            entry.pop("_top_score", None)
+
+        discovered = [
+            {"name": sub, **stats}
+            for sub, stats in sorted(
+                by_sub.items(),
+                key=lambda kv: (kv[1]["total_score"], kv[1]["post_count"]),
+                reverse=True,
+            )
+        ]
+
+        # Sort posts themselves by velocity for the bullet list.
+        filtered.sort(
+            key=lambda h: h.score / _hours_since(h.created_utc), reverse=True
+        )
+
+        label = f"reddit search · {query}"
+        emitter = sources_emitter_var.get()
+        if emitter is not None:
+            emitter(
+                label,
+                [
+                    SourceRef(
+                        title=h.title,
+                        url=h.url,
+                        published_date=_iso_from_unix(h.created_utc),
+                        snippet=(h.selftext or h.title)[:280] or None,
+                        platform="reddit",
+                        meta={
+                            "subreddit": h.subreddit,
+                            "score": h.score,
+                            "num_comments": h.num_comments,
+                            "author": h.author,
+                        },
+                    )
+                    for h in filtered
+                ],
+            )
+
+        payload = {
+            "discovered_subreddits": discovered,
+            "posts": [
+                {
+                    "title": h.title,
+                    "url": h.url,
+                    "subreddit": h.subreddit,
+                    "score": h.score,
+                    "num_comments": h.num_comments,
+                    "selftext": h.selftext,
+                }
+                for h in filtered
+            ],
+        }
         return json.dumps(payload, ensure_ascii=False)
 
 
@@ -238,6 +411,26 @@ class YouTubeTrendsTool(BaseTool):
             )
         )
 
+        # Quality gate by parsed view count + age. When parsing fails we keep
+        # the item rather than drop it (parse failure shouldn't be the same
+        # signal as 'low quality').
+        def _keep(v: scrapecreators.YouTubeVideo) -> bool:
+            views = scrapecreators.parse_view_count_text(v.view_count_text)
+            age_h = scrapecreators.parse_relative_time_hours(v.published_time)
+            if views is not None and views < YOUTUBE_MIN_VIEWS:
+                return False
+            if age_h is not None and age_h > YOUTUBE_MAX_AGE_HOURS:
+                return False
+            return True
+
+        def _velocity(v: scrapecreators.YouTubeVideo) -> float:
+            views = scrapecreators.parse_view_count_text(v.view_count_text) or 0
+            age_h = scrapecreators.parse_relative_time_hours(v.published_time) or 24.0
+            return views / max(age_h, 1.0)
+
+        filtered = [v for v in videos if _keep(v)]
+        filtered.sort(key=_velocity, reverse=True)
+
         label = f"YouTube · {query}"
         emitter = sources_emitter_var.get()
         if emitter is not None:
@@ -261,11 +454,14 @@ class YouTubeTrendsTool(BaseTool):
                         meta={
                             "channel": v.channel,
                             "view_count_text": v.view_count_text,
+                            "view_count": scrapecreators.parse_view_count_text(
+                                v.view_count_text
+                            ),
                             "duration": v.duration,
                             "video_id": v.video_id,
                         },
                     )
-                    for v in videos
+                    for v in filtered
                 ],
             )
 
@@ -276,9 +472,12 @@ class YouTubeTrendsTool(BaseTool):
                 "channel": v.channel,
                 "published_time": v.published_time,
                 "view_count_text": v.view_count_text,
+                "view_count": scrapecreators.parse_view_count_text(
+                    v.view_count_text
+                ),
                 "duration": v.duration,
             }
-            for v in videos
+            for v in filtered
         ]
         return json.dumps(payload, ensure_ascii=False)
 
@@ -311,6 +510,15 @@ class XUserTweetsTool(BaseTool):
             scrapecreators.x_user_tweets(handle=handle, limit=limit)
         )
 
+        # Engagement = likes + retweets*2. Retweets weighted higher because
+        # they signal endorsement, not just glance-and-tap. Drop tweets below
+        # the threshold so the LLM doesn't waste tokens on filler.
+        def _engagement(t: scrapecreators.XTweet) -> int:
+            return (t.like_count or 0) + (t.retweet_count or 0) * 2
+
+        filtered = [t for t in tweets if _engagement(t) >= X_MIN_ENGAGEMENT]
+        filtered.sort(key=_engagement, reverse=True)
+
         label = f"@{handle}"
         emitter = sources_emitter_var.get()
         if emitter is not None:
@@ -332,7 +540,7 @@ class XUserTweetsTool(BaseTool):
                             "full_text": t.text,
                         },
                     )
-                    for t in tweets
+                    for t in filtered
                 ],
             )
 
@@ -347,7 +555,7 @@ class XUserTweetsTool(BaseTool):
                 "reply_count": t.reply_count,
                 "retweet_count": t.retweet_count,
             }
-            for t in tweets
+            for t in filtered
         ]
         return json.dumps(payload, ensure_ascii=False)
 
@@ -392,6 +600,16 @@ class InstagramReelsTool(BaseTool):
             )
         )
 
+        # Quality gate: drop reels under the play threshold; sort by plays
+        # descending so the highest-reach reels lead the bullet list.
+        # IG's `taken_at` format is inconsistent (sometimes ISO, sometimes
+        # unix-int) so we don't gate on age here — `date_posted` already
+        # filters server-side.
+        filtered = [
+            r for r in reels if (r.play_count or 0) >= INSTAGRAM_MIN_PLAYS
+        ]
+        filtered.sort(key=lambda r: r.play_count or 0, reverse=True)
+
         label = f"IG · {query}"
         emitter = sources_emitter_var.get()
         if emitter is not None:
@@ -413,7 +631,7 @@ class InstagramReelsTool(BaseTool):
                             "duration_sec": r.duration_sec,
                         },
                     )
-                    for r in reels
+                    for r in filtered
                 ],
             )
 
@@ -428,6 +646,6 @@ class InstagramReelsTool(BaseTool):
                 "comment_count": r.comment_count,
                 "duration_sec": r.duration_sec,
             }
-            for r in reels
+            for r in filtered
         ]
         return json.dumps(payload, ensure_ascii=False)

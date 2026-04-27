@@ -1,11 +1,11 @@
-"""ScrapeCreators provider — single async HTTP wrapper for the three social
-platforms we ingest (Reddit, YouTube, X).
+"""ScrapeCreators provider — single async HTTP wrapper for the four social
+platforms we ingest (Reddit, YouTube, X, Instagram).
 
 Per-platform fetchers return *normalized* dataclasses (RedditPost,
-YouTubeVideo, XTweet). When official provider APIs come online — Reddit
-OAuth / asyncpraw, YouTube Data API v3, X via Twikit or paid alternates —
-only this module changes. Tool signatures and return shapes stay identical,
-so the swap is mechanical.
+YouTubeVideo, XTweet, InstagramReel). When official provider APIs come
+online — Reddit OAuth / asyncpraw, YouTube Data API v3, X via Twikit or
+paid alternates — only this module changes. Tool signatures and return
+shapes stay identical, so the swap is mechanical.
 
 ScrapeCreators billing: every successful call = 1 credit. 4xx responses
 that fail validation are *not* charged (verified during the probe).
@@ -14,6 +14,7 @@ that fail validation are *not* charged (verified during the probe).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -31,6 +32,25 @@ _BASE = "https://api.scrapecreators.com"
 
 @dataclass(frozen=True)
 class RedditPost:
+    title: str
+    url: str
+    subreddit: str
+    score: int
+    num_comments: int
+    created_utc: int
+    selftext: str
+    author: str | None
+
+
+@dataclass(frozen=True)
+class RedditSearchHit:
+    """A single post returned by the cross-Reddit search endpoint.
+
+    Same shape as RedditPost but adds nothing — kept as a separate type so
+    callers can tell whether a result came from `/v1/reddit/search` (broad,
+    cross-subreddit discovery) versus `/v1/reddit/subreddit` (targeted feed).
+    """
+
     title: str
     url: str
     subreddit: str
@@ -128,6 +148,49 @@ async def reddit_subreddit(
                     else (p.get("url") or "")
                 ),
                 subreddit=p.get("subreddit") or subreddit,
+                score=int(p.get("score") or p.get("ups") or 0),
+                num_comments=int(p.get("num_comments") or 0),
+                created_utc=int(p.get("created") or 0),
+                selftext=(p.get("selftext") or "")[:500],
+                author=p.get("author"),
+            )
+        )
+    return out
+
+
+async def reddit_search(
+    query: str,
+    sort: Literal["relevance", "new", "top", "comment_count"] = "top",
+    timeframe: Literal["day", "week", "month", "year", "all"] = "week",
+    limit: int = 25,
+) -> list[RedditSearchHit]:
+    """Cross-Reddit keyword search. Use this BEFORE picking subreddits so
+    you can see which communities are actually discussing a topic, instead
+    of guessing from positioning text.
+
+    The endpoint searches every subreddit at once; each post carries its
+    `subreddit` field, which the caller groups on to discover communities.
+    """
+    params: dict[str, Any] = {
+        "query": query,
+        "sort": sort,
+        "timeframe": timeframe,
+        "trim": "true",
+    }
+    data = await _get("/v1/reddit/search", params)
+    posts = data.get("posts") or []
+    out: list[RedditSearchHit] = []
+    for p in posts[:limit]:
+        permalink = p.get("permalink") or ""
+        out.append(
+            RedditSearchHit(
+                title=p.get("title") or "",
+                url=(
+                    f"https://reddit.com{permalink}"
+                    if permalink
+                    else (p.get("url") or "")
+                ),
+                subreddit=p.get("subreddit") or "",
                 score=int(p.get("score") or p.get("ups") or 0),
                 num_comments=int(p.get("num_comments") or 0),
                 created_utc=int(p.get("created") or 0),
@@ -238,6 +301,60 @@ def _float_or_none(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+_VIEW_RE = re.compile(r"([\d,.]+)\s*([KkMmBb])?", re.UNICODE)
+_RELTIME_RE = re.compile(r"(\d+)\s+(second|minute|hour|day|week|month|year)s?", re.I)
+_UNIT_HOURS = {
+    "second": 1 / 3600,
+    "minute": 1 / 60,
+    "hour": 1.0,
+    "day": 24.0,
+    "week": 24.0 * 7,
+    "month": 24.0 * 30,
+    "year": 24.0 * 365,
+}
+
+
+def parse_view_count_text(text: str | None) -> int | None:
+    """Parse YouTube-style view strings into ints.
+
+    Examples: '1.2M views' → 1_200_000, '47K' → 47_000, '1,234 views' → 1234.
+    Returns None when the string can't be parsed (caller should keep the item
+    rather than drop it on parse failure).
+    """
+    if not text:
+        return None
+    m = _VIEW_RE.search(text)
+    if not m:
+        return None
+    raw = m.group(1).replace(",", "")
+    suffix = (m.group(2) or "").lower()
+    try:
+        n = float(raw)
+    except ValueError:
+        return None
+    mult = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}.get(suffix, 1)
+    return int(n * mult)
+
+
+def parse_relative_time_hours(text: str | None) -> float | None:
+    """Parse 'N units ago' strings into hours-since-posted.
+
+    Examples: '2 weeks ago' → 336.0, '3 days ago' → 72.0, '5 hours ago' → 5.0.
+    Returns None when unparseable so callers can default to 'unknown age'.
+    """
+    if not text:
+        return None
+    m = _RELTIME_RE.search(text)
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    unit = m.group(2).lower()
+    return n * _UNIT_HOURS.get(unit, 1.0)
 
 
 # ─── Instagram ──────────────────────────────────────────────────────────────

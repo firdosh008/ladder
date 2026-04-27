@@ -23,6 +23,7 @@ from app.agents.research.streaming import SourceRef, sources_emitter_var
 from app.agents.research.tools import (
     ExaSearchTool,
     InstagramReelsTool,
+    RedditSearchTool,
     RedditTrendsTool,
     XUserTweetsTool,
     YouTubeTrendsTool,
@@ -32,8 +33,11 @@ from app.providers.exa import ExaResult
 from app.providers.scrapecreators import (
     InstagramReel,
     RedditPost,
+    RedditSearchHit,
     XTweet,
     YouTubeVideo,
+    parse_relative_time_hours,
+    parse_view_count_text,
 )
 
 
@@ -368,6 +372,339 @@ def test_instagram_provider_swallows_404_not_found_as_empty() -> None:
 
     result = _asyncio.run(run())
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Provider parsers (YouTube view-count + relative-time strings)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_view_count_text_handles_k_m_b_and_commas() -> None:
+    assert parse_view_count_text("1.2M views") == 1_200_000
+    assert parse_view_count_text("47K views") == 47_000
+    assert parse_view_count_text("1,234 views") == 1234
+    assert parse_view_count_text("2B views") == 2_000_000_000
+    assert parse_view_count_text("") is None
+    assert parse_view_count_text(None) is None
+    assert parse_view_count_text("just text") is None
+
+
+def test_parse_relative_time_hours_covers_units() -> None:
+    assert parse_relative_time_hours("3 hours ago") == 3.0
+    assert parse_relative_time_hours("1 day ago") == 24.0
+    assert parse_relative_time_hours("2 weeks ago") == 24.0 * 14
+    assert parse_relative_time_hours("1 month ago") == 24.0 * 30
+    assert parse_relative_time_hours("nothing here") is None
+    assert parse_relative_time_hours(None) is None
+
+
+# ---------------------------------------------------------------------------
+# RedditSearchTool — cross-Reddit discovery
+# ---------------------------------------------------------------------------
+
+
+def test_reddit_search_tool_returns_discovered_subreddits_ranked() -> None:
+    fake = [
+        RedditSearchHit(
+            title="Building agents with Claude",
+            url="https://reddit.com/r/LocalLLaMA/comments/a/x",
+            subreddit="LocalLLaMA",
+            score=420,
+            num_comments=88,
+            created_utc=int(__import__("time").time()) - 3600,
+            selftext="body",
+            author="u1",
+        ),
+        RedditSearchHit(
+            title="How I shipped my first agent",
+            url="https://reddit.com/r/LocalLLaMA/comments/b/y",
+            subreddit="LocalLLaMA",
+            score=210,
+            num_comments=15,
+            created_utc=int(__import__("time").time()) - 7200,
+            selftext="b",
+            author="u2",
+        ),
+        RedditSearchHit(
+            title="Agent eval frameworks",
+            url="https://reddit.com/r/MachineLearning/comments/c/z",
+            subreddit="MachineLearning",
+            score=180,
+            num_comments=22,
+            created_utc=int(__import__("time").time()) - 10800,
+            selftext="c",
+            author="u3",
+        ),
+    ]
+
+    async def fake_search(
+        query: str,
+        sort: str = "top",
+        timeframe: str = "week",
+        limit: int = 25,
+    ) -> list[RedditSearchHit]:
+        assert query == "ai agents"
+        del sort, timeframe, limit
+        return fake
+
+    emissions: list[tuple[str, list[SourceRef]]] = []
+    token = sources_emitter_var.set(lambda q, s: emissions.append((q, s)))
+    try:
+        with patch(
+            "app.agents.research.tools.scrapecreators.reddit_search", fake_search
+        ):
+            out = RedditSearchTool()._run(query="ai agents")
+    finally:
+        sources_emitter_var.reset(token)
+
+    payload = json.loads(out)
+    assert "discovered_subreddits" in payload
+    assert "posts" in payload
+
+    subs = payload["discovered_subreddits"]
+    # LocalLLaMA outranks MachineLearning on summed score (420+210 vs 180).
+    assert subs[0]["name"] == "LocalLLaMA"
+    assert subs[0]["post_count"] == 2
+    assert subs[0]["total_score"] == 630
+    assert subs[0]["top_post_title"] == "Building agents with Claude"
+    assert subs[1]["name"] == "MachineLearning"
+
+    assert len(emissions) == 1
+    label, sources = emissions[0]
+    assert label == "reddit search · ai agents"
+    assert all(s.platform == "reddit" for s in sources)
+
+
+def test_reddit_search_tool_drops_low_score_posts() -> None:
+    """Posts under REDDIT_MIN_SCORE shouldn't influence subreddit ranking."""
+    now = int(__import__("time").time())
+    fake = [
+        RedditSearchHit(
+            title="Real signal",
+            url="https://reddit.com/r/Real/comments/a",
+            subreddit="Real",
+            score=120,
+            num_comments=5,
+            created_utc=now - 3600,
+            selftext="",
+            author=None,
+        ),
+        RedditSearchHit(
+            title="Noise",
+            url="https://reddit.com/r/NoiseSub/comments/b",
+            subreddit="NoiseSub",
+            score=2,  # below REDDIT_MIN_SCORE
+            num_comments=0,
+            created_utc=now - 3600,
+            selftext="",
+            author=None,
+        ),
+    ]
+
+    async def fake_search(query: str, **_: Any) -> list[RedditSearchHit]:
+        del query
+        return fake
+
+    with patch(
+        "app.agents.research.tools.scrapecreators.reddit_search", fake_search
+    ):
+        out = RedditSearchTool()._run(query="x")
+
+    payload = json.loads(out)
+    sub_names = [s["name"] for s in payload["discovered_subreddits"]]
+    assert "Real" in sub_names
+    assert "NoiseSub" not in sub_names
+
+
+# ---------------------------------------------------------------------------
+# Numeric pre-filters in existing tools
+# ---------------------------------------------------------------------------
+
+
+def test_reddit_trends_tool_drops_low_score_and_stale_posts() -> None:
+    import time as _time
+
+    now = int(_time.time())
+    fake = [
+        RedditPost(
+            title="Fresh hot",
+            url="https://reddit.com/r/x/comments/1",
+            subreddit="x",
+            score=80,
+            num_comments=5,
+            created_utc=now - 3600,
+            selftext="",
+            author=None,
+        ),
+        RedditPost(
+            title="Too old",
+            url="https://reddit.com/r/x/comments/2",
+            subreddit="x",
+            score=200,
+            num_comments=10,
+            created_utc=now - 60 * 24 * 3600,  # 60 days old
+            selftext="",
+            author=None,
+        ),
+        RedditPost(
+            title="Score too low",
+            url="https://reddit.com/r/x/comments/3",
+            subreddit="x",
+            score=3,
+            num_comments=0,
+            created_utc=now - 3600,
+            selftext="",
+            author=None,
+        ),
+    ]
+
+    async def fake_fetch(
+        subreddit: str,
+        sort: str = "hot",
+        timeframe: str = "week",
+        limit: int = 15,
+    ) -> list[RedditPost]:
+        del subreddit, sort, timeframe, limit
+        return fake
+
+    with patch(
+        "app.agents.research.tools.scrapecreators.reddit_subreddit", fake_fetch
+    ):
+        out = RedditTrendsTool()._run(subreddit="x")
+
+    payload = json.loads(out)
+    titles = [p["title"] for p in payload]
+    assert titles == ["Fresh hot"]
+
+
+def test_youtube_tool_drops_videos_under_view_threshold() -> None:
+    fake = [
+        YouTubeVideo(
+            video_id="a",
+            url="https://www.youtube.com/watch?v=a",
+            title="Big hit",
+            channel="ch",
+            published_time="1 day ago",
+            view_count_text="120K views",
+            duration="10:00",
+        ),
+        YouTubeVideo(
+            video_id="b",
+            url="https://www.youtube.com/watch?v=b",
+            title="Tiny",
+            channel="ch",
+            published_time="1 day ago",
+            view_count_text="800 views",
+            duration="3:00",
+        ),
+    ]
+
+    async def fake_fetch(
+        query: str,
+        upload_date: str = "this_week",
+        sort_by: str = "popular",
+        limit: int = 10,
+    ) -> list[YouTubeVideo]:
+        del query, upload_date, sort_by, limit
+        return fake
+
+    with patch(
+        "app.agents.research.tools.scrapecreators.youtube_search", fake_fetch
+    ):
+        out = YouTubeTrendsTool()._run(query="ai")
+
+    payload = json.loads(out)
+    titles = [v["title"] for v in payload]
+    assert titles == ["Big hit"]
+    # Parsed view_count surfaces in the JSON payload too.
+    assert payload[0]["view_count"] == 120_000
+
+
+def test_x_tool_drops_low_engagement_tweets() -> None:
+    fake = [
+        XTweet(
+            tweet_id="1",
+            url="https://x.com/h/status/1",
+            text="hot take",
+            handle="h",
+            created_at="now",
+            like_count=5,  # 5 + 0*2 = 5 → drop
+            view_count=10,
+            reply_count=0,
+            retweet_count=0,
+        ),
+        XTweet(
+            tweet_id="2",
+            url="https://x.com/h/status/2",
+            text="amplified",
+            handle="h",
+            created_at="now",
+            like_count=200,
+            view_count=4000,
+            reply_count=8,
+            retweet_count=40,
+        ),
+    ]
+
+    async def fake_fetch(handle: str, limit: int = 15) -> list[XTweet]:
+        del handle, limit
+        return fake
+
+    with patch(
+        "app.agents.research.tools.scrapecreators.x_user_tweets", fake_fetch
+    ):
+        out = XUserTweetsTool()._run(handle="h")
+
+    payload = json.loads(out)
+    ids = [t["url"] for t in payload]
+    assert ids == ["https://x.com/h/status/2"]
+
+
+def test_instagram_tool_drops_low_play_reels() -> None:
+    fake = [
+        InstagramReel(
+            reel_id="hi",
+            url="https://www.instagram.com/reel/hi",
+            caption="",
+            owner_handle="o",
+            owner_full_name=None,
+            play_count=100_000,
+            like_count=1000,
+            comment_count=10,
+            duration_sec=12.0,
+            taken_at=None,
+        ),
+        InstagramReel(
+            reel_id="lo",
+            url="https://www.instagram.com/reel/lo",
+            caption="",
+            owner_handle="o",
+            owner_full_name=None,
+            play_count=200,
+            like_count=2,
+            comment_count=0,
+            duration_sec=12.0,
+            taken_at=None,
+        ),
+    ]
+
+    async def fake_fetch(
+        query: str,
+        date_posted: str = "last-week",
+        limit: int = 10,
+    ) -> list[InstagramReel]:
+        del query, date_posted, limit
+        return fake
+
+    with patch(
+        "app.agents.research.tools.scrapecreators.instagram_reels_search",
+        fake_fetch,
+    ):
+        out = InstagramReelsTool()._run(query="x")
+
+    payload = json.loads(out)
+    urls = [r["url"] for r in payload]
+    assert urls == ["https://www.instagram.com/reel/hi"]
 
 
 # ---------------------------------------------------------------------------

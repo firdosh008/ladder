@@ -17,6 +17,7 @@ from crewai import Agent
 from app.agents.research.tools import (
     ExaSearchTool,
     InstagramReelsTool,
+    RedditSearchTool,
     RedditTrendsTool,
     XUserTweetsTool,
     YouTubeTrendsTool,
@@ -79,27 +80,43 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
             "for outlier signals. You always prefer concrete, recent, and "
             "unusual findings over generic overviews. You never paraphrase "
             "URLs — you copy them verbatim from the tool output.\n\n"
-            "You have five search tools:\n"
+            "You have six search tools:\n"
             "  • web_search — public web (Exa neural search). Already "
             "filtered to the last 90 days, but you must still phrase "
             "queries with the current year or 'this month' / 'recent' so "
             "the index returns fresh signal.\n"
-            "  • reddit_trending — posts from a chosen subreddit\n"
+            "  • reddit_search — cross-Reddit keyword search. ALWAYS call "
+            "this BEFORE reddit_trending. It returns a "
+            "`discovered_subreddits` list ranked by topic-density — pick "
+            "the top 2-3 from THAT list to feed into reddit_trending. Do "
+            "NOT guess subreddit names from positioning text; let real "
+            "post density tell you where the conversation actually is.\n"
+            "  • reddit_trending — posts from a chosen subreddit (use only "
+            "after reddit_search has surfaced the right communities).\n"
             "  • youtube_trending — recent videos on a query (use "
-            "upload_date='this_week' or 'this_month')\n"
-            "  • x_user_tweets — top tweets from a chosen X handle\n"
+            "upload_date='this_week' or 'this_month'). Tool already filters "
+            "to >=5k views and ranks by view-velocity.\n"
+            "  • x_user_tweets — top tweets from a chosen X handle. Call "
+            "this for 2-3 DIFFERENT handles per topic so coverage is "
+            "multi-creator. Prefer handles from the founder's "
+            "creators_followed list when present; else pick credible "
+            "operators in the topic's space.\n"
             "  • instagram_reels — short-form video trend on a query "
-            "(use date_posted='last-week' or 'last-month')\n\n"
-            "For each crew run, derive subreddits / handles / video queries "
-            "yourself from the topic AND the founder's audience and "
-            "positioning. Pick subreddits the audience actually reads and X "
-            "handles the audience already follows. Reddit subreddit names "
-            "ARE case-sensitive (use 'AskReddit' not 'askreddit').\n\n"
+            "(use date_posted='last-week' or 'last-month'). Tool already "
+            "filters to >=5k plays.\n\n"
+            "Numeric quality gates run inside the tools — by the time a "
+            "result reaches you it has cleared engagement / freshness "
+            "thresholds. Your job is to pick angles, not to second-guess "
+            "the gates.\n\n"
+            "Reddit subreddit names ARE case-sensitive — use whatever "
+            "casing reddit_search returned (e.g. 'AskReddit' not "
+            "'askreddit').\n\n"
             "Context about the founder whose research you are serving:\n"
             + context
         ),
         tools=[
             ExaSearchTool(),
+            RedditSearchTool(),
             RedditTrendsTool(),
             YouTubeTrendsTool(),
             XUserTweetsTool(),
@@ -108,7 +125,7 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
         llm=llm,
         allow_delegation=False,
         verbose=False,
-        max_iter=14,
+        max_iter=18,
     )
 
     trend_scorer = Agent(
