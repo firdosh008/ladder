@@ -1,10 +1,23 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import { Sparkle, Lightning, Warning, ArrowsClockwise, Cube } from "@phosphor-icons/react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Sparkle,
+  Lightning,
+  Warning,
+  ArrowsClockwise,
+  ArrowSquareOut,
+  Image as ImageIcon,
+  Eye,
+  Spinner,
+  CheckCircle,
+} from "@phosphor-icons/react";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/cn";
-import { runSceneStream, type AgentEvent, type Scene } from "../../lib/agents";
-
-const SceneView = lazy(() => import("./SceneView"));
+import {
+  publishScene,
+  runSceneStream,
+  type AgentEvent,
+  type Scene,
+} from "../../lib/agents";
 
 type AgentKey = "layout_planner" | "element_designer";
 
@@ -42,22 +55,34 @@ type Props = {
   sessionId: string | null;
   initialScene: Scene | null;
   outlineReady: boolean;
+  /** Open the scene preview modal in the parent. */
+  onPreview: () => void;
 };
 
+/**
+ * Bottom-of-left-pane action row.
+ *
+ * Pre-build:   [Approve and build scene →]
+ * Post-build:  [Preview canvas] [Open in Excalidraw] [Regenerate scene] [Generate thumbnail]
+ *
+ * The inline canvas now lives behind the Preview button (rendered in a
+ * modal by the parent so the cramped 65%-wide pane doesn't try to host
+ * a full Excalidraw viewer).
+ */
 export function SceneRunPanel({
   sessionId,
   initialScene,
   outlineReady,
+  onPreview,
 }: Props) {
   const [scene, setScene] = useState<Scene | null>(initialScene);
-  const [status, setStatus] = useState<Status>(
-    initialScene ? "ready" : "idle",
-  );
+  const [status, setStatus] = useState<Status>(initialScene ? "ready" : "idle");
   const [runtime, setRuntime] = useState<Record<AgentKey, AgentRuntime>>(
     initialRuntime,
   );
   const [error, setError] = useState<string | null>(null);
   const [cost, setCost] = useState<number | null>(null);
+  const [openingExcalidraw, setOpeningExcalidraw] = useState(false);
 
   useEffect(() => {
     setScene(initialScene);
@@ -139,49 +164,141 @@ export function SceneRunPanel({
     };
   }, [sessionId]);
 
+  const onOpenInExcalidraw = useCallback(async () => {
+    if (!scene || !sessionId) return;
+    setOpeningExcalidraw(true);
+    setError(null);
+    try {
+      // Inflate to the standard Excalidraw envelope server-side so the
+      // shareable URL points at a fully-formed file. The convert step
+      // happens inside SceneView in the modal — for the action button,
+      // we hand the skeleton through and the publish endpoint accepts
+      // either shape.
+      const { convertToExcalidrawElements } = await import(
+        "@excalidraw/excalidraw"
+      );
+      const elements = convertToExcalidrawElements(
+        scene.elements as unknown as Parameters<
+          typeof convertToExcalidrawElements
+        >[0],
+        { regenerateIds: false },
+      );
+      const envelope = {
+        type: "excalidraw" as const,
+        version: 2,
+        source: "https://excalidraw.com",
+        elements,
+        appState: {
+          viewBackgroundColor: scene.background_color,
+          gridSize: null,
+        },
+        files: {},
+      };
+      const { excalidraw_url } = await publishScene(
+        sessionId,
+        envelope as unknown as Record<string, unknown>,
+      );
+      window.open(excalidraw_url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOpeningExcalidraw(false);
+    }
+  }, [scene, sessionId]);
+
   const canStart = !!sessionId && outlineReady && status !== "running";
+  const isRunning = status === "running";
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="rounded-lg border border-hairline bg-surface px-4 py-3 flex items-center gap-3">
-        <Cube size={16} weight="duotone" className="text-cinnabar shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] text-white">
-            {scene
-              ? "Scene is ready. Rebuild from the latest outline if you've edited it."
-              : "Generate the Excalidraw scene for this outline."}
-          </p>
-          <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-mist mt-0.5">
-            ws_agents_scene · 2 agents · sequential
-            {cost !== null ? ` · $${cost.toFixed(3)}` : ""}
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant={scene ? "secondary" : "primary"}
-          onClick={startRun}
-          disabled={!canStart}
-          title={
-            !canStart
-              ? "Scene crew needs a finished outline before it can run"
-              : undefined
-          }
-        >
-          {scene ? (
-            <ArrowsClockwise size={12} weight="bold" />
-          ) : status === "running" ? (
-            <Sparkle size={12} weight="duotone" className="animate-pulse" />
-          ) : (
-            <Lightning size={12} weight="bold" />
-          )}
-          {scene
-            ? "Rebuild scene"
-            : status === "running"
-              ? "Building scene…"
-              : "Build scene"}
-        </Button>
+    <div className="flex flex-col gap-2">
+      {/* Action row — pinned at the bottom of the left pane */}
+      <div className="flex items-center gap-3 min-h-[28px]">
+        {!scene ? (
+          <>
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <span
+                className={cn(
+                  "inline-block h-1.5 w-1.5 rounded-full shrink-0",
+                  outlineReady ? "bg-cinnabar" : "bg-white/20",
+                )}
+              />
+              <p className="text-[12.5px] text-white/85 truncate">
+                {outlineReady
+                  ? "Outline ready — build the scene when you're happy."
+                  : "Waiting on the outline."}
+              </p>
+              {cost !== null ? (
+                <span className="font-mono text-[10.5px] text-mist shrink-0">
+                  ${cost.toFixed(3)}
+                </span>
+              ) : null}
+            </div>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={startRun}
+              disabled={!canStart}
+              title={
+                !canStart
+                  ? "Scene crew needs a finished outline before it can run"
+                  : undefined
+              }
+              className="shrink-0"
+            >
+              {isRunning ? (
+                <Sparkle size={11} weight="duotone" className="animate-pulse" />
+              ) : (
+                <Lightning size={11} weight="bold" />
+              )}
+              {isRunning ? "Building…" : "Approve & build scene"}
+            </Button>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5 min-w-0 mr-auto">
+              <CheckCircle size={11} weight="fill" className="text-cinnabar shrink-0" />
+              <span className="text-[12.5px] text-white/90 truncate">Scene ready</span>
+              {cost !== null ? (
+                <span className="font-mono text-[10.5px] text-mist shrink-0">
+                  · ${cost.toFixed(3)}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <FooterIconBtn
+                icon={Eye}
+                label="Preview"
+                onClick={onPreview}
+                title="Preview the canvas"
+              />
+              <FooterIconBtn
+                icon={openingExcalidraw ? Spinner : ArrowSquareOut}
+                label={openingExcalidraw ? "Uploading…" : "Open in Excalidraw"}
+                onClick={onOpenInExcalidraw}
+                disabled={openingExcalidraw}
+                spinning={openingExcalidraw}
+                title="Open scene in excalidraw.com"
+              />
+              <FooterIconBtn
+                icon={ArrowsClockwise}
+                label="Regenerate"
+                onClick={startRun}
+                disabled={!canStart}
+                title="Regenerate scene from the latest outline"
+              />
+              <FooterIconBtn
+                icon={ImageIcon}
+                label="Thumbnail"
+                disabled
+                muted
+                title="Thumbnail generator ships in a follow-up pass"
+              />
+            </div>
+          </>
+        )}
       </div>
 
+      {/* Run progress + errors */}
       {(status === "running" || status === "failed") && (
         <div className="rounded-lg border border-hairline bg-surface p-3 space-y-2">
           {AGENT_ORDER.map((key) => {
@@ -229,19 +346,61 @@ export function SceneRunPanel({
         </div>
       )}
 
-      {scene && sessionId ? (
-        <Suspense
-          fallback={
-            <div className="rounded-lg border border-hairline bg-surface px-4 py-6 font-mono text-[11.5px] text-mist">
-              loading canvas…
-            </div>
-          }
-        >
-          <SceneView scene={scene} sessionId={sessionId} />
-        </Suspense>
+      {error && status !== "failed" ? (
+        <p className="font-mono text-[11px] text-cinnabar">{error}</p>
       ) : null}
     </div>
   );
 }
 
 export default SceneRunPanel;
+
+// ─── Footer button ────────────────────────────────────────────────────────
+
+/**
+ * Compact secondary button used in the sticky footer cluster. Smaller than
+ * the design-system Button, optical density tuned for an icon + 1-word
+ * label. Hover lifts the chrome so the cluster reads as a tight group.
+ */
+function FooterIconBtn({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+  muted,
+  spinning,
+  title,
+}: {
+  icon: React.ElementType;
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  muted?: boolean;
+  spinning?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={cn(
+        "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md",
+        "text-[12px] font-medium font-sans whitespace-nowrap",
+        "border border-hairline bg-white/[0.03] text-white/85",
+        "hover:bg-white/[0.07] hover:text-white hover:border-hairline-strong",
+        "transition-colors",
+        "disabled:opacity-40 disabled:pointer-events-none",
+        muted && "bg-transparent border-transparent text-mist hover:text-mist hover:bg-transparent hover:border-transparent",
+      )}
+    >
+      <Icon
+        size={11}
+        weight="bold"
+        className={cn("shrink-0", spinning && "animate-spin")}
+      />
+      <span>{label}</span>
+    </button>
+  );
+}

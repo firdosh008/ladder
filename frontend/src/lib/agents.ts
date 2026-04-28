@@ -365,6 +365,40 @@ export async function publishScene(
   return (await res.json()) as ScenePublishResult;
 }
 
+// ─── saveOutline ──────────────────────────────────────────────────────────
+
+export type SaveOutlineResult = {
+  artifact_id: string;
+  version: number;
+};
+
+/**
+ * Persist a founder-edited outline as a new versioned `outline` artifact.
+ * The backend mirrors the rendered text on the session row so the kanban
+ * preview stays in sync.
+ */
+export async function saveOutline(
+  sessionId: string,
+  outline: Outline,
+): Promise<SaveOutlineResult> {
+  const token = await authToken();
+  const res = await fetch(
+    `${API_URL}/studio-sessions/${encodeURIComponent(sessionId)}/outline`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ outline }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to save outline (${res.status})`);
+  }
+  return (await res.json()) as SaveOutlineResult;
+}
+
 // ─── runExtractStream ─────────────────────────────────────────────────────
 
 export type ExtractRunResult = {

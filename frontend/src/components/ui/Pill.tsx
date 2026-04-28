@@ -6,6 +6,8 @@ export interface PillProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   locked?: boolean;
   accent?: boolean;
   open?: boolean;
+  /** Compact density used in dense headers — h-6 vs default h-7. */
+  density?: "default" | "compact";
 }
 
 /**
@@ -13,34 +15,40 @@ export interface PillProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  * Tap = opens dropdown directly below. Locked pills grey out with lock icon.
  */
 export const Pill = forwardRef<HTMLButtonElement, PillProps>(
-  ({ className, locked, accent, open, children, ...props }, ref) => (
+  (
+    { className, locked, accent, open, density = "default", children, ...props },
+    ref,
+  ) => (
     <button
       ref={ref}
       disabled={locked}
       data-open={open ? "" : undefined}
       className={cn(
-        "group inline-flex items-center gap-1.5 rounded-full px-3 h-7",
-        "text-[12px] font-medium font-sans whitespace-nowrap",
+        "group inline-flex items-center gap-1 rounded-full",
+        "font-medium font-sans whitespace-nowrap select-none",
         "transition-colors duration-150 ease-out",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cinnabar",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cinnabar/60",
+        density === "compact"
+          ? "h-6 px-2 text-[11.5px]"
+          : "h-7 px-3 text-[12px]",
         accent
           ? "bg-cinnabar/[0.12] text-cinnabar hover:bg-cinnabar/[0.18]"
-          : "bg-white/[0.06] text-white hover:bg-white/[0.1] border border-hairline",
-        locked && "opacity-50 cursor-not-allowed hover:bg-white/[0.06]",
-        "data-[open]:ring-1 data-[open]:ring-cinnabar",
+          : "bg-white/[0.04] text-white/85 hover:text-white hover:bg-white/[0.07] border border-hairline",
+        locked && "opacity-50 cursor-not-allowed hover:bg-white/[0.04]",
+        "data-[open]:text-white data-[open]:bg-white/[0.07] data-[open]:border-hairline-strong",
         className,
       )}
       {...props}
     >
       {locked ? (
-        <Lock size={11} weight="bold" className="opacity-60" />
+        <Lock size={10} weight="bold" className="opacity-60" />
       ) : null}
-      <span>{children}</span>
+      <span className="inline-flex items-center gap-1">{children}</span>
       {!locked ? (
         <CaretDown
-          size={10}
+          size={9}
           weight="bold"
-          className="opacity-60 transition-transform group-data-[open]:rotate-180"
+          className="opacity-50 transition-transform group-data-[open]:rotate-180"
         />
       ) : null}
     </button>

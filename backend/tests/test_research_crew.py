@@ -620,6 +620,75 @@ def test_youtube_tool_drops_videos_under_view_threshold() -> None:
     assert payload[0]["view_count"] == 120_000
 
 
+def test_youtube_tool_escalates_window_until_enough_kept() -> None:
+    """If the requested upload window doesn't yield ≥ limit kept videos,
+    the tool should escalate `upload_date` (today→this_week→this_month→
+    this_year) and merge results until it has enough."""
+
+    # this_week returns 2 videos, only 1 passes the view gate.
+    week_results = [
+        YouTubeVideo(
+            video_id="w1",
+            url="https://www.youtube.com/watch?v=w1",
+            title="Weekly hit",
+            channel="ch",
+            published_time="2 days ago",
+            view_count_text="80K views",
+            duration="10:00",
+        ),
+        YouTubeVideo(
+            video_id="w2",
+            url="https://www.youtube.com/watch?v=w2",
+            title="Weekly tiny",
+            channel="ch",
+            published_time="2 days ago",
+            view_count_text="200 views",
+            duration="2:00",
+        ),
+    ]
+    # this_month returns 4 more videos, all above the view gate.
+    month_results = [
+        YouTubeVideo(
+            video_id=f"m{i}",
+            url=f"https://www.youtube.com/watch?v=m{i}",
+            title=f"Monthly hit {i}",
+            channel="ch",
+            published_time="20 days ago",
+            view_count_text="50K views",
+            duration="9:00",
+        )
+        for i in range(4)
+    ]
+    calls: list[str] = []
+
+    async def fake_fetch(
+        query: str,
+        upload_date: str = "this_week",
+        sort_by: str = "popular",
+        limit: int = 10,
+    ) -> list[YouTubeVideo]:
+        del query, sort_by, limit
+        calls.append(upload_date)
+        if upload_date == "this_week":
+            return week_results
+        if upload_date == "this_month":
+            return month_results
+        return []
+
+    with patch(
+        "app.agents.research.tools.scrapecreators.youtube_search", fake_fetch
+    ):
+        out = YouTubeTrendsTool()._run(query="ai", limit=4)
+
+    payload = json.loads(out)
+    titles = [v["title"] for v in payload]
+    # 1 from this_week + 3 from this_month (limit=4 caps the pool).
+    assert "Weekly hit" in titles
+    assert sum(1 for t in titles if t.startswith("Monthly")) == 3
+    # Escalated until we had 4 kept; should not have hit "this_year".
+    assert calls == ["this_week", "this_month"]
+
+
 def test_x_tool_drops_low_engagement_tweets() -> None:
     fake = [
         XTweet(

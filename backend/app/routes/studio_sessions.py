@@ -5,6 +5,11 @@ Routes:
         Hydrate a studio page: returns the latest session + latest script,
         outline, and excalidraw artifacts for the idea.
 
+  POST /studio-sessions/{session_id}/outline
+        Persist a founder-edited outline as a new versioned `outline`
+        artifact. Mirrors the same versioning behavior as the streaming
+        crew so history is preserved.
+
   POST /studio-sessions/{session_id}/scene/share
         Upload a fully-inflated `.excalidraw` envelope to public Storage
         and return the public URL. The frontend uses this URL to open the
@@ -36,6 +41,17 @@ class StudioSessionByIdea(BaseModel):
     script: dict | None
     outline: dict | None
     scene: dict | None
+
+
+class OutlineSaveBody(BaseModel):
+    """Founder-edited outline payload — same shape as the streaming Outline."""
+
+    outline: dict[str, Any]
+
+
+class OutlineSaveResponse(BaseModel):
+    artifact_id: str
+    version: int
 
 
 class ScenePublishBody(BaseModel):
@@ -111,6 +127,96 @@ async def get_session_by_idea(
 
     return StudioSessionByIdea(
         session=session, script=script, outline=outline, scene=scene
+    )
+
+
+def _outline_to_text(outline: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for it in outline.get("items") or []:
+        lines.append(
+            f"{it.get('number','?')}. {it.get('label','')} — {it.get('beat','')}"
+        )
+    return "\n".join(lines).strip()
+
+
+@router.post(
+    "/{session_id}/outline",
+    response_model=OutlineSaveResponse,
+)
+async def save_outline(
+    session_id: str,
+    body: OutlineSaveBody,
+    ctx: tuple = Depends(current_user),
+) -> OutlineSaveResponse:
+    """Persist a founder-edited outline as a new versioned `outline` artifact.
+
+    Inserts at version+1 and mirrors the plain-text rendering on the
+    `studio_sessions.scene_outline` column so the kanban preview stays in
+    sync. RLS makes sure only the session owner can write here.
+    """
+    user_id, token = ctx
+    client = await user_client(token)
+
+    # Confirm the session exists + RLS-owned by the caller.
+    sess_resp = (
+        await client.from_("studio_sessions")
+        .select("id")
+        .eq("id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    sess = sess_resp.data if sess_resp is not None else None
+    if not sess:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    outline = body.outline
+    items = outline.get("items") if isinstance(outline, dict) else None
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status_code=400, detail="outline.items must be a non-empty list")
+
+    # Pick the next version slot for this session's outline artifacts.
+    latest = (
+        await client.from_("artifacts")
+        .select("version")
+        .eq("session_id", session_id)
+        .eq("type", "outline")
+        .order("version", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_version = int(latest.data[0]["version"]) + 1 if latest.data else 1
+
+    inserted = (
+        await client.from_("artifacts")
+        .insert(
+            {
+                "user_id": str(user_id),
+                "session_id": session_id,
+                "type": "outline",
+                "version": next_version,
+                "content_text": _outline_to_text(outline),
+                "content_json": outline,
+            }
+        )
+        .execute()
+    )
+    if not inserted.data:
+        raise HTTPException(status_code=500, detail="outline insert returned no row")
+
+    # Mirror onto the session row so the kanban preview reflects the edit.
+    try:
+        await (
+            client.from_("studio_sessions")
+            .update({"scene_outline": _outline_to_text(outline)})
+            .eq("id", session_id)
+            .execute()
+        )
+    except Exception:
+        pass
+
+    return OutlineSaveResponse(
+        artifact_id=str(inserted.data[0]["id"]),
+        version=next_version,
     )
 
 

@@ -70,16 +70,27 @@ function initialRuntime(): Record<AgentKey, AgentRuntime> {
 
 type Status = "loading" | "running" | "ready" | "failed";
 
+export type StudioSessionRow = {
+  id: string;
+  output_type?: string | null;
+  brand_id?: string | null;
+  thumbnail_selected_id?: string | null;
+  target_duration_min?: number | null;
+};
+
 export type StudioStreamState = {
   status: Status;
   script: Script | null;
   outline: Outline | null;
   scene: Scene | null;
   sessionId: string | null;
+  session: StudioSessionRow | null;
   runtime: Record<AgentKey, AgentRuntime>;
   error: string | null;
   cost: number | null;
   hydratedFromDb: boolean;
+  /** Replace the local outline (e.g. after a manual edit save). */
+  setOutline: (outline: Outline) => void;
   /**
    * Force a fresh agent run, bypassing the DB-hydrate path. The next
    * effect cycle will skip `fetchStudioByIdea` and open the WS directly,
@@ -105,6 +116,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
   const [outline, setOutline] = useState<Outline | null>(null);
   const [scene, setScene] = useState<Scene | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [session, setSession] = useState<StudioSessionRow | null>(null);
   const [runtime, setRuntime] = useState<Record<AgentKey, AgentRuntime>>(
     initialRuntime,
   );
@@ -219,6 +231,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
     setOutline(null);
     setScene(null);
     setSessionId(null);
+    setSession(null);
     setHydratedFromDb(false);
     setRuntime(initialRuntime());
 
@@ -239,9 +252,10 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
           (res.outline?.content_json as Outline | undefined) ?? null;
         const existingScene =
           (res.scene?.content_json as Scene | undefined) ?? null;
-        const existingSessionId =
-          (res.session?.id as string | undefined) ?? null;
+        const sessionRow = (res.session as StudioSessionRow | null) ?? null;
+        const existingSessionId = sessionRow?.id ?? null;
         if (existingSessionId) setSessionId(existingSessionId);
+        if (sessionRow) setSession(sessionRow);
         if (existingScene) setScene(existingScene);
         if (existingScript && existingOutline) {
           setScript(existingScript);
@@ -282,10 +296,12 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       outline,
       scene,
       sessionId,
+      session,
       runtime,
       error,
       cost,
       hydratedFromDb,
+      setOutline,
       regenerate,
       rerun,
     }),
@@ -295,6 +311,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       outline,
       scene,
       sessionId,
+      session,
       runtime,
       error,
       cost,

@@ -402,18 +402,10 @@ class YouTubeTrendsTool(BaseTool):
         sort_by: str = "popular",
         limit: int = 10,
     ) -> str:
-        videos = asyncio.run(
-            scrapecreators.youtube_search(
-                query=query,
-                upload_date=upload_date,  # type: ignore[arg-type]
-                sort_by=sort_by,  # type: ignore[arg-type]
-                limit=limit,
-            )
-        )
-
         # Quality gate by parsed view count + age. When parsing fails we keep
         # the item rather than drop it (parse failure shouldn't be the same
-        # signal as 'low quality').
+        # signal as 'low quality'). Same conditions as before — escalation
+        # below cannot relax these.
         def _keep(v: scrapecreators.YouTubeVideo) -> bool:
             views = scrapecreators.parse_view_count_text(v.view_count_text)
             age_h = scrapecreators.parse_relative_time_hours(v.published_time)
@@ -428,8 +420,44 @@ class YouTubeTrendsTool(BaseTool):
             age_h = scrapecreators.parse_relative_time_hours(v.published_time) or 24.0
             return views / max(age_h, 1.0)
 
-        filtered = [v for v in videos if _keep(v)]
+        # Window ladder. scrapecreators returns ~one page (~20 raw videos)
+        # per call and ignores client-side pagination, so on niche queries
+        # the requested window often yields < `limit` after the view/age
+        # gate. Escalate to a wider upload_date until we have enough kept
+        # candidates. The 90-day MAX_AGE_HOURS in `_keep` still bounds how
+        # old the merged pool can be, so escalation never leaks stale hits.
+        LADDER = ["today", "this_week", "this_month", "this_year"]
+        try:
+            start_idx = LADDER.index(upload_date)
+        except ValueError:
+            start_idx = LADDER.index("this_week")
+
+        raw_buffer = max(limit * 5, 50)
+        seen_ids: set[str] = set()
+        pooled: list[scrapecreators.YouTubeVideo] = []
+
+        for window in LADDER[start_idx:]:
+            page = asyncio.run(
+                scrapecreators.youtube_search(
+                    query=query,
+                    upload_date=window,  # type: ignore[arg-type]
+                    sort_by=sort_by,  # type: ignore[arg-type]
+                    limit=raw_buffer,
+                )
+            )
+            for v in page:
+                key = v.video_id or v.url
+                if not key or key in seen_ids:
+                    continue
+                seen_ids.add(key)
+                pooled.append(v)
+            kept_count = sum(1 for v in pooled if _keep(v))
+            if kept_count >= limit:
+                break
+
+        filtered = [v for v in pooled if _keep(v)]
         filtered.sort(key=_velocity, reverse=True)
+        filtered = filtered[:limit]
 
         label = f"YouTube · {query}"
         emitter = sources_emitter_var.get()
