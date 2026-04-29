@@ -19,6 +19,32 @@ import { cn } from "../../lib/cn";
 import { Pill } from "../ui/Pill";
 import type { Idea } from "../../lib/useIdeas";
 
+const DEFAULT_BRAND_COLOR = "#E8442A";
+
+// Curated swatch row for the brand-color popover. The native picker is the
+// fallback for anything off this list — these are tuned to read on the dark
+// Excalidraw canvas (#1A1A2E) without strobing.
+const BRAND_SWATCHES: string[] = [
+  "#E8442A", // cinnabar (default)
+  "#F5A524", // amber
+  "#FACC15", // yellow
+  "#22C55E", // emerald
+  "#06B6D4", // cyan
+  "#3B82F6", // blue
+  "#8B5CF6", // violet
+  "#EC4899", // pink
+  "#F5F5F5", // bone (mono accent)
+];
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+function normalizeHex(input: string): string | null {
+  const v = input.trim();
+  if (!v) return null;
+  const withHash = v.startsWith("#") ? v : `#${v}`;
+  return HEX_RE.test(withHash) ? withHash.toUpperCase() : null;
+}
+
 const DURATION_OPTIONS: { value: number; label: string; hint: string }[] = [
   { value: 5, label: "5 min", hint: "hot take" },
   { value: 10, label: "10 min", hint: "framework" },
@@ -31,6 +57,7 @@ const DURATION_OPTIONS: { value: number; label: string; hint: string }[] = [
 type SessionPills = {
   output_type?: string | null;
   brand_id?: string | null;
+  brand_color?: string | null;
   thumbnail_selected_id?: string | null;
 };
 
@@ -41,6 +68,7 @@ type Props = {
   onTitleChange?: (title: string) => Promise<void> | void;
   onDurationChange?: (minutes: number) => void;
   durationLocked?: boolean;
+  onBrandColorChange?: (hex: string | null) => Promise<void> | void;
 };
 
 export function StudioHeader({
@@ -50,6 +78,7 @@ export function StudioHeader({
   onTitleChange,
   onDurationChange,
   durationLocked,
+  onBrandColorChange,
 }: Props) {
   return (
     <header
@@ -82,7 +111,11 @@ export function StudioHeader({
 
       <div className="flex items-center gap-1">
         <OutputPill output={session?.output_type ?? null} />
-        <BrandPill brandId={session?.brand_id ?? null} />
+        <BrandPill
+          brandColor={session?.brand_color ?? null}
+          onChange={onBrandColorChange}
+          enabled={!!onBrandColorChange}
+        />
         <DurationPill
           current={idea?.target_duration_min ?? null}
           onChange={onDurationChange}
@@ -212,27 +245,156 @@ function OutputPill({ output }: { output: string | null }) {
   );
 }
 
-// ─── Pill: Brand ──────────────────────────────────────────────────────────
+// ─── Pill: Brand color ────────────────────────────────────────────────────
 
-function BrandPill({ brandId }: { brandId: string | null }) {
+function BrandPill({
+  brandColor,
+  onChange,
+  enabled,
+}: {
+  brandColor: string | null;
+  onChange?: (hex: string | null) => Promise<void> | void;
+  enabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(brandColor ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // Keep the inline input in sync if the underlying session row changes
+  // (e.g. another tab patched it, or the pill mounts mid-stream).
+  useEffect(() => {
+    setDraft(brandColor ?? "");
+  }, [brandColor]);
+
+  const swatch = brandColor ?? DEFAULT_BRAND_COLOR;
+  const label = brandColor ? brandColor.toUpperCase() : "Pick color";
+
+  const commit = async (hex: string | null) => {
+    if (!enabled || !onChange) return;
+    if (hex === brandColor) return;
+    setSaving(true);
+    try {
+      await onChange(hex);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <PillPopover
-      title="Brand"
-      renderTrigger={(open) => (
-        <Pill type="button" density="compact" open={open} title="Brand">
-          <Palette size={10} weight="bold" className="text-mist" />
-          {brandId ? "Brand set" : "No brand"}
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <Pill type="button" density="compact" open={open} title="Brand color">
+          <span
+            aria-hidden
+            className="inline-block h-3 w-3 rounded-sm border border-white/15"
+            style={{ backgroundColor: swatch }}
+          />
+          {label}
         </Pill>
-      )}
-    >
-      <PopoverBody>
-        <p className="text-[12.5px] text-white/85 leading-[1.55]">
-          Brand picker is on its way. Brands carry your positioning,
-          colors, and the on-brand context every agent reads before
-          drafting.
-        </p>
-      </PopoverBody>
-    </PillPopover>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="end"
+          sideOffset={6}
+          className={cn(
+            "z-30 w-[260px] rounded-md border border-hairline",
+            "bg-night shadow-xl overflow-hidden",
+            "data-[state=open]:animate-scale-in data-[state=closed]:animate-fade-out",
+            "origin-top-right",
+          )}
+        >
+          <PopoverHeader title="Brand color">
+            primary accent for excalidraw drawings. takes effect on the next
+            scene re-run.
+          </PopoverHeader>
+          <div className="px-3 py-3 space-y-3">
+            <div className="grid grid-cols-9 gap-1.5">
+              {BRAND_SWATCHES.map((hex) => {
+                const active = brandColor?.toUpperCase() === hex.toUpperCase();
+                return (
+                  <button
+                    key={hex}
+                    type="button"
+                    title={hex}
+                    onClick={() => {
+                      setDraft(hex);
+                      void commit(hex);
+                    }}
+                    className={cn(
+                      "h-5 w-5 rounded-sm border transition-transform",
+                      active
+                        ? "border-white ring-1 ring-white/60 scale-110"
+                        : "border-white/15 hover:scale-110",
+                    )}
+                    style={{ backgroundColor: hex }}
+                  />
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="relative inline-flex items-center gap-1.5 cursor-pointer">
+                <Palette size={11} weight="bold" className="text-mist" />
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-mist">
+                  custom
+                </span>
+                <input
+                  type="color"
+                  value={normalizeHex(draft) ?? swatch}
+                  onChange={(e) => {
+                    const v = e.target.value.toUpperCase();
+                    setDraft(v);
+                  }}
+                  onBlur={() => {
+                    const v = normalizeHex(draft);
+                    if (v) void commit(v);
+                  }}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+              </label>
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const v = normalizeHex(draft);
+                    if (v) void commit(v);
+                  }
+                }}
+                placeholder="#E8442A"
+                className={cn(
+                  "flex-1 h-7 px-2 rounded-md bg-white/[0.03] border border-hairline",
+                  "font-mono text-[11.5px] text-white outline-none",
+                  "focus:ring-1 focus:ring-cinnabar/60",
+                )}
+              />
+              {brandColor ? (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setDraft("");
+                    void commit(null);
+                  }}
+                  className={cn(
+                    "h-7 px-2 rounded-md text-[11px] text-mist",
+                    "hover:text-white hover:bg-white/[0.04] transition-colors",
+                  )}
+                  title="Reset to default"
+                >
+                  reset
+                </button>
+              ) : null}
+            </div>
+            {!enabled ? (
+              <p className="text-[11px] text-mist">
+                color picker activates once the session is created.
+              </p>
+            ) : null}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -335,26 +497,25 @@ function DurationPill({
 }
 
 // ─── Pill: Thumbnail ──────────────────────────────────────────────────────
+// Just a button, no dropdown. The thumbnail generator lives in the action
+// row below the outline; this pill mirrors current state and is a no-op
+// visual indicator until generation is wired up.
 
 function ThumbnailPill({ thumbnailId }: { thumbnailId: string | null }) {
   return (
-    <PillPopover
-      title="Thumbnail"
-      renderTrigger={(open) => (
-        <Pill type="button" density="compact" open={open} title="Thumbnail">
-          <ImageIcon size={10} weight="bold" className="text-mist" />
-          {thumbnailId ? "Thumbnail set" : "No thumbnail"}
-        </Pill>
-      )}
+    <Pill
+      type="button"
+      density="compact"
+      noCaret
+      title={
+        thumbnailId
+          ? "Thumbnail selected. Generate from the action row below the outline."
+          : "No thumbnail yet. Run the thumbnail generator from the action row."
+      }
     >
-      <PopoverBody>
-        <p className="text-[12.5px] text-white/85 leading-[1.55]">
-          {thumbnailId
-            ? "A thumbnail is selected for this video. Generate variants from the action row below the outline."
-            : "No thumbnail yet. Approve the scene first, then run the thumbnail generator from the action row."}
-        </p>
-      </PopoverBody>
-    </PillPopover>
+      <ImageIcon size={10} weight="bold" className="text-mist" />
+      {thumbnailId ? "Thumbnail set" : "No thumbnail"}
+    </Pill>
   );
 }
 

@@ -5,6 +5,7 @@ import { Shell } from "../components/app/Shell";
 import { Badge } from "../components/ui/Badge";
 import { ResizableSplit } from "../components/ui/ResizableSplit";
 import { useIdeas, type Idea, type IdeaUpdate } from "../lib/useIdeas";
+import { patchStudioSession } from "../lib/agents";
 import { cn } from "../lib/cn";
 import {
   useStudioStream,
@@ -86,6 +87,24 @@ function StudioBody({
     [idea.id, idea.target_duration_min, patchLocal, state, updateIdea],
   );
 
+  // Optimistic-then-confirmed brand color update. The session row is
+  // patched server-side; the next scene re-run picks up the new color
+  // automatically (the WS loader passes brand_color into the designer).
+  const onBrandColorChange = useCallback(
+    async (hex: string | null) => {
+      const sid = state.sessionId;
+      if (!sid) return;
+      const previous = state.session?.brand_color ?? null;
+      state.patchSession({ brand_color: hex });
+      try {
+        await patchStudioSession(sid, { brand_color: hex });
+      } catch {
+        state.patchSession({ brand_color: previous });
+      }
+    },
+    [state],
+  );
+
   const isRunning = state.status === "running" || state.status === "loading";
 
   return (
@@ -97,6 +116,7 @@ function StudioBody({
         onTitleChange={onTitleChange}
         onDurationChange={onDurationChange}
         durationLocked={isRunning}
+        onBrandColorChange={state.sessionId ? onBrandColorChange : undefined}
       />
       <ResizableSplit
         storageKey="ladder.studio.splitPct"

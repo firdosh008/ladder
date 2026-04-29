@@ -74,6 +74,7 @@ export type StudioSessionRow = {
   id: string;
   output_type?: string | null;
   brand_id?: string | null;
+  brand_color?: string | null;
   thumbnail_selected_id?: string | null;
   target_duration_min?: number | null;
 };
@@ -91,6 +92,8 @@ export type StudioStreamState = {
   hydratedFromDb: boolean;
   /** Replace the local outline (e.g. after a manual edit save). */
   setOutline: (outline: Outline) => void;
+  /** Merge a patch onto the local session row (after a successful PATCH). */
+  patchSession: (patch: Partial<StudioSessionRow>) => void;
   /**
    * Force a fresh agent run, bypassing the DB-hydrate path. The next
    * effect cycle will skip `fetchStudioByIdea` and open the WS directly,
@@ -289,6 +292,10 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
   }, []);
   const rerun = regenerate;
 
+  const patchSession = useCallback((patch: Partial<StudioSessionRow>) => {
+    setSession((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
   return useMemo(
     () => ({
       status,
@@ -302,6 +309,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       cost,
       hydratedFromDb,
       setOutline,
+      patchSession,
       regenerate,
       rerun,
     }),
@@ -316,6 +324,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       error,
       cost,
       hydratedFromDb,
+      patchSession,
       regenerate,
       rerun,
     ],

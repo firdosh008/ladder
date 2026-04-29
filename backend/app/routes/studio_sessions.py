@@ -5,6 +5,11 @@ Routes:
         Hydrate a studio page: returns the latest session + latest script,
         outline, and excalidraw artifacts for the idea.
 
+  PATCH /studio-sessions/{session_id}
+        Patch a small whitelist of session-level fields (currently
+        `brand_color`). Used by the studio header's brand color picker so
+        the scene crew can pick the founder-chosen accent.
+
   POST /studio-sessions/{session_id}/outline
         Persist a founder-edited outline as a new versioned `outline`
         artifact. Mirrors the same versioning behavior as the streaming
@@ -20,12 +25,13 @@ Routes:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.deps import service_client, user_client
 from app.middleware.auth import current_user
@@ -41,6 +47,34 @@ class StudioSessionByIdea(BaseModel):
     script: dict | None
     outline: dict | None
     scene: dict | None
+
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+class StudioSessionPatchBody(BaseModel):
+    """Whitelisted session-level fields the frontend can patch.
+
+    Currently exposes only `brand_color` (used by the header color picker).
+    Pass `null` to clear. New fields go through this same gate so the route
+    keeps a tight write surface.
+    """
+
+    brand_color: str | None = Field(default=None)
+
+    @field_validator("brand_color")
+    @classmethod
+    def _validate_brand_color(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        if not _HEX_COLOR_RE.match(v):
+            raise ValueError("brand_color must be a 7-char hex string like #E8442A")
+        return v.upper()
+
+
+class StudioSessionPatchResponse(BaseModel):
+    id: str
+    brand_color: str | None
 
 
 class OutlineSaveBody(BaseModel):
@@ -127,6 +161,41 @@ async def get_session_by_idea(
 
     return StudioSessionByIdea(
         session=session, script=script, outline=outline, scene=scene
+    )
+
+
+@router.patch(
+    "/{session_id}",
+    response_model=StudioSessionPatchResponse,
+)
+async def patch_session(
+    session_id: str,
+    body: StudioSessionPatchBody,
+    ctx: tuple = Depends(current_user),
+) -> StudioSessionPatchResponse:
+    """Patch the small whitelist of session fields the studio header owns."""
+    _user_id, token = ctx
+    client = await user_client(token)
+
+    update_payload: dict[str, Any] = {"brand_color": body.brand_color}
+
+    try:
+        resp = (
+            await client.from_("studio_sessions")
+            .update(update_payload)
+            .eq("id", session_id)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
+
+    if not resp.data:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    row = resp.data[0]
+    return StudioSessionPatchResponse(
+        id=str(row["id"]),
+        brand_color=row.get("brand_color"),
     )
 
 

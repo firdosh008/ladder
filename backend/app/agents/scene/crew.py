@@ -137,8 +137,14 @@ async def run_scene_build(
     idea: IdeaSlice,
     outline: Outline,
     script: Script,
+    brand_color: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Plan (CrewAI) → design (Anthropic structured outputs)."""
+    """Plan (CrewAI) → design (Anthropic structured outputs).
+
+    `brand_color` (optional 7-char hex like '#E8442A') becomes the primary
+    accent for filled title/cta cards and accent strokes in the generated
+    Excalidraw scene. Set per-session by the studio header's color picker.
+    """
 
     async with log_usage(
         user_id=user_id,
@@ -184,6 +190,7 @@ async def run_scene_build(
             layout=layout,
             script=script,
             outline=outline,
+            brand_color=brand_color,
         )
 
         yield {

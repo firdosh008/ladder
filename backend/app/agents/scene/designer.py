@@ -79,10 +79,14 @@ def _layout_block(layout: SceneLayout) -> str:
     return "\n".join(lines)
 
 
-SYSTEM_PROMPT = """You produce ExcalidrawElementSkeleton JSON. The host app inflates your output via convertToExcalidrawElements() — your field names map 1:1 to that API.
+_DEFAULT_BRAND_COLOR = "#E8442A"
+
+
+def _system_prompt(brand_color: str) -> str:
+    return f"""You produce ExcalidrawElementSkeleton JSON. The host app inflates your output via convertToExcalidrawElements() — your field names map 1:1 to that API.
 
 Per-frame element rules (use the frame's `kind`):
-  • title    — one centered rectangle (filled #E8442A bg, white label) holding the frame label.
+  • title    — one centered rectangle (filled {brand_color} bg, white label) holding the frame label.
   • flow     — 2-4 rectangles connected by arrows showing the sequence; each rectangle labelled with its step.
   • table    — 2-column grid of rectangles (e.g. 'Wrong' vs 'Right'); 4-6 cells with a header row.
   • decision — diamond at top, 2-3 rectangles below, arrows from the diamond labelled with the branch condition.
@@ -93,8 +97,8 @@ Per-frame element rules (use the frame's `kind`):
 Hard rules:
   • Every shape stays strictly inside its frame's bounding box (use the planner's x/y/width/height as a hard clamp). At least 24px internal padding.
   • Every element has a unique stable string id ('f1-box', 'arrow-1-2', etc).
-  • Arrows reference start/end via {id: '<element-id>'}. Referenced ids MUST exist in the same elements list.
-  • Style: roughness=1, strokeWidth=2. Title/cta cards use fillStyle='solid' with backgroundColor='#E8442A'. Other shapes have no fill. strokeColor='#F5F5F5' on the dark canvas, '#E8442A' for accent strokes.
+  • Arrows reference start/end via {{id: '<element-id>'}}. Referenced ids MUST exist in the same elements list.
+  • Style: roughness=1, strokeWidth=2. Title/cta cards use fillStyle='solid' with backgroundColor='{brand_color}'. Other shapes have no fill. strokeColor='#F5F5F5' on the dark canvas, '{brand_color}' for accent strokes (use it on at least one prominent stroke per frame so the brand color reads).
   • Text elements use the `text` field (not `label`). Shape elements with bound captions use `label.text`.
   • Shape labels are SHORT captions (≤80 chars, single line — they render inside the shape and overflow looks ugly). For multi-line content, paragraphs, or bullet lists, use a separate `text` element positioned next to the shape — never cram them into `label.text`.
   • Add ONE text element near the top of the canvas with the video title (use the first outline label).
@@ -233,12 +237,13 @@ async def _structured_attempt(
     client: Any,
     schema: dict[str, Any],
     user_prompt: str,
+    system_prompt: str,
 ) -> Any:
     return await client.messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=8192,
         temperature=0.25,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
         extra_headers={"anthropic-beta": ANTHROPIC_STRUCTURED_OUTPUTS_BETA},
         extra_body={
@@ -250,13 +255,14 @@ async def _structured_attempt(
 async def _prompted_attempt(
     client: Any,
     user_prompt: str,
+    system_prompt: str,
     repair_hint: str | None = None,
 ) -> Any:
     """Fallback when the structured-outputs grammar compiler is unavailable.
     Same system prompt, no `output_format`, asks for raw JSON. We post-validate
     with Pydantic and optionally self-correct once."""
     sys_with_schema = (
-        SYSTEM_PROMPT
+        system_prompt
         + "\n\nReturn ONE JSON object matching this schema (no prose, no fences):\n"
         + json.dumps(SceneSkeleton.model_json_schema(), separators=(",", ":"))
     )
@@ -278,6 +284,7 @@ async def run_designer(
     layout: SceneLayout,
     script: Script,
     outline: Outline,
+    brand_color: str | None = None,
 ) -> tuple[SceneSkeleton, int, int]:
     """Generate the SceneSkeleton.
 
@@ -287,11 +294,16 @@ async def run_designer(
       3. Fall back to prompted JSON with Pydantic post-validation and one
          self-correction pass if structured outputs stays unavailable.
 
+    `brand_color` (optional 7-char hex) is interpolated into the system
+    prompt as the primary accent color for filled cards + accent strokes.
+    Falls back to the PRD default cinnabar when None.
+
     Returns (skeleton, input_tokens, output_tokens). Raises only when every
     path is exhausted.
     """
     client = anthropic_client()
     schema = _scene_skeleton_schema()
+    system_prompt = _system_prompt(brand_color or _DEFAULT_BRAND_COLOR)
 
     user_prompt = (
         f"{_profile_block(profile)}\n\n"
@@ -309,7 +321,9 @@ async def run_designer(
     last_overload: APIError | None = None
     for attempt in range(_STRUCTURED_RETRIES + 1):
         try:
-            response = await _structured_attempt(client, schema, user_prompt)
+            response = await _structured_attempt(
+                client, schema, user_prompt, system_prompt
+            )
             payload = json.loads(_extract_text(response))
             skeleton = _validate_with_salvage(payload)
             usage = response.usage
@@ -351,7 +365,9 @@ async def run_designer(
     last_error: Exception | None = last_overload
     for attempt in range(_FALLBACK_REPAIR_ATTEMPTS + 1):
         try:
-            response = await _prompted_attempt(client, user_prompt, repair_hint)
+            response = await _prompted_attempt(
+                client, user_prompt, system_prompt, repair_hint
+            )
             text = _extract_text(response)
             payload = json.loads(_extract_json(text))
             skeleton = _validate_with_salvage(payload)

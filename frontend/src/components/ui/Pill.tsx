@@ -8,6 +8,8 @@ export interface PillProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   open?: boolean;
   /** Compact density used in dense headers — h-6 vs default h-7. */
   density?: "default" | "compact";
+  /** Hide the trailing caret — used when the pill is a plain button (no popover). */
+  noCaret?: boolean;
 }
 
 /**
@@ -16,7 +18,16 @@ export interface PillProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  */
 export const Pill = forwardRef<HTMLButtonElement, PillProps>(
   (
-    { className, locked, accent, open, density = "default", children, ...props },
+    {
+      className,
+      locked,
+      accent,
+      open,
+      density = "default",
+      noCaret,
+      children,
+      ...props
+    },
     ref,
   ) => (
     <button
@@ -44,7 +55,7 @@ export const Pill = forwardRef<HTMLButtonElement, PillProps>(
         <Lock size={10} weight="bold" className="opacity-60" />
       ) : null}
       <span className="inline-flex items-center gap-1">{children}</span>
-      {!locked ? (
+      {!locked && !noCaret ? (
         <CaretDown
           size={9}
           weight="bold"

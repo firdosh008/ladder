@@ -133,7 +133,9 @@ async def _load_session(jwt: str, session_id: str) -> dict[str, Any] | None:
     client = await user_client(jwt)
     resp = (
         await client.from_("studio_sessions")
-        .select("id, user_id, idea_id, target_duration_min, status")
+        .select(
+            "id, user_id, idea_id, target_duration_min, status, brand_color"
+        )
         .eq("id", session_id)
         .maybe_single()
         .execute()
@@ -788,9 +790,11 @@ async def scene_stream(
     cost_usd = 0.0
     last_scene: dict[str, Any] | None = None
 
+    brand_color = session.get("brand_color")
+
     try:
         async for event in run_scene_build(
-            user_id, profile, idea, outline, script
+            user_id, profile, idea, outline, script, brand_color=brand_color
         ):
             t = event.get("type")
             if t == "scene_ready":

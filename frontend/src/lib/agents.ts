@@ -424,6 +424,44 @@ export async function runExtractStream(
   );
 }
 
+// ─── PATCH /studio-sessions/{session_id} ─────────────────────────────────
+
+export type StudioSessionPatch = {
+  brand_color?: string | null;
+};
+
+export type StudioSessionPatchResult = {
+  id: string;
+  brand_color: string | null;
+};
+
+/**
+ * Patch a small whitelist of session-level fields. Currently used by the
+ * studio header brand-color picker so the scene crew uses that hex as the
+ * primary Excalidraw accent on its next run.
+ */
+export async function patchStudioSession(
+  sessionId: string,
+  patch: StudioSessionPatch,
+): Promise<StudioSessionPatchResult> {
+  const token = await authToken();
+  const res = await fetch(
+    `${API_URL}/studio-sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(patch),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to update studio session (${res.status})`);
+  }
+  return (await res.json()) as StudioSessionPatchResult;
+}
+
 // ─── Hydration: GET /studio-sessions/by-idea/{idea_id} ───────────────────
 
 export type StudioHydration = {
