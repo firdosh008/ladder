@@ -428,17 +428,19 @@ export async function runExtractStream(
 
 export type StudioSessionPatch = {
   brand_color?: string | null;
+  brand_id?: string | null;
 };
 
 export type StudioSessionPatchResult = {
   id: string;
   brand_color: string | null;
+  brand_id: string | null;
 };
 
 /**
- * Patch a small whitelist of session-level fields. Currently used by the
- * studio header brand-color picker so the scene crew uses that hex as the
- * primary Excalidraw accent on its next run.
+ * Patch session-level fields (`brand_color`, `brand_id`). Each key is
+ * optional; omit a key to leave that column unchanged. Used by the studio
+ * header brand picker and accent color for the scene designer.
  */
 export async function patchStudioSession(
   sessionId: string,

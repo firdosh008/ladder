@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Lightbulb, Sparkle } from "@phosphor-icons/react";
 import { Shell } from "../components/app/Shell";
@@ -18,7 +18,6 @@ import { StudioResearchPanel } from "../components/research/StudioResearchPanel"
 import { StudioHeader } from "../components/studio/StudioHeader";
 import { OutlineEditor } from "../components/studio/OutlineEditor";
 import { ChatPanel } from "../components/studio/ChatPanel";
-import { SectionNav, type SectionDef } from "../components/studio/SectionNav";
 import { CollapsibleSection } from "../components/studio/CollapsibleSection";
 
 export default function StudioPage() {
@@ -87,19 +86,21 @@ function StudioBody({
     [idea.id, idea.target_duration_min, patchLocal, state, updateIdea],
   );
 
-  // Optimistic-then-confirmed brand color update. The session row is
-  // patched server-side; the next scene re-run picks up the new color
-  // automatically (the WS loader passes brand_color into the designer).
-  const onBrandColorChange = useCallback(
-    async (hex: string | null) => {
+  // Optimistic PATCH for brand_id + accent color (derived from brands.primary_color).
+  const onBrandSessionPatch = useCallback(
+    async (patch: { brand_id: string | null; brand_color: string | null }) => {
       const sid = state.sessionId;
       if (!sid) return;
-      const previous = state.session?.brand_color ?? null;
-      state.patchSession({ brand_color: hex });
+      const previousBrandId = state.session?.brand_id ?? null;
+      const previousColor = state.session?.brand_color ?? null;
+      state.patchSession(patch);
       try {
-        await patchStudioSession(sid, { brand_color: hex });
+        await patchStudioSession(sid, patch);
       } catch {
-        state.patchSession({ brand_color: previous });
+        state.patchSession({
+          brand_id: previousBrandId,
+          brand_color: previousColor,
+        });
       }
     },
     [state],
@@ -116,7 +117,7 @@ function StudioBody({
         onTitleChange={onTitleChange}
         onDurationChange={onDurationChange}
         durationLocked={isRunning}
-        onBrandColorChange={state.sessionId ? onBrandColorChange : undefined}
+        onBrandSessionPatch={state.sessionId ? onBrandSessionPatch : undefined}
       />
       <ResizableSplit
         storageKey="ladder.studio.splitPct"
@@ -151,38 +152,9 @@ function LeftPane({
   state: ReturnType<typeof useStudioStream>;
   onPreviewScene: () => void;
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  const sections: SectionDef[] = [
-    {
-      id: "studio-script",
-      label: "Script",
-      status: state.script ? "ready" : state.status === "running" ? "live" : "—",
-    },
-    {
-      id: "studio-outline",
-      label: "Outline",
-      status: state.outline
-        ? `${state.outline.items.length} beats`
-        : state.status === "running"
-          ? "next"
-          : "—",
-    },
-    {
-      id: "studio-scene",
-      label: "Scene",
-      status: state.scene ? "ready" : state.outline ? "build" : "—",
-    },
-  ];
-
   return (
     <section className="flex flex-col min-h-0 bg-night h-full">
-      <div
-        ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-6"
-      >
-        <SectionNav sections={sections} scrollRootRef={scrollRef} />
-
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-6">
         <div className="pt-2">
           <IdeaSummary idea={idea} />
         </div>

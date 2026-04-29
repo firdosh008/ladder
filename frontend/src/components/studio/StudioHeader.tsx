@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -8,42 +9,35 @@ import { Link } from "react-router-dom";
 import {
   ArrowLeft,
   Image as ImageIcon,
-  Palette,
   Clock,
   CaretDown,
   Check,
   CornersOut,
+  Plus,
+  Trademark,
 } from "@phosphor-icons/react";
 import * as Popover from "@radix-ui/react-popover";
 import { cn } from "../../lib/cn";
+import { supabase } from "../../lib/supabase";
 import { Pill } from "../ui/Pill";
 import type { Idea } from "../../lib/useIdeas";
 
 const DEFAULT_BRAND_COLOR = "#E8442A";
 
-// Curated swatch row for the brand-color popover. The native picker is the
-// fallback for anything off this list — these are tuned to read on the dark
-// Excalidraw canvas (#1A1A2E) without strobing.
-const BRAND_SWATCHES: string[] = [
-  "#E8442A", // cinnabar (default)
-  "#F5A524", // amber
-  "#FACC15", // yellow
-  "#22C55E", // emerald
-  "#06B6D4", // cyan
-  "#3B82F6", // blue
-  "#8B5CF6", // violet
-  "#EC4899", // pink
-  "#F5F5F5", // bone (mono accent)
-];
-
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
-function normalizeHex(input: string): string | null {
-  const v = input.trim();
-  if (!v) return null;
+function normalizeHex(input: string | null | undefined): string | null {
+  if (input == null || !String(input).trim()) return null;
+  const v = String(input).trim();
   const withHash = v.startsWith("#") ? v : `#${v}`;
   return HEX_RE.test(withHash) ? withHash.toUpperCase() : null;
 }
+
+type BrandRow = {
+  id: string;
+  name: string;
+  primary_color: string | null;
+};
 
 const DURATION_OPTIONS: { value: number; label: string; hint: string }[] = [
   { value: 5, label: "5 min", hint: "hot take" },
@@ -68,7 +62,11 @@ type Props = {
   onTitleChange?: (title: string) => Promise<void> | void;
   onDurationChange?: (minutes: number) => void;
   durationLocked?: boolean;
-  onBrandColorChange?: (hex: string | null) => Promise<void> | void;
+  /** Session created — patch `brand_id` + `brand_color` (accent for scene design). */
+  onBrandSessionPatch?: (patch: {
+    brand_id: string | null;
+    brand_color: string | null;
+  }) => Promise<void> | void;
 };
 
 export function StudioHeader({
@@ -78,7 +76,7 @@ export function StudioHeader({
   onTitleChange,
   onDurationChange,
   durationLocked,
-  onBrandColorChange,
+  onBrandSessionPatch,
 }: Props) {
   return (
     <header
@@ -111,10 +109,11 @@ export function StudioHeader({
 
       <div className="flex items-center gap-1">
         <OutputPill output={session?.output_type ?? null} />
-        <BrandPill
-          brandColor={session?.brand_color ?? null}
-          onChange={onBrandColorChange}
-          enabled={!!onBrandColorChange}
+        <BrandPickPill
+          selectedBrandId={session?.brand_id ?? null}
+          brandColorAccent={session?.brand_color ?? null}
+          onChange={onBrandSessionPatch}
+          enabled={!!onBrandSessionPatch}
         />
         <DurationPill
           current={idea?.target_duration_min ?? null}
@@ -245,51 +244,114 @@ function OutputPill({ output }: { output: string | null }) {
   );
 }
 
-// ─── Pill: Brand color ────────────────────────────────────────────────────
+// ─── Pill: Brand (from `brands` table) ─────────────────────────────────────
 
-function BrandPill({
-  brandColor,
+function BrandPickPill({
+  selectedBrandId,
+  brandColorAccent,
   onChange,
   enabled,
 }: {
-  brandColor: string | null;
-  onChange?: (hex: string | null) => Promise<void> | void;
+  selectedBrandId: string | null;
+  brandColorAccent: string | null;
+  onChange?: (patch: {
+    brand_id: string | null;
+    brand_color: string | null;
+  }) => Promise<void> | void;
   enabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(brandColor ?? "");
+  const [rows, setRows] = useState<BrandRow[]>([]);
+  const [loadState, setLoadState] = useState<"idle" | "loading" | "error">(
+    "idle",
+  );
   const [saving, setSaving] = useState(false);
 
-  // Keep the inline input in sync if the underlying session row changes
-  // (e.g. another tab patched it, or the pill mounts mid-stream).
+  const loadBrands = useCallback(async () => {
+    setLoadState("loading");
+    const { data: auth } = await supabase.auth.getSession();
+    const uid = auth.session?.user?.id;
+    if (!uid) {
+      setRows([]);
+      setLoadState("idle");
+      return;
+    }
+    const { data, error } = await supabase
+      .from("brands")
+      .select("id,name,primary_color")
+      .eq("user_id", uid)
+      .order("name");
+
+    if (error) {
+      setLoadState("error");
+      setRows([]);
+      return;
+    }
+    setRows((data as BrandRow[]) ?? []);
+    setLoadState("idle");
+  }, []);
+
   useEffect(() => {
-    setDraft(brandColor ?? "");
-  }, [brandColor]);
+    void loadBrands();
+  }, [loadBrands]);
 
-  const swatch = brandColor ?? DEFAULT_BRAND_COLOR;
-  const label = brandColor ? brandColor.toUpperCase() : "Pick color";
+  useEffect(() => {
+    if (!open) return;
+    void loadBrands();
+  }, [open, loadBrands]);
 
-  const commit = async (hex: string | null) => {
+  const selected = rows.find((b) => b.id === selectedBrandId);
+  const resolvedHex =
+    normalizeHex(selected?.primary_color) ?? brandColorAccent ?? null;
+  const swatchColor = resolvedHex ?? DEFAULT_BRAND_COLOR;
+  const label = selectedBrandId
+    ? (selected?.name ?? "Brand")
+    : "Pick a brand";
+
+  const apply = async (brand: BrandRow | null) => {
     if (!enabled || !onChange) return;
-    if (hex === brandColor) return;
     setSaving(true);
     try {
-      await onChange(hex);
+      if (!brand) {
+        await onChange({ brand_id: null, brand_color: null });
+      } else {
+        await onChange({
+          brand_id: brand.id,
+          brand_color: normalizeHex(brand.primary_color),
+        });
+      }
     } finally {
       setSaving(false);
+      setOpen(false);
     }
+  };
+
+  const sameSelection = (brand: BrandRow | null) => {
+    if (!brand && !selectedBrandId) return true;
+    if (!brand || !selectedBrandId) return false;
+    return brand.id === selectedBrandId;
   };
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <Pill type="button" density="compact" open={open} title="Brand color">
+        <Pill
+          type="button"
+          density="compact"
+          open={open}
+          title={
+            enabled
+              ? "Brand for this studio session"
+              : "Available once the studio session exists"
+          }
+        >
+          <Trademark size={10} weight="bold" className="text-mist shrink-0" />
           <span
             aria-hidden
-            className="inline-block h-3 w-3 rounded-sm border border-white/15"
-            style={{ backgroundColor: swatch }}
+            className="inline-block h-3 w-3 rounded-sm border border-white/15 shrink-0"
+            style={{ backgroundColor: swatchColor }}
           />
-          {label}
+          <span className="truncate max-w-[140px]">{label}</span>
         </Pill>
       </Popover.Trigger>
       <Popover.Portal>
@@ -297,101 +359,129 @@ function BrandPill({
           align="end"
           sideOffset={6}
           className={cn(
-            "z-30 w-[260px] rounded-md border border-hairline",
-            "bg-night shadow-xl overflow-hidden",
+            "z-30 max-w-[min(320px,calc(100vw-24px))] rounded-md border border-hairline",
+            "bg-night shadow-xl overflow-hidden flex flex-col max-h-[min(360px,50vh)]",
             "data-[state=open]:animate-scale-in data-[state=closed]:animate-fade-out",
             "origin-top-right",
           )}
         >
-          <PopoverHeader title="Brand color">
-            primary accent for excalidraw drawings. takes effect on the next
-            scene re-run.
+          <PopoverHeader title="Pick a brand">
+            links your saved brand profile; accent color follows each brand&apos;s
+            primary swatch where set. applies on the next scene re-run.
           </PopoverHeader>
-          <div className="px-3 py-3 space-y-3">
-            <div className="grid grid-cols-9 gap-1.5">
-              {BRAND_SWATCHES.map((hex) => {
-                const active = brandColor?.toUpperCase() === hex.toUpperCase();
-                return (
-                  <button
-                    key={hex}
-                    type="button"
-                    title={hex}
-                    onClick={() => {
-                      setDraft(hex);
-                      void commit(hex);
-                    }}
-                    className={cn(
-                      "h-5 w-5 rounded-sm border transition-transform",
-                      active
-                        ? "border-white ring-1 ring-white/60 scale-110"
-                        : "border-white/15 hover:scale-110",
-                    )}
-                    style={{ backgroundColor: hex }}
-                  />
-                );
-              })}
+          {loadState === "loading" ? (
+            <div className="px-3 py-3 font-mono text-[11px] text-mist">
+              loading brands…
             </div>
-
-            <div className="flex items-center gap-2">
-              <label className="relative inline-flex items-center gap-1.5 cursor-pointer">
-                <Palette size={11} weight="bold" className="text-mist" />
-                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-mist">
-                  custom
-                </span>
-                <input
-                  type="color"
-                  value={normalizeHex(draft) ?? swatch}
-                  onChange={(e) => {
-                    const v = e.target.value.toUpperCase();
-                    setDraft(v);
-                  }}
-                  onBlur={() => {
-                    const v = normalizeHex(draft);
-                    if (v) void commit(v);
-                  }}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                />
-              </label>
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    const v = normalizeHex(draft);
-                    if (v) void commit(v);
-                  }
-                }}
-                placeholder="#E8442A"
-                className={cn(
-                  "flex-1 h-7 px-2 rounded-md bg-white/[0.03] border border-hairline",
-                  "font-mono text-[11.5px] text-white outline-none",
-                  "focus:ring-1 focus:ring-cinnabar/60",
-                )}
-              />
-              {brandColor ? (
+          ) : loadState === "error" ? (
+            <PopoverBody>
+              <p className="text-[12px] text-mist">
+                Couldn&apos;t load brands. Check your connection or try again.
+              </p>
+            </PopoverBody>
+          ) : rows.length === 0 ? (
+            <PopoverBody>
+              <p className="text-[12px] text-white/80 leading-[1.55] mb-2">
+                No brands yet. Create one from Settings using the link below.
+              </p>
+              {!enabled ? (
+                <p className="text-[11px] text-mist">
+                  brand picker activates once the session is created.
+                </p>
+              ) : null}
+            </PopoverBody>
+          ) : (
+            <ul className="py-1 overflow-y-auto min-h-0">
+              <li>
                 <button
                   type="button"
-                  disabled={saving}
+                  disabled={saving || !enabled}
                   onClick={() => {
-                    setDraft("");
-                    void commit(null);
+                    if (sameSelection(null)) setOpen(false);
+                    else void apply(null);
                   }}
                   className={cn(
-                    "h-7 px-2 rounded-md text-[11px] text-mist",
-                    "hover:text-white hover:bg-white/[0.04] transition-colors",
+                    "w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors",
+                    !selectedBrandId
+                      ? "bg-white/[0.03]"
+                      : "hover:bg-white/[0.04]",
                   )}
-                  title="Reset to default"
                 >
-                  reset
+                  <span className="text-[11.5px] text-mist italic flex-1">
+                    No brand
+                  </span>
+                  {!selectedBrandId ? (
+                    <Check
+                      size={11}
+                      weight="bold"
+                      className="text-cinnabar shrink-0"
+                    />
+                  ) : null}
                 </button>
-              ) : null}
-            </div>
-            {!enabled ? (
-              <p className="text-[11px] text-mist">
-                color picker activates once the session is created.
-              </p>
-            ) : null}
+              </li>
+              {rows.map((b) => {
+                const isSel = selectedBrandId === b.id;
+                const dot = normalizeHex(b.primary_color) ?? DEFAULT_BRAND_COLOR;
+                return (
+                  <li key={b.id}>
+                    <button
+                      type="button"
+                      disabled={saving || !enabled}
+                      onClick={() => {
+                        if (sameSelection(b)) setOpen(false);
+                        else void apply(b);
+                      }}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors",
+                        isSel ? "bg-white/[0.03]" : "hover:bg-white/[0.04]",
+                      )}
+                    >
+                      <span
+                        aria-hidden
+                        className="h-4 w-4 rounded-sm border border-white/15 shrink-0"
+                        style={{ backgroundColor: dot }}
+                      />
+                      <span
+                        className={cn(
+                          "text-[12.5px] truncate flex-1",
+                          isSel ? "text-white" : "text-white/85",
+                        )}
+                      >
+                        {b.name}
+                      </span>
+                      {isSel ? (
+                        <Check
+                          size={11}
+                          weight="bold"
+                          className="text-cinnabar shrink-0"
+                        />
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="border-t border-hairline shrink-0">
+            <Link
+              to="/settings?tab=brands"
+              onClick={() => setOpen(false)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 w-full text-left",
+                "text-[12.5px] text-white/90 hover:bg-white/[0.04] transition-colors",
+              )}
+            >
+              <Plus size={14} weight="bold" className="text-cinnabar shrink-0" />
+              <span>Add brand in Settings</span>
+            </Link>
           </div>
+          {!enabled && rows.length > 0 ? (
+            <div className="px-3 py-2 border-t border-hairline">
+              <p className="text-[11px] text-mist">
+                brand picker activates once the session is created.
+              </p>
+            </div>
+          ) : null}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

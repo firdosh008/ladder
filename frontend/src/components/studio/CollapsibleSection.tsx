@@ -15,8 +15,7 @@ type Props = {
 
 /**
  * Section with an `id` anchor, a click-to-collapse header, and a smooth
- * expand/collapse via grid-rows interpolation. Used inside the studio's
- * scroll container so the SectionNav chips can target each `id`.
+ * expand/collapse via grid-rows interpolation for the studio left pane.
  */
 export function CollapsibleSection({
   id,

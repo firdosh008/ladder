@@ -6,9 +6,9 @@ Routes:
         outline, and excalidraw artifacts for the idea.
 
   PATCH /studio-sessions/{session_id}
-        Patch a small whitelist of session-level fields (currently
-        `brand_color`). Used by the studio header's brand color picker so
-        the scene crew can pick the founder-chosen accent.
+        Patch session-level fields (`brand_color`, `brand_id`) whitelisted in
+        StudioSessionPatchBody. Used by the studio header brand picker and color
+        accents for the scene designer.
 
   POST /studio-sessions/{session_id}/outline
         Persist a founder-edited outline as a new versioned `outline`
@@ -28,7 +28,7 @@ import json
 import re
 from typing import Any
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -55,12 +55,14 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 class StudioSessionPatchBody(BaseModel):
     """Whitelisted session-level fields the frontend can patch.
 
-    Currently exposes only `brand_color` (used by the header color picker).
-    Pass `null` to clear. New fields go through this same gate so the route
-    keeps a tight write surface.
+    Exposes `brand_color`, `brand_id`. Use `exclude_unset` at apply time — each
+    key may be patched independently (`brand_color` for excalidraw accents,
+    `brand_id` to link the session row to a `brands` record). Pass `null` on a
+    key to clear it.
     """
 
     brand_color: str | None = Field(default=None)
+    brand_id: UUID | None = Field(default=None)
 
     @field_validator("brand_color")
     @classmethod
@@ -75,6 +77,7 @@ class StudioSessionPatchBody(BaseModel):
 class StudioSessionPatchResponse(BaseModel):
     id: str
     brand_color: str | None
+    brand_id: str | None = None
 
 
 class OutlineSaveBody(BaseModel):
@@ -177,7 +180,18 @@ async def patch_session(
     _user_id, token = ctx
     client = await user_client(token)
 
-    update_payload: dict[str, Any] = {"brand_color": body.brand_color}
+    raw_patch = body.model_dump(exclude_unset=True)
+    if not raw_patch:
+        raise HTTPException(
+            status_code=400, detail="at least one of brand_color, brand_id is required",
+        )
+
+    update_payload: dict[str, Any] = {}
+    if "brand_color" in raw_patch:
+        update_payload["brand_color"] = raw_patch["brand_color"]
+    if "brand_id" in raw_patch:
+        bid = raw_patch["brand_id"]
+        update_payload["brand_id"] = str(bid) if bid is not None else None
 
     try:
         resp = (
@@ -193,9 +207,11 @@ async def patch_session(
         raise HTTPException(status_code=404, detail="session not found")
 
     row = resp.data[0]
+    bir = row.get("brand_id")
     return StudioSessionPatchResponse(
         id=str(row["id"]),
         brand_color=row.get("brand_color"),
+        brand_id=str(bir) if bir is not None else None,
     )
 
 

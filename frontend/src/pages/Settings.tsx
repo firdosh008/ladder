@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import * as Tabs from "@radix-ui/react-tabs";
 import {
   User,
@@ -17,6 +18,7 @@ import { Badge } from "../components/ui/Badge";
 import { cn } from "../lib/cn";
 import { useAuth } from "../lib/auth";
 import { api, ApiError } from "../lib/api";
+import { supabase } from "../lib/supabase";
 
 const TABS = [
   { id: "profile", label: "Profile", icon: User },
@@ -24,9 +26,23 @@ const TABS = [
   { id: "models", label: "Models", icon: Cpu },
   { id: "skills", label: "Skill files", icon: FileMd },
   { id: "integrations", label: "Integrations", icon: LinkSimple },
-];
+] as const;
+
+type SettingsTabId = (typeof TABS)[number]["id"];
+
+const SETTINGS_TAB_IDS = TABS.map((t) => t.id) as readonly SettingsTabId[];
 
 export default function SettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const activeTab: SettingsTabId = SETTINGS_TAB_IDS.includes(tabParam as SettingsTabId)
+    ? (tabParam as SettingsTabId)
+    : "profile";
+
+  function setTab(tab: SettingsTabId) {
+    setSearchParams(tab === "profile" ? {} : { tab }, { replace: true });
+  }
+
   return (
     <Shell>
       <PageContainer>
@@ -36,7 +52,7 @@ export default function SettingsPage() {
           description="Your profile, brands, model routing, skill files, and integrations. All keys stored encrypted."
         />
 
-        <Tabs.Root defaultValue="profile">
+        <Tabs.Root value={activeTab} onValueChange={(v) => setTab(v as SettingsTabId)}>
           <Tabs.List className="flex items-center gap-1 border-b border-hairline mb-8">
             {TABS.map((t) => {
               const Icon = t.icon;
@@ -329,13 +345,227 @@ function EmptyPanel({
   );
 }
 
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+const DEFAULT_BRAND_COLOR = "#E8442A";
+
+function normalizeBrandHex(raw: string): string | null {
+  const v = raw.trim();
+  if (!v) return null;
+  const h = v.startsWith("#") ? v : `#${v}`;
+  return HEX_COLOR.test(h) ? h.toUpperCase() : null;
+}
+
 function BrandsTab() {
+  type BrandRow = {
+    id: string;
+    name: string;
+    primary_color: string | null;
+    context_description: string | null;
+  };
+
+  const [rows, setRows] = useState<BrandRow[]>([]);
+  const [loadState, setLoadState] = useState<"loading" | "idle" | "error">(
+    "loading",
+  );
+  const [name, setName] = useState("");
+  const [accentHex, setAccentHex] = useState(DEFAULT_BRAND_COLOR);
+  const [context, setContext] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  const reload = async () => {
+    setLoadState("loading");
+    const { data: auth } = await supabase.auth.getSession();
+    if (!auth.session?.user?.id) {
+      setRows([]);
+      setLoadState("idle");
+      return;
+    }
+    const { data, error } = await supabase
+      .from("brands")
+      .select("id,name,primary_color,context_description")
+      .eq("user_id", auth.session.user.id)
+      .order("name");
+    if (error) {
+      setLoadState("error");
+      return;
+    }
+    setRows((data as BrandRow[]) ?? []);
+    setLoadState("idle");
+  };
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setFormError("Brand name is required.");
+      return;
+    }
+    const normalized = normalizeBrandHex(accentHex);
+    if (!normalized) {
+      setFormError("Primary color must be a value like #E8442A.");
+      return;
+    }
+    setFormError(null);
+    setBusy(true);
+    try {
+      const { data: auth } = await supabase.auth.getSession();
+      const uid = auth.session?.user?.id;
+      if (!uid) {
+        setFormError("Sign in to create a brand.");
+        return;
+      }
+      const payload = {
+        user_id: uid,
+        name: trimmed,
+        primary_color: normalized,
+        context_description:
+          context.trim() ? context.trim() : null,
+      };
+      const { error } = await supabase.from("brands").insert(payload);
+      if (error) {
+        setFormError(error.message ?? "Could not save brand.");
+        return;
+      }
+      setName("");
+      setAccentHex(DEFAULT_BRAND_COLOR);
+      setContext("");
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2000);
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <EmptyPanel
-      icon={Palette}
-      title="No brands yet."
-      body="Brands CRUD lands with the Studio vertical. For now every idea uses the default voice on your profile."
-    />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-[1100px]">
+      <div className="rounded-xl border border-hairline bg-surface p-6">
+        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mist mb-1">
+          new brand
+        </div>
+        <h3 className="text-[14px] text-white mb-4">Create a brand</h3>
+        <form className="space-y-4" onSubmit={onSubmit}>
+          <div>
+            <FieldLabel htmlFor="brand-name">Name</FieldLabel>
+            <Input
+              id="brand-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Acme Org"
+              autoComplete="off"
+            />
+          </div>
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <FieldLabel htmlFor="brand-accent" hint="scene + studio accent">
+                Primary color
+              </FieldLabel>
+              <div className="flex items-center gap-2">
+                <input
+                  id="brand-accent"
+                  type="color"
+                  value={accentHex.startsWith("#") ? accentHex : DEFAULT_BRAND_COLOR}
+                  onChange={(e) => setAccentHex(e.target.value.toUpperCase())}
+                  className={cn(
+                    "h-9 w-14 cursor-pointer rounded border border-hairline bg-transparent",
+                    "p-0.5 shrink-0",
+                  )}
+                  aria-label="Pick primary color"
+                />
+                <Input
+                  value={accentHex}
+                  onChange={(e) => setAccentHex(e.target.value)}
+                  className="w-[120px] font-mono text-[12.5px]"
+                  placeholder="#E8442A"
+                  spellCheck={false}
+                />
+              </div>
+            </div>
+          </div>
+          <div>
+            <FieldLabel htmlFor="brand-ctx" hint="optional · used in prompts">
+              Brand context
+            </FieldLabel>
+            <Textarea
+              id="brand-ctx"
+              value={context}
+              onChange={(e) => setContext(e.target.value)}
+              rows={4}
+              placeholder="One paragraph: what you publish, tone, positioning…"
+              className="text-[13px]"
+            />
+          </div>
+          {formError ? (
+            <p className="text-[12px] text-cinnabar flex items-start gap-1.5">
+              <Warning size={14} className="shrink-0 mt-0.5" />
+              {formError}
+            </p>
+          ) : null}
+          <Button type="submit" disabled={busy} className="w-full sm:w-auto">
+            {busy ? "Saving…" : "Add brand"}
+          </Button>
+          {savedFlash ? (
+            <p className="text-[11.5px] text-mist font-mono">saved ✓</p>
+          ) : null}
+        </form>
+      </div>
+
+      <div>
+        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mist mb-3">
+          your brands
+        </div>
+        {loadState === "loading" ? (
+          <p className="text-[13px] text-mist font-mono">loading…</p>
+        ) : loadState === "error" ? (
+          <p className="text-[13px] text-cinnabar">Could not load brands.</p>
+        ) : rows.length === 0 ? (
+          <EmptyPanel
+            icon={Palette}
+            title="No brands yet."
+            body="Use the form to add one. Brands power the accent color in Studio and carry context into scene generation."
+          />
+        ) : (
+          <ul className="space-y-2">
+            {rows.map((b) => {
+              const dot =
+                normalizeBrandHex(String(b.primary_color ?? "")) ??
+                DEFAULT_BRAND_COLOR;
+              return (
+                <li
+                  key={b.id}
+                  className="rounded-xl border border-hairline bg-surface px-4 py-3 flex gap-3 items-start"
+                >
+                  <span
+                    aria-hidden
+                    className="h-8 w-8 rounded-md border border-white/15 shrink-0 mt-0.5"
+                    style={{ backgroundColor: dot }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[14px] text-white truncate">
+                      {b.name}
+                    </div>
+                    {b.context_description ? (
+                      <p className="mt-1 text-[12px] text-mist leading-[1.55]">
+                        {b.context_description}
+                      </p>
+                    ) : null}
+                    <div className="mt-2 font-mono text-[10.5px] text-mist/80">
+                      {normalizeBrandHex(String(b.primary_color ?? "")) ?? "—"}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }
 
