@@ -101,6 +101,7 @@ Hard rules:
   • Style: roughness=1, strokeWidth=2. Title/cta cards use fillStyle='solid' with backgroundColor='{brand_color}'. Other shapes have no fill. strokeColor='#F5F5F5' on the dark canvas, '{brand_color}' for accent strokes (use it on at least one prominent stroke per frame so the brand color reads).
   • Text elements use the `text` field (not `label`). Shape elements with bound captions use `label.text`.
   • Shape labels are SHORT captions (≤80 chars, single line — they render inside the shape and overflow looks ugly). For multi-line content, paragraphs, or bullet lists, use a separate `text` element positioned next to the shape — never cram them into `label.text`.
+  • Width and height for every rectangle, diamond, ellipse, and similar shape must be **positive** (greater than zero). Never use negative width or height — reposition with `x`/`y` instead of flipping signs.
   • Add ONE text element near the top of the canvas with the video title (use the first outline label).
   • Aim for 12-40 elements total — vary shape sizes by importance, never produce a uniform grid."""
 
@@ -185,8 +186,49 @@ def _truncate_to_caps(payload: Any) -> Any:
     return payload
 
 
+_ELEM_DIM_MAX = 8000.0
+
+
+def _sanitize_scene_geometry(payload: Any) -> Any:
+    """Coerce illegal dimensions Anthropic occasionally emits (-width, mega-h).
+
+    Excalidraw skeleton uses non-negative extents; negatives fail Pydantic
+    ``Field(ge=0)``. We salvage with ``abs`` + cap so a run does not die on
+    one bad number (common when structured outputs fall back to plain JSON).
+    """
+    if not isinstance(payload, dict):
+        return payload
+    elements = payload.get("elements")
+    if not isinstance(elements, list):
+        return payload
+    fixed = 0
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        for dim in ("width", "height"):
+            if dim not in el:
+                continue
+            raw = el[dim]
+            try:
+                fv = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if fv < 0 or fv > _ELEM_DIM_MAX:
+                el[dim] = min(_ELEM_DIM_MAX, abs(fv))
+                fixed += 1
+    if fixed:
+        log.warning(
+            "designer salvaged %d negative/out-of-cap width/height value(s)",
+            fixed,
+        )
+    return payload
+
+
 def _validate_with_salvage(payload: Any) -> SceneSkeleton:
     """Try strict validation; on length errors, truncate and retry once."""
+    if isinstance(payload, dict):
+        _sanitize_scene_geometry(payload)
+        _truncate_to_caps(payload)
     try:
         return SceneSkeleton.model_validate(payload)
     except ValidationError as e:
@@ -198,7 +240,10 @@ def _validate_with_salvage(payload: Any) -> SceneSkeleton:
             "designer payload exceeded length caps on %d field(s); truncating",
             len(e.errors()),
         )
-        return SceneSkeleton.model_validate(_truncate_to_caps(payload))
+        if isinstance(payload, dict):
+            _sanitize_scene_geometry(payload)
+            _truncate_to_caps(payload)
+        return SceneSkeleton.model_validate(payload)
 
 
 def _is_overloaded(err: APIError) -> bool:

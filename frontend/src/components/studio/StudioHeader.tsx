@@ -62,7 +62,7 @@ type Props = {
   onTitleChange?: (title: string) => Promise<void> | void;
   onDurationChange?: (minutes: number) => void;
   durationLocked?: boolean;
-  /** Session created — patch `brand_id` + `brand_color` (accent for scene design). */
+  /** Session branding: only `brand_id` is PATCHed server-side (`brand_color` column may not exist remotely). Optimistic accent can still be merged locally via `brand_color`. */
   onBrandSessionPatch?: (patch: {
     brand_id: string | null;
     brand_color: string | null;
@@ -300,11 +300,16 @@ function BrandPickPill({
     void loadBrands();
   }, [open, loadBrands]);
 
-  const selected = rows.find((b) => b.id === selectedBrandId);
+  const selectedBrandIdNormalized =
+    selectedBrandId != null && String(selectedBrandId).trim() !== ""
+      ? String(selectedBrandId)
+      : null;
+
+  const selected = rows.find((b) => String(b.id) === selectedBrandIdNormalized);
   const resolvedHex =
     normalizeHex(selected?.primary_color) ?? brandColorAccent ?? null;
   const swatchColor = resolvedHex ?? DEFAULT_BRAND_COLOR;
-  const label = selectedBrandId
+  const label = selectedBrandIdNormalized
     ? (selected?.name ?? "Brand")
     : "Pick a brand";
 
@@ -327,9 +332,9 @@ function BrandPickPill({
   };
 
   const sameSelection = (brand: BrandRow | null) => {
-    if (!brand && !selectedBrandId) return true;
-    if (!brand || !selectedBrandId) return false;
-    return brand.id === selectedBrandId;
+    if (!brand && !selectedBrandIdNormalized) return true;
+    if (!brand || !selectedBrandIdNormalized) return false;
+    return String(brand.id) === selectedBrandIdNormalized;
   };
 
   return (
@@ -358,6 +363,7 @@ function BrandPickPill({
         <Popover.Content
           align="end"
           sideOffset={6}
+          onCloseAutoFocus={(e) => e.preventDefault()}
           className={cn(
             "z-30 max-w-[min(320px,calc(100vw-24px))] rounded-md border border-hairline",
             "bg-night shadow-xl overflow-hidden flex flex-col max-h-[min(360px,50vh)]",
@@ -366,8 +372,8 @@ function BrandPickPill({
           )}
         >
           <PopoverHeader title="Pick a brand">
-            links your saved brand profile; accent color follows each brand&apos;s
-            primary swatch where set. applies on the next scene re-run.
+            links your saved brand profile; accent follows each brand&apos;s
+            primary swatch where set — applies on the next scene re-run.
           </PopoverHeader>
           {loadState === "loading" ? (
             <div className="px-3 py-3 font-mono text-[11px] text-mist">
@@ -396,13 +402,14 @@ function BrandPickPill({
                 <button
                   type="button"
                   disabled={saving || !enabled}
+                  onPointerDown={(e) => e.preventDefault()}
                   onClick={() => {
                     if (sameSelection(null)) setOpen(false);
                     else void apply(null);
                   }}
                   className={cn(
                     "w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors",
-                    !selectedBrandId
+                    !selectedBrandIdNormalized
                       ? "bg-white/[0.03]"
                       : "hover:bg-white/[0.04]",
                   )}
@@ -410,7 +417,7 @@ function BrandPickPill({
                   <span className="text-[11.5px] text-mist italic flex-1">
                     No brand
                   </span>
-                  {!selectedBrandId ? (
+                  {!selectedBrandIdNormalized ? (
                     <Check
                       size={11}
                       weight="bold"
@@ -420,13 +427,14 @@ function BrandPickPill({
                 </button>
               </li>
               {rows.map((b) => {
-                const isSel = selectedBrandId === b.id;
+                const isSel = selectedBrandIdNormalized === String(b.id);
                 const dot = normalizeHex(b.primary_color) ?? DEFAULT_BRAND_COLOR;
                 return (
                   <li key={b.id}>
                     <button
                       type="button"
                       disabled={saving || !enabled}
+                      onPointerDown={(e) => e.preventDefault()}
                       onClick={() => {
                         if (sameSelection(b)) setOpen(false);
                         else void apply(b);
@@ -465,6 +473,7 @@ function BrandPickPill({
           <div className="border-t border-hairline shrink-0">
             <Link
               to="/settings?tab=brands"
+              onPointerDown={(e) => e.preventDefault()}
               onClick={() => setOpen(false)}
               className={cn(
                 "flex items-center gap-2 px-3 py-2 w-full text-left",

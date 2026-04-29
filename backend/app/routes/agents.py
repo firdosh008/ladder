@@ -20,7 +20,7 @@ Four endpoints today:
         emits {type:'persisted', idea_id, session_id, ...} so the client
         can navigate to /studio/:idea_id.
 
-  /ws/agents/scene?token=...&session_id=...
+  /ws/agents/scene?token=...&session_id=...&brand_accent=RRGGBB (optional hex, no #)
         Streams the Scene crew (layout_planner → element_designer) over an
         existing studio session. On completion: writes a versioned
         `excalidraw` artifact and emits {type:'persisted', session_id,
@@ -47,6 +47,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from typing import Any
 from uuid import UUID
 
@@ -62,6 +64,44 @@ from app.middleware.ws_auth import WsAuthError, verify_ws_token
 from app.models.db import IdeaSlice, Outline, Script, UserProfileSlice
 
 router = APIRouter(tags=["agents"])
+
+log = logging.getLogger(__name__)
+
+_HEX_7 = re.compile(r"^#[0-9a-fA-F]{6}$")
+_HEX_3 = re.compile(r"^#[0-9a-fA-F]{3}$")
+_HEX_8 = re.compile(r"^#[0-9a-fA-F]{8}$")
+
+
+def _normalize_brand_hex(v: Any) -> str | None:
+    """Normalize session/brand color cells to uppercase #RRGGBB for scene design.
+
+    Accepts common variants: missing ``#``, 3-digit shorthand, 8-digit with alpha
+    (strips alpha). Fails closed to None so callers can fall back explicitly.
+    """
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        v = str(v)
+    s = v.strip()
+    if not s:
+        return None
+    cand = s if s.startswith("#") else f"#{s}"
+    cand_u = cand.upper()
+    # #RRGGBBAA (8 hex after #)
+    if _HEX_8.match(cand_u):
+        cand_u = "#" + cand_u[1:7]
+    if _HEX_7.match(cand_u):
+        return cand_u
+    if _HEX_3.match(cand_u):
+        r, g, b = cand_u[1], cand_u[2], cand_u[3]
+        return f"#{r}{r}{g}{g}{b}{b}".upper()
+    # Last resort: scrape a 6-digit hex substring (e.g. pasted CSS noise)
+    m = re.search(r"#?([0-9a-fA-F]{6})\b", s, flags=re.I)
+    if m:
+        h = "#" + m.group(1).upper()
+        return h if _HEX_7.match(h) else None
+    return None
+
 
 # WebSocket close codes (application-level 4xxx range)
 _CLOSE_UNAUTHORIZED = 4401
@@ -129,18 +169,59 @@ async def _load_idea(idea_id: str, jwt: str) -> IdeaSlice | None:
 
 
 async def _load_session(jwt: str, session_id: str) -> dict[str, Any] | None:
-    """Fetch a studio_sessions row (RLS-scoped) for the scene crew."""
+    """Fetch a studio_sessions row (RLS-scoped) for the scene crew.
+
+    Uses ``select('*')`` so Postgres does not require any single optional column
+    (e.g. ``brand_color`` before migration 20260429000001 is applied).
+    """
     client = await user_client(jwt)
     resp = (
         await client.from_("studio_sessions")
-        .select(
-            "id, user_id, idea_id, target_duration_min, status, brand_color"
-        )
+        .select("*")
         .eq("id", session_id)
         .maybe_single()
         .execute()
     )
     return resp.data if resp is not None else None
+
+
+async def _resolve_scene_brand_color(
+    jwt: str,
+    session: dict[str, Any],
+) -> str | None:
+    """Accent for Excalidraw scene design: session override, else linked brand.
+
+    Order: ``studio_sessions.brand_color`` (valid hex) wins; otherwise fetch
+    ``brands.primary_color`` via ``studio_sessions.brand_id``.
+    """
+    from_session = _normalize_brand_hex(session.get("brand_color"))
+    if from_session:
+        return from_session
+
+    bid = session.get("brand_id")
+    if bid is None or bid == "":
+        return None
+
+    client = await user_client(jwt)
+    resp = (
+        await client.from_("brands")
+        .select("primary_color")
+        .eq("id", str(bid))
+        .maybe_single()
+        .execute()
+    )
+    row = resp.data if resp is not None else None
+    if not row:
+        return None
+    raw_pc = row.get("primary_color")
+    resolved = _normalize_brand_hex(raw_pc)
+    if resolved is None and raw_pc is not None and str(raw_pc).strip() != "":
+        log.warning(
+            "could not normalize brands.primary_color for brand_id=%s (raw=%r)",
+            bid,
+            raw_pc,
+        )
+    return resolved
 
 
 async def _load_latest_artifact(
@@ -701,6 +782,8 @@ async def scene_stream(
     `persisted` event with the new artifact id.
     """
     await websocket.accept()
+    qp = websocket.query_params
+    brand_accent_qs = qp.get("brand_accent")
 
     try:
         user_id, jwt = await verify_ws_token(token)
@@ -790,7 +873,23 @@ async def scene_stream(
     cost_usd = 0.0
     last_scene: dict[str, Any] | None = None
 
-    brand_color = session.get("brand_color")
+    try:
+        hint_hex = (
+            _normalize_brand_hex(brand_accent_qs) if brand_accent_qs else None
+        )
+        resolved_hex = await _resolve_scene_brand_color(jwt, session)
+        # Client hint mirrors Studio picker; DB path covers hydrate-only loads.
+        brand_color = hint_hex or resolved_hex
+    except Exception as e:
+        await _safe_send_json(
+            websocket,
+            {
+                "type": "error",
+                "message": f"could not resolve brand accent for scene: {e}",
+            },
+        )
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
 
     try:
         async for event in run_scene_build(

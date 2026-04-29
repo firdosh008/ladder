@@ -322,9 +322,18 @@ export type SceneRunResult = {
 export async function runSceneStream(
   sessionId: string,
   onEvent: (ev: AgentEvent) => void,
+  /** Hex from Studio picker; optional # — sent so scene matches header when DB differs. */
+  brandAccentHex?: string | null,
 ): Promise<SceneRunResult> {
   const token = await authToken();
   const params = new URLSearchParams({ token, session_id: sessionId });
+  const raw = typeof brandAccentHex === "string" ? brandAccentHex.trim() : "";
+  if (raw !== "") {
+    const withoutHash = raw.startsWith("#") ? raw.slice(1) : raw;
+    if (/^[0-9a-fA-F]{6}$/.test(withoutHash)) {
+      params.set("brand_accent", withoutHash);
+    }
+  }
   const url = `${wsBaseUrl()}/ws/agents/scene?${params.toString()}`;
 
   return consumeStream(url, onEvent, (ev) => ({ cost_usd: ev.cost_usd }));

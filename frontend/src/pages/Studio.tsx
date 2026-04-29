@@ -87,15 +87,20 @@ function StudioBody({
   );
 
   // Optimistic PATCH for brand_id + accent color (derived from brands.primary_color).
+  // PATCH only `brand_id` on the API — avoids failing if `studio_sessions.brand_color`
+  // hasn't been migrated yet; scene crew resolves accent from brands.primary_color anyway.
   const onBrandSessionPatch = useCallback(
-    async (patch: { brand_id: string | null; brand_color: string | null }) => {
+    async (patch: {
+      brand_id: string | null;
+      brand_color: string | null;
+    }) => {
       const sid = state.sessionId;
       if (!sid) return;
       const previousBrandId = state.session?.brand_id ?? null;
       const previousColor = state.session?.brand_color ?? null;
       state.patchSession(patch);
       try {
-        await patchStudioSession(sid, patch);
+        await patchStudioSession(sid, { brand_id: patch.brand_id });
       } catch {
         state.patchSession({
           brand_id: previousBrandId,
@@ -213,6 +218,7 @@ function LeftPane({
           initialScene={state.scene}
           outlineReady={!!state.outline}
           onPreview={onPreviewScene}
+          sceneAccentHex={state.session?.brand_color ?? null}
         />
       </div>
     </section>

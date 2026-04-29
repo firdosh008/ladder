@@ -57,6 +57,8 @@ type Props = {
   outlineReady: boolean;
   /** Open the scene preview modal in the parent. */
   onPreview: () => void;
+  /** Same accent as the Studio brand pill; passed through to the scene WS. */
+  sceneAccentHex?: string | null;
 };
 
 /**
@@ -74,6 +76,7 @@ export function SceneRunPanel({
   initialScene,
   outlineReady,
   onPreview,
+  sceneAccentHex,
 }: Props) {
   const [scene, setScene] = useState<Scene | null>(initialScene);
   const [status, setStatus] = useState<Status>(initialScene ? "ready" : "idle");
@@ -142,7 +145,7 @@ export function SceneRunPanel({
       }
     };
 
-    runSceneStream(sessionId, handle)
+    runSceneStream(sessionId, handle, sceneAccentHex ?? undefined)
       .then((result) => {
         if (cancelled) return;
         setCost(result.cost_usd);
@@ -162,7 +165,7 @@ export function SceneRunPanel({
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, sceneAccentHex]);
 
   const onOpenInExcalidraw = useCallback(async () => {
     if (!scene || !sessionId) return;
