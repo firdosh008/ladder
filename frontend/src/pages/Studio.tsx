@@ -250,6 +250,7 @@ function LeftPane({
           outlineReady={!!state.outline}
           onPreview={onPreviewScene}
           sceneAccentHex={state.session?.brand_color ?? null}
+          onSceneReady={state.setScene}
         />
       </div>
     </section>

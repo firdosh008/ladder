@@ -92,6 +92,12 @@ export type StudioStreamState = {
   hydratedFromDb: boolean;
   /** Replace the local outline (e.g. after a manual edit save). */
   setOutline: (outline: Outline) => void;
+  /**
+   * Latest scene from the scene crew WS (`scene_ready`). Hydration sets this
+   * from GET /studio-sessions/by-idea; without lifting builds here, Preview /
+   * modal stay empty while the footer shows "Scene ready".
+   */
+  setScene: (scene: Scene | null) => void;
   /** Merge a patch onto the local session row (after a successful PATCH). */
   patchSession: (patch: Partial<StudioSessionRow>) => void;
   /**
@@ -309,6 +315,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       cost,
       hydratedFromDb,
       setOutline,
+      setScene,
       patchSession,
       regenerate,
       rerun,

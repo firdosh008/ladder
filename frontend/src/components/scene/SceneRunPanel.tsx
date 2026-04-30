@@ -88,6 +88,8 @@ type Props = {
   onPreview: () => void;
   /** Same accent as the Studio brand pill; passed through to the scene WS. */
   sceneAccentHex?: string | null;
+  /** Lift `scene_ready` into studio state so Preview / modal see the canvas. */
+  onSceneReady?: (scene: Scene) => void;
 };
 
 /**
@@ -106,6 +108,7 @@ export function SceneRunPanel({
   outlineReady,
   onPreview,
   sceneAccentHex,
+  onSceneReady,
 }: Props) {
   const [scene, setScene] = useState<Scene | null>(initialScene);
   const [status, setStatus] = useState<Status>(initialScene ? "ready" : "idle");
@@ -163,6 +166,7 @@ export function SceneRunPanel({
         }
         case "scene_ready":
           setScene(ev.scene);
+          onSceneReady?.(ev.scene);
           break;
         case "usage":
           setCost(ev.token_usage.cost_usd);
@@ -200,7 +204,7 @@ export function SceneRunPanel({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, sceneAccentHex, fontFamily]);
+  }, [sessionId, sceneAccentHex, fontFamily, onSceneReady]);
 
   const onFontChange = useCallback((value: number | null) => {
     setFontFamily(value);

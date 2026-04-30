@@ -17,11 +17,11 @@ class Settings(BaseSettings):
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
     #: Claude structured outputs compile JSON Schema to a grammar; large schemas
-    #: (e.g. full ``SceneSkeleton``) sometimes hit 400 "Schema is too complex"
-    #: or 503 grammar-compiler overload. Default on; the designer falls back
-    #: to prompted JSON + Pydantic when the grammar path errors out. Flip off
-    #: via env to skip grammar entirely if it stays unstable.
-    SCENE_DESIGNER_STRUCTURED_OUTPUTS: bool = True
+    #: (e.g. full ``SceneSkeleton``) routinely hit 400 "Schema is too complex"
+    #: or 503 grammar-compiler-overloaded errors in practice. Default off so
+    #: scene builds skip the retry storm and go straight to the prompted-JSON
+    #: + Pydantic path. Flip on via env to try grammar-constrained sampling.
+    SCENE_DESIGNER_STRUCTURED_OUTPUTS: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
