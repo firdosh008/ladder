@@ -64,7 +64,8 @@ def build_planner_task(
             "    (this is what users will see on the canvas).\n"
             "  • `description` is a short note (≤80 words) telling the "
             "    element designer what this frame should depict.\n"
-            "  • background_color: '#1A1A2E' (PRD-mandated dark canvas).\n\n"
+            "  • background_color: '#FFFFFF' (white canvas — keeps "
+            "    diagrams reading like a clean whiteboard).\n\n"
             "Return strict JSON matching the SceneLayout schema. NO markdown "
             "fences. NO commentary."
         ),

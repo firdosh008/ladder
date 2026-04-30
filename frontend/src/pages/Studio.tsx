@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Lightbulb, Sparkle } from "@phosphor-icons/react";
 import { Shell } from "../components/app/Shell";
@@ -16,6 +16,10 @@ import { SceneRunPanel } from "../components/scene/SceneRunPanel";
 import { ScenePreviewModal } from "../components/scene/ScenePreviewModal";
 import { StudioResearchPanel } from "../components/research/StudioResearchPanel";
 import { StudioHeader } from "../components/studio/StudioHeader";
+import {
+  readStoredBrand,
+  writeStoredBrand,
+} from "../components/research/MakeBrandPicker";
 import { OutlineEditor } from "../components/studio/OutlineEditor";
 import { ChatPanel } from "../components/studio/ChatPanel";
 import { CollapsibleSection } from "../components/studio/CollapsibleSection";
@@ -99,6 +103,12 @@ function StudioBody({
       const previousBrandId = state.session?.brand_id ?? null;
       const previousColor = state.session?.brand_color ?? null;
       state.patchSession(patch);
+      // Mirror the explicit choice to the /make picker default so the next
+      // research run starts with the same brand pre-selected.
+      writeStoredBrand({
+        brand_id: patch.brand_id,
+        brand_color: patch.brand_color,
+      });
       try {
         await patchStudioSession(sid, { brand_id: patch.brand_id });
       } catch {
@@ -110,6 +120,27 @@ function StudioBody({
     },
     [state],
   );
+
+  // When a fresh session lands without a brand, apply the founder's /make
+  // default exactly once. Subsequent in-session edits override it.
+  const autoBrandAppliedRef = useRef(false);
+  useEffect(() => {
+    if (autoBrandAppliedRef.current) return;
+    if (!state.sessionId) return;
+    const sess = state.session;
+    if (!sess) return;
+    if (sess.brand_id) {
+      autoBrandAppliedRef.current = true;
+      return;
+    }
+    const stored = readStoredBrand();
+    if (!stored?.brand_id) return;
+    autoBrandAppliedRef.current = true;
+    void onBrandSessionPatch({
+      brand_id: stored.brand_id,
+      brand_color: stored.brand_color,
+    });
+  }, [state.sessionId, state.session, onBrandSessionPatch]);
 
   const isRunning = state.status === "running" || state.status === "loading";
 

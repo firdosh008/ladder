@@ -25,6 +25,7 @@ import {
   ContentExtractPanel,
   type ContentExtractSetup,
 } from "../components/extract/ContentExtractPanel";
+import { MakeBrandPicker } from "../components/research/MakeBrandPicker";
 import type { ResearchSetup } from "../lib/agents";
 
 type Option = "ideas" | "research" | "content";
@@ -216,6 +217,9 @@ export default function MakePage() {
                 onChange={setDuration}
                 disabled={researchSetup !== null}
               />
+              <div onClick={(e) => e.stopPropagation()}>
+                <MakeBrandPicker compact />
+              </div>
               <Button
                 size="sm"
                 onClick={startResearch}

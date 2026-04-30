@@ -115,9 +115,17 @@ export type SceneElementType =
   | "diamond"
   | "text"
   | "arrow"
-  | "line";
+  | "line"
+  | "image";
 
 export type SceneElementBinding = { id: string };
+
+export type SceneBinaryFile = {
+  mimeType: string;
+  id: string;
+  dataURL: string;
+  created?: number;
+};
 
 export type SceneSkeletonElement = {
   id: string;
@@ -134,6 +142,9 @@ export type SceneSkeletonElement = {
   strokeWidth?: number | null;
   roughness?: 0 | 1 | 2 | null;
   fontSize?: number | null;
+  fontFamily?: number | null;
+  fileId?: string | null;
+  groupIds?: string[] | null;
   start?: SceneElementBinding | null;
   end?: SceneElementBinding | null;
 };
@@ -144,6 +155,7 @@ export type Scene = {
   background_color: string;
   elements: SceneSkeletonElement[];
   notes?: string | null;
+  files?: Record<string, SceneBinaryFile> | null;
 };
 
 export type TokenUsage = {
@@ -319,11 +331,16 @@ export type SceneRunResult = {
   cost_usd: number;
 };
 
+// Excalidraw built-in fontFamily integers. Anything else is dropped server-side.
+const VALID_FONT_FAMILIES = new Set<number>([1, 2, 3, 5, 6, 7, 8, 9]);
+
 export async function runSceneStream(
   sessionId: string,
   onEvent: (ev: AgentEvent) => void,
   /** Hex from Studio picker; optional # — sent so scene matches header when DB differs. */
   brandAccentHex?: string | null,
+  /** Optional Excalidraw built-in fontFamily integer to apply to every text/label. */
+  fontFamily?: number | null,
 ): Promise<SceneRunResult> {
   const token = await authToken();
   const params = new URLSearchParams({ token, session_id: sessionId });
@@ -333,6 +350,9 @@ export async function runSceneStream(
     if (/^[0-9a-fA-F]{6}$/.test(withoutHash)) {
       params.set("brand_accent", withoutHash);
     }
+  }
+  if (typeof fontFamily === "number" && VALID_FONT_FAMILIES.has(fontFamily)) {
+    params.set("font_family", String(fontFamily));
   }
   const url = `${wsBaseUrl()}/ws/agents/scene?${params.toString()}`;
 

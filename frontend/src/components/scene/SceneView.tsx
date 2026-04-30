@@ -12,7 +12,7 @@ import {
   Check,
 } from "@phosphor-icons/react";
 import { Button } from "../ui/Button";
-import { publishScene, type Scene } from "../../lib/agents";
+import { publishScene, type Scene, type SceneBinaryFile } from "../../lib/agents";
 
 /**
  * Read-only viewer for a generated SceneSkeleton.
@@ -40,7 +40,7 @@ function buildEnvelope(scene: Scene): {
   source: string;
   elements: ReturnType<typeof convertToExcalidrawElements>;
   appState: Record<string, unknown>;
-  files: Record<string, never>;
+  files: Record<string, SceneBinaryFile>;
 } {
   // The skeleton elements come straight from the LLM; cast through `unknown`
   // because the lib's input type is broader than our narrow Scene typing.
@@ -48,6 +48,7 @@ function buildEnvelope(scene: Scene): {
     scene.elements as unknown as Parameters<typeof convertToExcalidrawElements>[0],
     { regenerateIds: false },
   );
+  const files = (scene.files ?? {}) as Record<string, SceneBinaryFile>;
   return {
     type: "excalidraw",
     version: 2,
@@ -57,7 +58,7 @@ function buildEnvelope(scene: Scene): {
       viewBackgroundColor: scene.background_color,
       gridSize: null,
     },
-    files: {},
+    files,
   };
 }
 
@@ -72,8 +73,27 @@ function downloadBlob(filename: string, blob: Blob): void {
   URL.revokeObjectURL(url);
 }
 
+// Treat any non-near-black canvas as a light theme so the Excalidraw chrome
+// (toolbar / scrollbars) matches the canvas. Old scenes with #1A1A2E render
+// dark; new scenes default to #FFFFFF and render light.
+function isLightCanvas(hex: string | null | undefined): boolean {
+  const s = (hex ?? "").trim().toLowerCase();
+  if (!s) return true;
+  // Strip optional '#' and parse RGB.
+  const v = s.startsWith("#") ? s.slice(1) : s;
+  if (!/^[0-9a-f]{6}$/.test(v)) return true;
+  const r = parseInt(v.slice(0, 2), 16);
+  const g = parseInt(v.slice(2, 4), 16);
+  const b = parseInt(v.slice(4, 6), 16);
+  // Perceived luminance — light if brighter than ~50% grey.
+  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luma > 140;
+}
+
 export function SceneView({ scene, sessionId }: Props) {
   const envelope = useMemo(() => buildEnvelope(scene), [scene]);
+  const lightCanvas = isLightCanvas(scene.background_color);
+  const themeName: "light" | "dark" = lightCanvas ? "light" : "dark";
   const [opening, setOpening] = useState(false);
   const [copying, setCopying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +110,7 @@ export function SceneView({ scene, sessionId }: Props) {
     api.updateScene({
       elements: envelope.elements,
       appState: envelope.appState,
+      files: envelope.files,
     });
   }, [envelope]);
 
@@ -241,12 +262,15 @@ export function SceneView({ scene, sessionId }: Props) {
             appState: {
               ...envelope.appState,
               viewModeEnabled: true,
-              theme: "dark",
+              theme: themeName,
             },
+            // Excalidraw's BinaryFiles narrows mimeType to a specific union;
+            // our looser SceneBinaryFile shape passes a string, so cast here.
+            files: envelope.files as unknown as Record<string, never>,
             scrollToContent: true,
           }}
           viewModeEnabled
-          theme="dark"
+          theme={themeName}
         />
       </div>
 

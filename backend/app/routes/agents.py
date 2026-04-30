@@ -784,6 +784,7 @@ async def scene_stream(
     await websocket.accept()
     qp = websocket.query_params
     brand_accent_qs = qp.get("brand_accent")
+    font_family_qs = qp.get("font_family")
 
     try:
         user_id, jwt = await verify_ws_token(token)
@@ -891,9 +892,29 @@ async def scene_stream(
         await websocket.close(code=_CLOSE_SERVER_ERROR)
         return
 
+    # Excalidraw built-in fontFamily integers: 1 (Virgil), 2 (Helvetica),
+    # 3 (Cascadia), 5 (Excalifont), 6 (Nunito), 7 (Lilita One), 8 (Comic
+    # Shanns), 9 (Liberation Sans). Anything outside this set or unparseable
+    # falls back to None (designer prompt picks the default).
+    _VALID_FONT_FAMILIES = {1, 2, 3, 5, 6, 7, 8, 9}
+    font_family: int | None = None
+    if font_family_qs:
+        try:
+            ff = int(font_family_qs)
+            if ff in _VALID_FONT_FAMILIES:
+                font_family = ff
+        except ValueError:
+            font_family = None
+
     try:
         async for event in run_scene_build(
-            user_id, profile, idea, outline, script, brand_color=brand_color
+            user_id,
+            profile,
+            idea,
+            outline,
+            script,
+            brand_color=brand_color,
+            font_family=font_family,
         ):
             t = event.get("type")
             if t == "scene_ready":

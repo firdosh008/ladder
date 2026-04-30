@@ -24,6 +24,7 @@ from typing import Any
 from anthropic import APIError, APIStatusError
 from pydantic import ValidationError
 
+from app.agents.scene.skeleton_text_layout import repack_rect_body_text_below_labels
 from app.agents.scene.tasks import _outline_dump, _script_summary
 from app.config import settings
 from app.models.db import (
@@ -81,8 +82,35 @@ def _layout_block(layout: SceneLayout) -> str:
 
 _DEFAULT_BRAND_COLOR = "#E8442A"
 
+# Excalidraw built-in fontFamily integers; rendered names/styles per Excalidraw
+# 0.18.x source: 1=Virgil, 2=Helvetica (sans/Arial-like), 3=Cascadia (mono),
+# 5=Excalifont (default hand-drawn), 6=Nunito (rounded), 7=Lilita One (display),
+# 8=Comic Shanns, 9=Liberation Sans.
+_FONT_FAMILY_NOTE = {
+    1: "Virgil (hand-drawn, Excalidraw classic)",
+    2: "Helvetica (clean sans — renders as system Arial / Helvetica / SF on macOS)",
+    3: "Cascadia (monospace)",
+    5: "Excalifont (hand-drawn default)",
+    6: "Nunito (rounded sans)",
+    7: "Lilita One (bold display)",
+    8: "Comic Shanns (handwriting)",
+    9: "Liberation Sans (neutral sans)",
+}
 
-def _system_prompt(brand_color: str) -> str:
+
+def _system_prompt(brand_color: str, font_family: int | None) -> str:
+    font_clause = ""
+    if font_family is not None:
+        note = _FONT_FAMILY_NOTE.get(font_family, "Excalidraw built-in")
+        font_clause = (
+            f"\n  • Set `fontFamily: {font_family}` on EVERY `text` element AND on "
+            f"`label.text`-bearing shapes (so the bound caption inherits it). "
+            f"Font: {note}. Do not vary the family across elements."
+        )
+    return _build_system_prompt(brand_color, font_clause)
+
+
+def _build_system_prompt(brand_color: str, font_clause: str) -> str:
     return f"""You produce ExcalidrawElementSkeleton JSON. The host app inflates your output via convertToExcalidrawElements() — your field names map 1:1 to that API.
 
 Per-frame element rules (use the frame's `kind`):
@@ -98,12 +126,12 @@ Hard rules:
   • Every shape stays strictly inside its frame's bounding box (use the planner's x/y/width/height as a hard clamp). At least 24px internal padding.
   • Every element has a unique stable string id ('f1-box', 'arrow-1-2', etc).
   • Arrows reference start/end via {{id: '<element-id>'}}. Referenced ids MUST exist in the same elements list.
-  • Style: roughness=1, strokeWidth=2. Title/cta cards use fillStyle='solid' with backgroundColor='{brand_color}'. Other shapes have no fill. strokeColor='#F5F5F5' on the dark canvas, '{brand_color}' for accent strokes (use it on at least one prominent stroke per frame so the brand color reads).
+  • Style: roughness=1, strokeWidth=2. Canvas is **white (#FFFFFF)** — all default strokes MUST be a dark grey (#1F2937). Title/cta cards use fillStyle='solid' with backgroundColor='{brand_color}' and strokeColor='{brand_color}' (label text on those filled cards is white #FFFFFF). Other shapes have no fill. Use '{brand_color}' for accent strokes on at least one prominent stroke per frame so the brand color reads. Never use white (#F5F5F5 / #FFFFFF) as a stroke or text color on the canvas — it will disappear.
   • Text elements use the `text` field (not `label`). Shape elements with bound captions use `label.text`.
-  • Shape labels are SHORT captions (≤80 chars, single line — they render inside the shape and overflow looks ugly). For multi-line content, paragraphs, or bullet lists, use a separate `text` element positioned next to the shape — never cram them into `label.text`.
+  • Shape labels are SHORT titles (≤48 chars, single line — Excalidraw centers them in the shape). For multi-line content, paragraphs, or bullet lists, use a separate `type: "text"` element **below the title strip**: `x = rect.x + 12`, `y = rect.y + 40`, `width = rect.width - 24`, `height` filling the rest of the card — never center that body at the rectangle's midpoint (it overlaps the bound label). Never cram long copy into `label.text`.
   • Width and height for every rectangle, diamond, ellipse, and similar shape must be **positive** (greater than zero). Never use negative width or height — reposition with `x`/`y` instead of flipping signs.
   • Add ONE text element near the top of the canvas with the video title (use the first outline label).
-  • Aim for 12-40 elements total — vary shape sizes by importance, never produce a uniform grid."""
+  • Aim for 12-40 elements total — vary shape sizes by importance, never produce a uniform grid.{font_clause}"""
 
 
 _UNSUPPORTED_SCHEMA_KEYS = {
@@ -246,6 +274,11 @@ def _validate_with_salvage(payload: Any) -> SceneSkeleton:
         return SceneSkeleton.model_validate(payload)
 
 
+def _finalize_skeleton(skeleton: SceneSkeleton, layout: SceneLayout) -> SceneSkeleton:
+    """Deterministic cleanup after the model (label/body overlap fix, etc.)."""
+    return repack_rect_body_text_below_labels(skeleton, layout)
+
+
 def _is_overloaded(err: APIError) -> bool:
     """True if the error is the transient grammar-compiler / overload class."""
     if isinstance(err, APIStatusError) and err.status_code in (429, 503, 529):
@@ -256,6 +289,18 @@ def _is_overloaded(err: APIError) -> bool:
         return True
     msg = str(err)
     return "overloaded" in msg.lower() or "grammar compilation" in msg.lower()
+
+
+def _is_schema_too_complex(err: APIError) -> bool:
+    """Anthropic structured-outputs grammar rejects oversized / intricate JSON Schema."""
+    body = getattr(err, "body", None) or {}
+    msg = ""
+    if isinstance(body, dict):
+        eo = body.get("error")
+        if isinstance(eo, dict):
+            msg = str(eo.get("message") or "")
+    blob = (msg + " " + str(err)).lower()
+    return "schema is too complex" in blob
 
 
 def _extract_text(response: Any) -> str:
@@ -330,11 +375,14 @@ async def run_designer(
     script: Script,
     outline: Outline,
     brand_color: str | None = None,
+    font_family: int | None = None,
 ) -> tuple[SceneSkeleton, int, int]:
     """Generate the SceneSkeleton.
 
     Strategy:
-      1. Anthropic structured outputs (grammar-constrained) — preferred.
+      1. Anthropic structured outputs (grammar-constrained) — preferred when
+         ``SCENE_DESIGNER_STRUCTURED_OUTPUTS`` is on (default). On 400
+         "Schema is too complex" we fall through immediately to prompted JSON.
       2. Retry on transient overload (`overloaded_error`, 503, 529).
       3. Fall back to prompted JSON with Pydantic post-validation and one
          self-correction pass if structured outputs stays unavailable.
@@ -347,8 +395,9 @@ async def run_designer(
     path is exhausted.
     """
     client = anthropic_client()
-    schema = _scene_skeleton_schema()
-    system_prompt = _system_prompt(brand_color or _DEFAULT_BRAND_COLOR)
+    system_prompt = _system_prompt(
+        brand_color or _DEFAULT_BRAND_COLOR, font_family
+    )
 
     user_prompt = (
         f"{_profile_block(profile)}\n\n"
@@ -362,52 +411,67 @@ async def run_designer(
         "later locates them."
     )
 
-    # 1 + 2: structured outputs with retry on transient overload.
-    last_overload: APIError | None = None
-    for attempt in range(_STRUCTURED_RETRIES + 1):
-        try:
-            response = await _structured_attempt(
-                client, schema, user_prompt, system_prompt
-            )
-            payload = json.loads(_extract_text(response))
-            skeleton = _validate_with_salvage(payload)
-            usage = response.usage
-            return (
-                skeleton,
-                int(getattr(usage, "input_tokens", 0) or 0),
-                int(getattr(usage, "output_tokens", 0) or 0),
-            )
-        except APIError as e:
-            if _is_overloaded(e) and attempt < _STRUCTURED_RETRIES:
-                backoff = 1.5 * (2 ** attempt)
-                log.warning(
-                    "structured outputs overloaded (attempt %d/%d), "
-                    "backing off %.1fs: %s",
-                    attempt + 1, _STRUCTURED_RETRIES + 1, backoff, e,
+    # 1 + 2: structured outputs with retry on transient overload (unless gated off).
+    last_structured_error: APIError | None = None
+    if settings.SCENE_DESIGNER_STRUCTURED_OUTPUTS:
+        schema = _scene_skeleton_schema()
+        for attempt in range(_STRUCTURED_RETRIES + 1):
+            try:
+                response = await _structured_attempt(
+                    client, schema, user_prompt, system_prompt
                 )
-                await asyncio.sleep(backoff)
-                last_overload = e
-                continue
-            if _is_overloaded(e):
-                log.warning(
-                    "structured outputs still overloaded after %d retries — "
-                    "falling back to prompted JSON: %s",
-                    _STRUCTURED_RETRIES, e,
+                payload = json.loads(_extract_text(response))
+                skeleton = _finalize_skeleton(_validate_with_salvage(payload), layout)
+                usage = response.usage
+                return (
+                    skeleton,
+                    int(getattr(usage, "input_tokens", 0) or 0),
+                    int(getattr(usage, "output_tokens", 0) or 0),
                 )
-                last_overload = e
-                break
-            raise RuntimeError(f"designer API call failed: {e}") from e
-        except (json.JSONDecodeError, ValidationError) as e:
-            # Should be ~impossible with grammar-constrained sampling. If it
-            # ever happens, surface it loudly rather than masking — the schema
-            # cleaner is probably wrong.
-            raise RuntimeError(
-                f"designer returned invalid payload from structured outputs: {e}"
-            ) from e
+            except APIError as e:
+                if _is_schema_too_complex(e):
+                    log.warning(
+                        "structured outputs rejected SceneSkeleton schema as too complex — "
+                        "falling back to prompted JSON: %s",
+                        e,
+                    )
+                    last_structured_error = e
+                    break
+                if _is_overloaded(e) and attempt < _STRUCTURED_RETRIES:
+                    backoff = 1.5 * (2 ** attempt)
+                    log.warning(
+                        "structured outputs overloaded (attempt %d/%d), "
+                        "backing off %.1fs: %s",
+                        attempt + 1, _STRUCTURED_RETRIES + 1, backoff, e,
+                    )
+                    await asyncio.sleep(backoff)
+                    last_structured_error = e
+                    continue
+                if _is_overloaded(e):
+                    log.warning(
+                        "structured outputs still overloaded after %d retries — "
+                        "falling back to prompted JSON: %s",
+                        _STRUCTURED_RETRIES, e,
+                    )
+                    last_structured_error = e
+                    break
+                raise RuntimeError(f"designer API call failed: {e}") from e
+            except (json.JSONDecodeError, ValidationError) as e:
+                # Should be ~impossible with grammar-constrained sampling. If it
+                # ever happens, surface it loudly rather than masking — the schema
+                # cleaner is probably wrong.
+                raise RuntimeError(
+                    f"designer returned invalid payload from structured outputs: {e}"
+                ) from e
+    else:
+        log.info(
+            "scene designer skipping structured outputs "
+            "(SCENE_DESIGNER_STRUCTURED_OUTPUTS=false); using prompted JSON path."
+        )
 
     # 3: prompted-JSON fallback with one repair pass.
     repair_hint: str | None = None
-    last_error: Exception | None = last_overload
+    last_error: Exception | None = last_structured_error
     for attempt in range(_FALLBACK_REPAIR_ATTEMPTS + 1):
         try:
             response = await _prompted_attempt(
@@ -415,7 +479,7 @@ async def run_designer(
             )
             text = _extract_text(response)
             payload = json.loads(_extract_json(text))
-            skeleton = _validate_with_salvage(payload)
+            skeleton = _finalize_skeleton(_validate_with_salvage(payload), layout)
             usage = response.usage
             log.info("designer succeeded via prompted-JSON fallback")
             return (

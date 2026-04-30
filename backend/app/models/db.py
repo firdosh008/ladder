@@ -142,7 +142,9 @@ class ExtractedVideo(BaseModel):
 # We persist this lean format and inflate it on the frontend via the official
 # `convertToExcalidrawElements()` helper. PRD §5.5 / §11.4.
 
-SceneElementType = Literal["rectangle", "ellipse", "diamond", "text", "arrow", "line"]
+SceneElementType = Literal[
+    "rectangle", "ellipse", "diamond", "text", "arrow", "line", "image"
+]
 SceneFrameKind = Literal[
     "title",
     "flow",
@@ -196,8 +198,11 @@ class SceneSkeletonElement(BaseModel):
     strokeWidth: float | None = Field(default=None, ge=0.5, le=8)
     roughness: int | None = Field(default=None, ge=0, le=2)
     fontSize: int | None = Field(default=None, ge=10, le=72)
+    fontFamily: int | None = Field(default=None, ge=1, le=99)
     start: SceneElementBinding | None = None  # arrow only
     end: SceneElementBinding | None = None  # arrow only
+    fileId: str | None = Field(default=None, max_length=80)  # type='image'
+    groupIds: list[str] | None = Field(default=None, max_length=8)
 
 
 class SceneFrame(BaseModel):
@@ -226,7 +231,7 @@ class SceneLayout(BaseModel):
 
     canvas_width: int = Field(ge=800, le=4800)
     canvas_height: int = Field(ge=600, le=4800)
-    background_color: str = Field(default="#1A1A2E", max_length=12)
+    background_color: str = Field(default="#FFFFFF", max_length=12)
     flow_direction: Literal["left-to-right", "top-to-bottom"] = "top-to-bottom"
     frames: list[SceneFrame] = Field(min_length=2, max_length=12)
 
@@ -241,6 +246,8 @@ class SceneSkeleton(BaseModel):
 
     canvas_width: int = Field(ge=800, le=4800)
     canvas_height: int = Field(ge=600, le=4800)
-    background_color: str = Field(default="#1A1A2E", max_length=12)
-    elements: list[SceneSkeletonElement] = Field(min_length=2, max_length=200)
+    background_color: str = Field(default="#FFFFFF", max_length=12)
+    elements: list[SceneSkeletonElement] = Field(min_length=2, max_length=240)
     notes: str | None = Field(default=None, max_length=4000)
+    #: Binary payloads for ``image`` elements — Excalidraw ``files`` map (fileId → metadata).
+    files: dict[str, dict[str, str | int]] | None = Field(default=None)

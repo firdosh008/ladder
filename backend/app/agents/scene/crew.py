@@ -138,12 +138,18 @@ async def run_scene_build(
     outline: Outline,
     script: Script,
     brand_color: str | None = None,
+    font_family: int | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Plan (CrewAI) → design (Anthropic structured outputs).
 
     `brand_color` (optional 7-char hex like '#E8442A') becomes the primary
     accent for filled title/cta cards and accent strokes in the generated
     Excalidraw scene. Set per-session by the studio header's color picker.
+
+    `font_family` (optional Excalidraw fontFamily integer; 1/2/3/5/6/7/8/9)
+    is forwarded to the designer; when set, every text/label gets that
+    fontFamily so the founder's chosen typeface threads end-to-end. None
+    means the designer leaves fontFamily off (Excalidraw default).
     """
 
     async with log_usage(
@@ -191,6 +197,7 @@ async def run_scene_build(
             script=script,
             outline=outline,
             brand_color=brand_color,
+            font_family=font_family,
         )
 
         yield {
