@@ -195,7 +195,7 @@ export function SceneRunPanel({
           viewBackgroundColor: scene.background_color,
           gridSize: null,
         },
-        files: {},
+        files: (scene.files ?? {}) as Record<string, unknown>,
       };
       const { excalidraw_url } = await publishScene(
         sessionId,

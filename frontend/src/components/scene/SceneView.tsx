@@ -12,7 +12,7 @@ import {
   Check,
 } from "@phosphor-icons/react";
 import { Button } from "../ui/Button";
-import { publishScene, type Scene } from "../../lib/agents";
+import { publishScene, type Scene, type SceneBinaryFile } from "../../lib/agents";
 
 /**
  * Read-only viewer for a generated SceneSkeleton.
@@ -40,7 +40,7 @@ function buildEnvelope(scene: Scene): {
   source: string;
   elements: ReturnType<typeof convertToExcalidrawElements>;
   appState: Record<string, unknown>;
-  files: Record<string, never>;
+  files: Record<string, SceneBinaryFile>;
 } {
   // The skeleton elements come straight from the LLM; cast through `unknown`
   // because the lib's input type is broader than our narrow Scene typing.
@@ -48,6 +48,7 @@ function buildEnvelope(scene: Scene): {
     scene.elements as unknown as Parameters<typeof convertToExcalidrawElements>[0],
     { regenerateIds: false },
   );
+  const files = (scene.files ?? {}) as Record<string, SceneBinaryFile>;
   return {
     type: "excalidraw",
     version: 2,
@@ -57,7 +58,7 @@ function buildEnvelope(scene: Scene): {
       viewBackgroundColor: scene.background_color,
       gridSize: null,
     },
-    files: {},
+    files,
   };
 }
 
@@ -90,6 +91,7 @@ export function SceneView({ scene, sessionId }: Props) {
     api.updateScene({
       elements: envelope.elements,
       appState: envelope.appState,
+      files: envelope.files,
     });
   }, [envelope]);
 
@@ -243,6 +245,7 @@ export function SceneView({ scene, sessionId }: Props) {
               viewModeEnabled: true,
               theme: "dark",
             },
+            files: envelope.files,
             scrollToContent: true,
           }}
           viewModeEnabled

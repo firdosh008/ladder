@@ -115,9 +115,17 @@ export type SceneElementType =
   | "diamond"
   | "text"
   | "arrow"
-  | "line";
+  | "line"
+  | "image";
 
 export type SceneElementBinding = { id: string };
+
+export type SceneBinaryFile = {
+  mimeType: string;
+  id: string;
+  dataURL: string;
+  created?: number;
+};
 
 export type SceneSkeletonElement = {
   id: string;
@@ -134,6 +142,9 @@ export type SceneSkeletonElement = {
   strokeWidth?: number | null;
   roughness?: 0 | 1 | 2 | null;
   fontSize?: number | null;
+  fontFamily?: string | null;
+  fileId?: string | null;
+  groupIds?: string[] | null;
   start?: SceneElementBinding | null;
   end?: SceneElementBinding | null;
 };
@@ -144,6 +155,7 @@ export type Scene = {
   background_color: string;
   elements: SceneSkeletonElement[];
   notes?: string | null;
+  files?: Record<string, SceneBinaryFile> | null;
 };
 
 export type TokenUsage = {
