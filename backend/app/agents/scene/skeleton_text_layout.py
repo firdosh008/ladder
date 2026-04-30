@@ -1,8 +1,8 @@
-"""Reposition long ``text`` elements that sit atop rectangle ``label`` captions.
+"""Reposition ``text`` elements that collide with bound shape captions.
 
 Excalidraw centers bound labels in shapes; models often add a separate body
-``text`` block at the same center → overlap. This pass stacks body below a title
-strip inside the same rectangle geometry."""
+``text`` block at the same vertical band → overlap. This pass stacks body below a
+title strip inside the host shape."""
 
 from __future__ import annotations
 
@@ -13,24 +13,45 @@ _TITLE_BAND_MAX = 56.0
 _TITLE_BAND_FRAC = 0.22
 _PAD_X = 12.0
 _PAD_BOTTOM = 10.0
-_BODY_MIN_CHARS = 48
+"""Minimum characters before we consider standalone body copy — lower caps catch short subtitles."""
+_BODY_MIN_CHARS = 12
+_BAND_EPS = 4.0
+
+_LABEL_HOST_TYPES = frozenset({"rectangle", "diamond"})
 
 
 def _pt_in_rect(px: float, py: float, r: SceneSkeletonElement) -> bool:
     return r.x <= px <= r.x + r.width and r.y <= py <= r.y + r.height
 
 
+def _title_band_height(host: SceneSkeletonElement) -> float:
+    return min(
+        _TITLE_BAND_MAX,
+        max(_TITLE_BAND_MIN, host.height * _TITLE_BAND_FRAC),
+    )
+
+
+def _text_overlaps_title_band(
+    el: SceneSkeletonElement, host: SceneSkeletonElement, band: float
+) -> bool:
+    """True when the text bbox vertically intersects the top caption strip."""
+    strip_bottom = host.y + band
+    text_top = float(el.y)
+    text_bottom = el.y + el.height
+    return text_bottom > host.y + _BAND_EPS and text_top < strip_bottom - _BAND_EPS
+
+
 def repack_rect_body_text_below_labels(scene: SceneSkeleton, layout: SceneLayout) -> SceneSkeleton:
-    labeled_rects = [
+    labeled_hosts = [
         e
         for e in scene.elements
-        if e.type == "rectangle"
+        if e.type in _LABEL_HOST_TYPES
         and e.label
         and (e.label.text or "").strip()
         and e.width > 0
         and e.height > 0
     ]
-    if not labeled_rects:
+    if not labeled_hosts:
         return scene
 
     frame_boxes = [(float(f.x), float(f.y), float(f.width), float(f.height)) for f in layout.frames]
@@ -47,11 +68,9 @@ def repack_rect_body_text_below_labels(scene: SceneSkeleton, layout: SceneLayout
             new_els.append(el)
             continue
         raw = (el.text or "").strip()
-        if len(raw) < _BODY_MIN_CHARS:
-            new_els.append(el)
-            continue
-        # Canvas chrome
-        if el.id in {"title-core", "note-aha"} or (el.y is not None and float(el.y) < 64):
+
+        # Canvas chrome / hero title row — leave placement untouched.
+        if el.id in {"title-core", "note-aha"} or float(el.y) < 64:
             new_els.append(el)
             continue
 
@@ -62,7 +81,7 @@ def repack_rect_body_text_below_labels(scene: SceneSkeleton, layout: SceneLayout
             continue
 
         host: SceneSkeletonElement | None = None
-        for r in labeled_rects:
+        for r in labeled_hosts:
             if _pt_in_rect(tcx, tcy, r):
                 host = r
                 break
@@ -76,10 +95,12 @@ def repack_rect_body_text_below_labels(scene: SceneSkeleton, layout: SceneLayout
             new_els.append(el)
             continue
 
-        band = min(
-            _TITLE_BAND_MAX,
-            max(_TITLE_BAND_MIN, host.height * _TITLE_BAND_FRAC),
-        )
+        band = _title_band_height(host)
+        overlaps = _text_overlaps_title_band(el, host, band)
+        if len(raw) < _BODY_MIN_CHARS and not overlaps:
+            new_els.append(el)
+            continue
+
         ny = host.y + band
         nx = host.x + _PAD_X
         nw = max(44.0, host.width - 2 * _PAD_X)
