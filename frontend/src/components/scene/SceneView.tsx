@@ -6,7 +6,6 @@ import {
 import "@excalidraw/excalidraw/index.css";
 import {
   DownloadSimple,
-  ArrowSquareOut,
   Spinner,
   Copy,
   Check,
@@ -20,13 +19,9 @@ import { publishScene, type Scene, type SceneBinaryFile } from "../../lib/agents
  * The agent persists `Scene` (a tiny ExcalidrawElementSkeleton list). Here we
  *   1) inflate it via `convertToExcalidrawElements()` from the official lib,
  *   2) hand the inflated elements to a read-only `<Excalidraw>` viewer, and
- *   3) expose two affordances:
- *        Download .excalidraw — builds the envelope client-side, blob save.
- *        Open in excalidraw.com — POSTs envelope to backend, gets a public
- *        Storage URL, opens `excalidraw.com/#url=<encoded>` in a new tab.
+ *   3) expose Download .excalidraw plus Copy share link (uploads via backend when needed).
  *
- * Edits stay disabled in v1 (PRD §5.5 first-pass scope: view + open in
- * Excalidraw). Inline editing + screenshot-to-edit ship in the next slice.
+ * Edits stay disabled in v1; inline editing + screenshot-to-edit ship later.
  */
 
 type Props = {
@@ -111,7 +106,6 @@ export function SceneView({ scene, sessionId }: Props) {
   const envelope = useMemo(() => buildEnvelope(scene), [scene]);
   const lightCanvas = isLightCanvas(scene.background_color);
   const themeName: "light" | "dark" = lightCanvas ? "light" : "dark";
-  const [opening, setOpening] = useState(false);
   const [copying, setCopying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
@@ -137,9 +131,7 @@ export function SceneView({ scene, sessionId }: Props) {
     downloadBlob(`scene-${sessionId.slice(0, 8)}.excalidraw`, blob);
   }, [envelope, sessionId]);
 
-  // Single source of truth for "publish if needed, return the URL". The first
-  // caller pays the upload cost; later callers (Open, Copy) reuse the cached
-  // shareUrl until the scene prop changes.
+  // Publish if needed for share URL; Copy reuses cached shareUrl until scene changes.
   const ensureShareUrl = useCallback(async (): Promise<string> => {
     if (shareUrl) return shareUrl;
     const { excalidraw_url } = await publishScene(
@@ -149,20 +141,6 @@ export function SceneView({ scene, sessionId }: Props) {
     setShareUrl(excalidraw_url);
     return excalidraw_url;
   }, [shareUrl, sessionId, envelope]);
-
-  const onOpenInExcalidraw = useCallback(async () => {
-    setOpening(true);
-    setError(null);
-    setCopied(false);
-    try {
-      const url = await ensureShareUrl();
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setOpening(false);
-    }
-  }, [ensureShareUrl]);
 
   const onCopyShareUrl = useCallback(async () => {
     setCopying(true);
@@ -195,22 +173,9 @@ export function SceneView({ scene, sessionId }: Props) {
         </Button>
         <Button
           size="sm"
-          variant="primary"
-          onClick={onOpenInExcalidraw}
-          disabled={opening || copying}
-        >
-          {opening ? (
-            <Spinner size={12} weight="bold" className="animate-spin" />
-          ) : (
-            <ArrowSquareOut size={12} weight="bold" />
-          )}
-          {opening ? "Uploading…" : "Open in Excalidraw"}
-        </Button>
-        <Button
-          size="sm"
           variant="secondary"
           onClick={onCopyShareUrl}
-          disabled={opening || copying}
+          disabled={copying}
           title="Upload + copy excalidraw.com link"
         >
           {copying ? (

@@ -1,3 +1,3 @@
-from app.agents.scene.crew import run_scene_build
+"""Scene diagrams are produced by :class:`app.services.diagram_service.DiagramService`."""
 
-__all__ = ["run_scene_build"]
+__all__: list[str] = []

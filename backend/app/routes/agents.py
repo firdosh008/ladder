@@ -1,34 +1,16 @@
 """Agent WebSocket routes.
 
-Four endpoints today:
+Endpoints:
 
-  /ws/agents/research?token=...&topic=...
-        Streams the Research crew. Drafts are NOT auto-persisted —
-        the user picks one inline, frontend POSTs to /ideas.
+  /ws/agents/research
+  /ws/agents/studio
+  /ws/agents/extract
 
-  /ws/agents/studio?token=...&idea_id=...&duration=...
-        Streams the Studio crew (script_writer → outline_planner) for an
-        existing idea. On completion: upserts a studio_sessions row for
-        (user_id, idea_id), writes script + outline as artifacts (versioned),
-        and emits {type:'persisted', session_id, script_artifact_id,
-        outline_artifact_id}.
+Scene diagrams run through Claude plus the bundled Excalidraw MCP canvas;
+use HTTP ``POST /generate-diagram``.
 
-  /ws/agents/extract?token=...
-        Streams the content_extract crew. The client sends the source as
-        the FIRST WS message (JSON {source_content: "..."}). On completion:
-        creates an idea + studio_session + script + outline artifacts and
-        emits {type:'persisted', idea_id, session_id, ...} so the client
-        can navigate to /studio/:idea_id.
-
-  /ws/agents/scene?token=...&session_id=...&brand_accent=RRGGBB (optional hex, no #)
-        Streams the Scene crew (layout_planner → element_designer) over an
-        existing studio session. On completion: writes a versioned
-        `excalidraw` artifact and emits {type:'persisted', session_id,
-        scene_artifact_id}.
-
-Common event protocol:
+Common WebSocket payloads:
   {"type": "agent_start",    "agent": "..."}
-  {"type": "tool_call",      "agent": "...", "tool": "...", "arguments": "..."}
   {"type": "sources",        "query": "...", "items": [...]}      # research only
   {"type": "text_delta",     "agent": "...", "content": "..."}
   {"type": "task_complete",  "agent": "...", "preview": "..."}
@@ -36,9 +18,8 @@ Common event protocol:
   {"type": "script_ready",   "script": {...}}                      # studio
   {"type": "outline_ready",  "outline": {...}}                     # studio
   {"type": "extract_ready",  "extracted": {...}}                   # extract
-  {"type": "scene_ready",    "scene": {...}}                       # scene
   {"type": "usage",          "token_usage": {...}}
-  {"type": "persisted",      ...}                                  # studio/extract/scene
+  {"type": "persisted",      ...}                                  # studio/extract
   {"type": "complete",       "cost_usd": 0.07}
   {"type": "error",          "message": "..."}
 """
@@ -48,7 +29,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from typing import Any
 from uuid import UUID
 
@@ -57,51 +37,14 @@ from fastapi.websockets import WebSocketDisconnect, WebSocketState
 
 from app.agents.content_extract import run_content_extract
 from app.agents.research import run_research
-from app.agents.scene import run_scene_build
 from app.agents.studio import run_studio_script
 from app.deps import user_client
 from app.middleware.ws_auth import WsAuthError, verify_ws_token
-from app.models.db import IdeaSlice, Outline, Script, UserProfileSlice
+from app.models.db import IdeaSlice, UserProfileSlice
 
 router = APIRouter(tags=["agents"])
 
 log = logging.getLogger(__name__)
-
-_HEX_7 = re.compile(r"^#[0-9a-fA-F]{6}$")
-_HEX_3 = re.compile(r"^#[0-9a-fA-F]{3}$")
-_HEX_8 = re.compile(r"^#[0-9a-fA-F]{8}$")
-
-
-def _normalize_brand_hex(v: Any) -> str | None:
-    """Normalize session/brand color cells to uppercase #RRGGBB for scene design.
-
-    Accepts common variants: missing ``#``, 3-digit shorthand, 8-digit with alpha
-    (strips alpha). Fails closed to None so callers can fall back explicitly.
-    """
-    if v is None:
-        return None
-    if not isinstance(v, str):
-        v = str(v)
-    s = v.strip()
-    if not s:
-        return None
-    cand = s if s.startswith("#") else f"#{s}"
-    cand_u = cand.upper()
-    # #RRGGBBAA (8 hex after #)
-    if _HEX_8.match(cand_u):
-        cand_u = "#" + cand_u[1:7]
-    if _HEX_7.match(cand_u):
-        return cand_u
-    if _HEX_3.match(cand_u):
-        r, g, b = cand_u[1], cand_u[2], cand_u[3]
-        return f"#{r}{r}{g}{g}{b}{b}".upper()
-    # Last resort: scrape a 6-digit hex substring (e.g. pasted CSS noise)
-    m = re.search(r"#?([0-9a-fA-F]{6})\b", s, flags=re.I)
-    if m:
-        h = "#" + m.group(1).upper()
-        return h if _HEX_7.match(h) else None
-    return None
-
 
 # WebSocket close codes (application-level 4xxx range)
 _CLOSE_UNAUTHORIZED = 4401
@@ -168,82 +111,6 @@ async def _load_idea(idea_id: str, jwt: str) -> IdeaSlice | None:
     )
 
 
-async def _load_session(jwt: str, session_id: str) -> dict[str, Any] | None:
-    """Fetch a studio_sessions row (RLS-scoped) for the scene crew.
-
-    Uses ``select('*')`` so Postgres does not require any single optional column
-    (e.g. ``brand_color`` before migration 20260429000001 is applied).
-    """
-    client = await user_client(jwt)
-    resp = (
-        await client.from_("studio_sessions")
-        .select("*")
-        .eq("id", session_id)
-        .maybe_single()
-        .execute()
-    )
-    return resp.data if resp is not None else None
-
-
-async def _resolve_scene_brand_color(
-    jwt: str,
-    session: dict[str, Any],
-) -> str | None:
-    """Accent for Excalidraw scene design: session override, else linked brand.
-
-    Order: ``studio_sessions.brand_color`` (valid hex) wins; otherwise fetch
-    ``brands.primary_color`` via ``studio_sessions.brand_id``.
-    """
-    from_session = _normalize_brand_hex(session.get("brand_color"))
-    if from_session:
-        return from_session
-
-    bid = session.get("brand_id")
-    if bid is None or bid == "":
-        return None
-
-    client = await user_client(jwt)
-    resp = (
-        await client.from_("brands")
-        .select("primary_color")
-        .eq("id", str(bid))
-        .maybe_single()
-        .execute()
-    )
-    row = resp.data if resp is not None else None
-    if not row:
-        return None
-    raw_pc = row.get("primary_color")
-    resolved = _normalize_brand_hex(raw_pc)
-    if resolved is None and raw_pc is not None and str(raw_pc).strip() != "":
-        log.warning(
-            "could not normalize brands.primary_color for brand_id=%s (raw=%r)",
-            bid,
-            raw_pc,
-        )
-    return resolved
-
-
-async def _load_latest_artifact(
-    jwt: str,
-    session_id: str,
-    artifact_type: str,
-) -> dict[str, Any] | None:
-    """Return the latest-version artifact row of a given type for a session."""
-    client = await user_client(jwt)
-    resp = (
-        await client.from_("artifacts")
-        .select("id, type, version, content_json")
-        .eq("session_id", session_id)
-        .eq("type", artifact_type)
-        .order("version", desc=True)
-        .limit(1)
-        .execute()
-    )
-    rows = resp.data or []
-    return rows[0] if rows else None
-
-
 async def _ensure_studio_session(
     user_id: UUID,
     jwt: str,
@@ -252,11 +119,8 @@ async def _ensure_studio_session(
 ) -> str:
     """Return the studio_sessions.id for (user_id, idea_id), creating if missing.
 
-    If a session already exists but the founder has since picked a new
-    runtime (via the duration control on /studio), refresh the row's
-    `target_duration_min` so downstream crews — notably the scene crew,
-    which reads from `studio_sessions` — see the up-to-date value rather
-    than the duration this session was originally created with.
+    Refreshes ``target_duration_min`` when an existing session's duration no
+    longer matches what the founder picked in Studio.
     """
     client = await user_client(jwt)
     existing = (
@@ -382,39 +246,6 @@ async def _persist_script_outline(
         .execute()
     )
     return str(script_id), str(outline_id)
-
-
-async def _persist_scene_skeleton(
-    user_id: UUID,
-    jwt: str,
-    session_id: str,
-    scene: dict[str, Any],
-) -> str:
-    """Insert a versioned `excalidraw` artifact. Returns the new artifact id."""
-    client = await user_client(jwt)
-    version = await _next_artifact_version(jwt, session_id, "excalidraw")
-    el_count = len(scene.get("elements") or [])
-    summary = (
-        f"Scene skeleton — {el_count} elements on a "
-        f"{scene.get('canvas_width')}×{scene.get('canvas_height')} canvas."
-    )
-    inserted = (
-        await client.from_("artifacts")
-        .insert(
-            {
-                "user_id": str(user_id),
-                "session_id": session_id,
-                "type": "excalidraw",
-                "version": version,
-                "content_text": summary,
-                "content_json": scene,
-            }
-        )
-        .execute()
-    )
-    if not inserted.data:
-        raise RuntimeError("scene artifact insert returned no row")
-    return str(inserted.data[0]["id"])
 
 
 async def _safe_send_json(ws: WebSocket, payload: dict[str, Any]) -> bool:
@@ -764,213 +595,3 @@ async def extract_stream(
     if websocket.application_state == WebSocketState.CONNECTED:
         await websocket.close()
 
-
-# ─── /ws/agents/scene ──────────────────────────────────────────────────────
-
-
-@router.websocket("/ws/agents/scene")
-async def scene_stream(
-    websocket: WebSocket,
-    token: str | None = None,
-    session_id: str | None = None,
-) -> None:
-    """Stream the Scene crew over an existing studio session.
-
-    Loads the session + latest script + latest outline + the parent idea +
-    the user's profile via RLS, runs the 3-agent crew, persists the final
-    SceneSkeleton as a versioned `excalidraw` artifact, and emits a
-    `persisted` event with the new artifact id.
-    """
-    await websocket.accept()
-    qp = websocket.query_params
-    brand_accent_qs = qp.get("brand_accent")
-    font_family_qs = qp.get("font_family")
-
-    try:
-        user_id, jwt = await verify_ws_token(token)
-    except WsAuthError as e:
-        await websocket.close(code=_CLOSE_UNAUTHORIZED, reason=str(e))
-        return
-
-    if not session_id:
-        await websocket.close(
-            code=_CLOSE_BAD_REQUEST, reason="session_id required"
-        )
-        return
-
-    try:
-        session = await _load_session(jwt, session_id)
-    except Exception as e:
-        await _safe_send_json(
-            websocket, {"type": "error", "message": f"session load failed: {e}"}
-        )
-        await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    if session is None:
-        await websocket.close(
-            code=_CLOSE_BAD_REQUEST, reason="session not found"
-        )
-        return
-
-    idea_id = session.get("idea_id")
-    if not idea_id:
-        await websocket.close(
-            code=_CLOSE_BAD_REQUEST,
-            reason="session has no idea_id (cannot resolve scene context)",
-        )
-        return
-
-    try:
-        script_row = await _load_latest_artifact(jwt, session_id, "script")
-        outline_row = await _load_latest_artifact(jwt, session_id, "outline")
-    except Exception as e:
-        await _safe_send_json(
-            websocket, {"type": "error", "message": f"artifact load failed: {e}"}
-        )
-        await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    if script_row is None or outline_row is None:
-        await websocket.close(
-            code=_CLOSE_BAD_REQUEST,
-            reason="session is missing a script + outline artifact",
-        )
-        return
-
-    try:
-        script = Script(**(script_row["content_json"] or {}))
-        outline = Outline(**(outline_row["content_json"] or {}))
-    except Exception as e:
-        await _safe_send_json(
-            websocket,
-            {"type": "error", "message": f"artifact shape invalid: {e}"},
-        )
-        await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    try:
-        idea = await _load_idea(idea_id, jwt)
-    except Exception as e:
-        await _safe_send_json(
-            websocket, {"type": "error", "message": f"idea load failed: {e}"}
-        )
-        await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    if idea is None:
-        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="idea not found")
-        return
-
-    try:
-        profile = await _load_profile(user_id, jwt)
-    except Exception as e:
-        await _safe_send_json(
-            websocket, {"type": "error", "message": f"profile load failed: {e}"}
-        )
-        await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    cost_usd = 0.0
-    last_scene: dict[str, Any] | None = None
-
-    try:
-        hint_hex = (
-            _normalize_brand_hex(brand_accent_qs) if brand_accent_qs else None
-        )
-        resolved_hex = await _resolve_scene_brand_color(jwt, session)
-        # Client hint mirrors Studio picker; DB path covers hydrate-only loads.
-        brand_color = hint_hex or resolved_hex
-    except Exception as e:
-        await _safe_send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": f"could not resolve brand accent for scene: {e}",
-            },
-        )
-        await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    # Excalidraw built-in fontFamily integers: 1 (Virgil), 2 (Helvetica),
-    # 3 (Cascadia), 5 (Excalifont), 6 (Nunito), 7 (Lilita One), 8 (Comic
-    # Shanns), 9 (Liberation Sans). Anything outside this set or unparseable
-    # falls back to None (designer prompt picks the default).
-    _VALID_FONT_FAMILIES = {1, 2, 3, 5, 6, 7, 8, 9}
-    font_family: int | None = None
-    if font_family_qs:
-        try:
-            ff = int(font_family_qs)
-            if ff in _VALID_FONT_FAMILIES:
-                font_family = ff
-        except ValueError:
-            font_family = None
-
-    try:
-        async for event in run_scene_build(
-            user_id,
-            profile,
-            idea,
-            outline,
-            script,
-            brand_color=brand_color,
-            font_family=font_family,
-        ):
-            t = event.get("type")
-            if t == "scene_ready":
-                last_scene = event.get("scene")
-            elif t == "usage":
-                cost_usd = float(
-                    (event.get("token_usage") or {}).get("cost_usd") or 0.0
-                )
-            await _safe_send_json(websocket, event)
-    except WebSocketDisconnect:
-        return
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        await _safe_send_json(
-            websocket, {"type": "error", "message": f"crew failed: {e}"}
-        )
-        if websocket.application_state == WebSocketState.CONNECTED:
-            await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    if last_scene is None:
-        await _safe_send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": "scene crew did not produce a skeleton",
-            },
-        )
-        if websocket.application_state == WebSocketState.CONNECTED:
-            await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    try:
-        scene_artifact_id = await _persist_scene_skeleton(
-            user_id, jwt, session_id, last_scene
-        )
-    except Exception as e:
-        await _safe_send_json(
-            websocket, {"type": "error", "message": f"persist failed: {e}"}
-        )
-        if websocket.application_state == WebSocketState.CONNECTED:
-            await websocket.close(code=_CLOSE_SERVER_ERROR)
-        return
-
-    await _safe_send_json(
-        websocket,
-        {
-            "type": "persisted",
-            "session_id": session_id,
-            "scene_artifact_id": scene_artifact_id,
-        },
-    )
-    await _safe_send_json(
-        websocket,
-        {"type": "complete", "cost_usd": cost_usd},
-    )
-    if websocket.application_state == WebSocketState.CONNECTED:
-        await websocket.close()

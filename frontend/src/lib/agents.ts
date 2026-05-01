@@ -1,12 +1,14 @@
 /**
- * Client for the /ws/agents/* WebSocket endpoints.
+ * Client for the /ws/agents/* WebSocket endpoints + HTTP diagram route.
  *
- * Three streams today:
+ * WebSocket streams:
  *   runResearchStream  — /ws/agents/research?token&topic
  *   runStudioStream    — /ws/agents/studio?token&idea_id&duration
  *   runExtractStream   — /ws/agents/extract (source posted as 1st WS msg)
  *
- * All three speak the same AgentEvent protocol. Research drafts are NOT
+ * Diagrams: ``generateDiagramFromScript`` — POST /generate-diagram (auth).
+ *
+ * All streams share the same AgentEvent protocol. Research drafts are NOT
  * auto-persisted; Studio + Extract DO persist (artifacts + idea row) and
  * emit a `persisted` event with the new ids.
  */
@@ -94,6 +96,32 @@ export type Outline = {
   items: OutlineItem[];
 };
 
+/** Concatenate script + outline for ``POST /generate-diagram`` (Claude + MCP canvas). */
+export function buildDiagramScriptInput(
+  script: Script | null,
+  outline: Outline | null,
+): string {
+  const blocks: string[] = [];
+  if (outline?.items?.length) {
+    blocks.push("## Scene outline");
+    outline.items.forEach((it) => {
+      blocks.push(`${it.number}. ${it.label} — ${it.beat}`);
+    });
+  }
+  if (script?.sections?.length) {
+    blocks.push("\n## Script (talking points)");
+    script.sections.forEach((sec, i) => {
+      blocks.push(
+        `\n### ${i + 1}. ${sec.heading} (${sec.duration_min} min)`,
+      );
+      sec.talking_points.forEach((tp) => blocks.push(`- ${tp}`));
+      if (sec.transition?.trim())
+        blocks.push(`→ Transition: ${sec.transition}`);
+    });
+  }
+  return blocks.join("\n").trim();
+}
+
 export type ExtractedVideo = {
   title: string;
   rationale: string;
@@ -159,6 +187,42 @@ export type Scene = {
   files?: Record<string, SceneBinaryFile> | null;
 };
 
+export type GenerateDiagramResponse = {
+  diagram_url: string | null;
+  json: Scene;
+  artifact_id?: string | null;
+};
+
+/**
+ * Claude draws on the synced Excalidraw MCP canvas; keep the iframe on
+ * ``VITE_EXCALIDRAW_CANVAS_URL`` connected so screenshots / PNG export succeed.
+ */
+export async function generateDiagramFromScript(payload: {
+  script: string;
+  session_id?: string | null;
+}): Promise<GenerateDiagramResponse> {
+  const token = await authToken();
+  const res = await fetch(`${API_URL}/generate-diagram`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      script: payload.script,
+      session_id: payload.session_id ?? undefined,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(
+      t ? `generate-diagram failed (${res.status}): ${t}` : `generate-diagram failed (${res.status})`,
+    );
+  }
+  const data = (await res.json()) as GenerateDiagramResponse;
+  return data;
+}
+
 export type TokenUsage = {
   input: number;
   output: number;
@@ -184,7 +248,6 @@ export type AgentEvent =
   | { type: "script_ready"; script: Script }
   | { type: "outline_ready"; outline: Outline }
   | { type: "extract_ready"; extracted: ExtractedVideo }
-  | { type: "scene_ready"; scene: Scene }
   | { type: "usage"; token_usage: TokenUsage }
   | {
       type: "persisted";
@@ -322,40 +385,6 @@ export async function runStudioStream(
     params.set("duration", String(duration));
   }
   const url = `${wsBaseUrl()}/ws/agents/studio?${params.toString()}`;
-
-  return consumeStream(url, onEvent, (ev) => ({ cost_usd: ev.cost_usd }));
-}
-
-// ─── runSceneStream ───────────────────────────────────────────────────────
-
-export type SceneRunResult = {
-  cost_usd: number;
-};
-
-// Excalidraw built-in fontFamily integers. Anything else is dropped server-side.
-const VALID_FONT_FAMILIES = new Set<number>([1, 2, 3, 5, 6, 7, 8, 9]);
-
-export async function runSceneStream(
-  sessionId: string,
-  onEvent: (ev: AgentEvent) => void,
-  /** Hex from Studio picker; optional # — sent so scene matches header when DB differs. */
-  brandAccentHex?: string | null,
-  /** Optional Excalidraw built-in fontFamily integer to apply to every text/label. */
-  fontFamily?: number | null,
-): Promise<SceneRunResult> {
-  const token = await authToken();
-  const params = new URLSearchParams({ token, session_id: sessionId });
-  const raw = typeof brandAccentHex === "string" ? brandAccentHex.trim() : "";
-  if (raw !== "") {
-    const withoutHash = raw.startsWith("#") ? raw.slice(1) : raw;
-    if (/^[0-9a-fA-F]{6}$/.test(withoutHash)) {
-      params.set("brand_accent", withoutHash);
-    }
-  }
-  if (typeof fontFamily === "number" && VALID_FONT_FAMILIES.has(fontFamily)) {
-    params.set("font_family", String(fontFamily));
-  }
-  const url = `${wsBaseUrl()}/ws/agents/scene?${params.toString()}`;
 
   return consumeStream(url, onEvent, (ev) => ({ cost_usd: ev.cost_usd }));
 }

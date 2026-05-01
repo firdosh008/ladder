@@ -53,6 +53,19 @@ class Settings(BaseSettings):
     SCRAPECREATORS_API_KEY: str | None = None
 
     ANTHROPIC_MODEL: str = "claude-haiku-4-5"
+    #: Model for MCP-style diagram agent (distinct from CrewAI defaults).
+    DIAGRAM_ANTHROPIC_MODEL: str = "claude-haiku-4-5"
+
+    #: Base URL where ``mcp_excalidraw`` Express canvas listens (MCP mirrors these routes).
+    EXCALIDRAW_HTTP_URL: str = "http://127.0.0.1:3000"
+    #: Optional override for the checkout path; blank → ``backend/vendor/mcp_excalidraw``.
+    EXCALIDRAW_VENDOR_ROOT: str = ""
+    #: Spawn ``node dist/server.js`` automatically on FastAPI startup when /health fails.
+    EXCALIDRAW_CANVAS_AUTOSTART: bool = True
+    #: Seconds to wait for ``GET /health`` after spawning Node (first ``npm run build`` on drvfs/WSL can be slow).
+    EXCALIDRAW_CANVAS_HEALTH_WAIT_SECONDS: int = Field(default=240, ge=30, le=1200)
+    #: Max Claude↔canvas tool rounds per ``POST /generate-diagram``.
+    DIAGRAM_AGENT_MAX_TURNS: int = Field(default=36, ge=4, le=80)
 
     #: Claude structured outputs compile JSON Schema to a grammar; large schemas
     #: (e.g. full ``SceneSkeleton``) routinely hit 400 "Schema is too complex"

@@ -5,7 +5,7 @@ import { Shell } from "../components/app/Shell";
 import { Badge } from "../components/ui/Badge";
 import { ResizableSplit } from "../components/ui/ResizableSplit";
 import { useIdeas, type Idea, type IdeaUpdate } from "../lib/useIdeas";
-import { patchStudioSession } from "../lib/agents";
+import { patchStudioSession, buildDiagramScriptInput } from "../lib/agents";
 import { cn } from "../lib/cn";
 import {
   useStudioStream,
@@ -188,6 +188,10 @@ function LeftPane({
   state: ReturnType<typeof useStudioStream>;
   onPreviewScene: () => void;
 }) {
+  const diagramScript = useMemo(
+    () => buildDiagramScriptInput(state.script, state.outline),
+    [state.script, state.outline],
+  );
   return (
     <section className="flex flex-col min-h-0 bg-night h-full">
       <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-6">
@@ -246,10 +250,10 @@ function LeftPane({
       >
         <SceneRunPanel
           sessionId={state.sessionId}
+          diagramScript={diagramScript}
           initialScene={state.scene}
           outlineReady={!!state.outline}
           onPreview={onPreviewScene}
-          sceneAccentHex={state.session?.brand_color ?? null}
           onSceneReady={state.setScene}
         />
       </div>

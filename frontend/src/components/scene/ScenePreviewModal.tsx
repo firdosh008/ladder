@@ -15,7 +15,7 @@ type Props = {
 
 /**
  * Full-bleed scene preview. Renders the existing read-only `SceneView`
- * (which carries Download / Open in Excalidraw / Copy share inside it)
+ * (which carries Download + Copy share inside it)
  * inside a Radix Dialog with a fade + scale transition.
  */
 export function ScenePreviewModal({
@@ -48,7 +48,7 @@ export function ScenePreviewModal({
                 Scene preview
               </Dialog.Title>
               <span className="font-mono text-[10.5px] uppercase tracking-[0.2em] text-mist">
-                read-only · open in excalidraw to edit
+                read-only · download JSON to edit elsewhere
               </span>
             </div>
             <Dialog.Close

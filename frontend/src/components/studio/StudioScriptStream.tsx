@@ -93,7 +93,7 @@ export type StudioStreamState = {
   /** Replace the local outline (e.g. after a manual edit save). */
   setOutline: (outline: Outline) => void;
   /**
-   * Latest scene from the scene crew WS (`scene_ready`). Hydration sets this
+   * Latest diagram from ``POST /generate-diagram`` / hydration.
    * from GET /studio-sessions/by-idea; without lifting builds here, Preview /
    * modal stay empty while the footer shows "Scene ready".
    */
