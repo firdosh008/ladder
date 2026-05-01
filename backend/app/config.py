@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     #: GPT image size. Empty string uses built-in defaults per model.
     OPENAI_IMAGE_SIZE: str = ""
     #: Append up to this many AI/remote thumbnails (see ``SCENE_IMAGE_PLACEMENT``).
-    SCENE_AI_IMAGE_COUNT: int = 3
+    SCENE_AI_IMAGE_COUNT: int = Field(default=5, ge=1, le=12)
     #: When False, skip OpenAI image calls but remote URLs may still apply.
     SCENE_IMAGE_GEN_ENABLED: bool = True
     #: Comma-separated ``https://`` image URLs (PNG/JPEG/WebP/GIF, ≤2 MiB each).
@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     SCENE_IMAGE_PLACEMENT: Literal["frame_anchor", "canvas_bottom_strip"] = (
         "frame_anchor"
     )
+    #: Columns in the notional slide grid used to size frame-anchored images
+    #: (e.g. 4 ⇒ image width ≈ one-quarter of the frame content width).
+    SCENE_IMAGE_FRAME_GRID_COLUMNS: int = Field(default=4, ge=3, le=8)
+    #: Prefer landscape output when ``OPENAI_IMAGE_SIZE`` is unset (diagram /
+    #: deck-friendly). DALL·E 3 → ``1792x1024``; GPT Image → ``1536x1024``.
+    SCENE_IMAGE_LANDSCAPE_FOR_DIAGRAMS: bool = True
     #: Max UTF-8 JSON size for ``POST .../scene/share`` (embedded ``files`` /
     #: base64). Raised from 2 MiB — hero thumbnails inflate the envelope quickly.
     SCENE_PUBLISH_MAX_ENVELOPE_BYTES: int = Field(

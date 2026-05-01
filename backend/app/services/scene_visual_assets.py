@@ -1,8 +1,8 @@
 """Post-process Excalidraw scenes: AI-generated imagery + optional remote URLs.
 
-Thumbnails are generated via OpenAI Images when ``OPENAI_API_KEY`` is set.
-Placement defaults to **inside each planner frame** (outline order); set
-``SCENE_IMAGE_PLACEMENT=canvas_bottom_strip`` for the legacy bottom row.
+Thumbnails are diagram-oriented (slide / flow-chart style prompts). Placement
+defaults to **inside each planner frame** aligned to a notional grid column;
+set ``SCENE_IMAGE_PLACEMENT=canvas_bottom_strip`` for the legacy bottom row.
 """
 
 from __future__ import annotations
@@ -17,7 +17,14 @@ from openai import AsyncOpenAI
 
 from app.agents.scene.skeleton_scene_cleanup import sort_elements_paint_order
 from app.config import settings
-from app.models.db import IdeaSlice, Outline, SceneLayout, SceneSkeleton, SceneSkeletonElement
+from app.models.db import (
+    IdeaSlice,
+    Outline,
+    SceneFrame,
+    SceneLayout,
+    SceneSkeleton,
+    SceneSkeletonElement,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,21 +56,37 @@ def _parse_remote_url_list() -> list[str]:
 
 
 def _build_prompts(idea: IdeaSlice, outline: Outline, count: int) -> list[str]:
+    """Prompts optimized for **diagram / instructor-slide** assets, not stock photos."""
     base = (idea.title or "video").strip()
     prompts: list[str] = []
     items = list(outline.items)[:count]
+
+    style_rules = (
+        "Visual style: clean instructor slide or textbook diagram — NOT a photograph, "
+        "NOT a generic keyword illustration, NOT decorative artwork unrelated to teaching. "
+        "Flat vector / infographic: rounded rectangles or cards, thin arrows or dotted "
+        "flow lines, 3–4 clear steps or zones arranged left-to-right OR top-to-bottom. "
+        "High contrast, generous whitespace, simple icons ok. "
+        "Learning goal: viewer should grasp the *relationships* (sequence, cause→effect, "
+        "before/after, pipeline) at a glance. "
+        "Do NOT fill with paragraph text; at most one single large word OR step numbers "
+        "(1-2-3) if needed — otherwise empty labeled shapes only. "
+        "Aspect: landscape composition filling the frame width like a PowerPoint diagram pane."
+    )
+
     for it in items:
-        beat = (it.beat or "")[:220]
+        beat = (it.beat or "")[:280]
+        section = (it.label or "").strip() or "Section"
         prompts.append(
-            f"Flat vector illustration for an educational slide. Topic: {base}. "
-            f"Visual metaphor for: {it.label}. Context: {beat}. "
-            "No letters or words in the image; bold shapes; soft gradients OK; "
-            "professional thumbnail usable at small size."
+            f"Topic / series: {base}. Slide section focus: {section}. "
+            f"Teaching intent / beat to visualize (diagram this): {beat}. "
+            + style_rules
         )
+
     while len(prompts) < count:
         prompts.append(
-            f"Abstract professional illustration related to: {base}. "
-            "No text; icon-like clarity; suitable as small hero image."
+            f"Topic: {base}. Create one more slide-style learning diagram in the same rules. "
+            + style_rules
         )
     return prompts[:count]
 
@@ -76,11 +99,12 @@ def _openai_image_generate_kwargs(prompt: str) -> dict:
     size_override = (settings.OPENAI_IMAGE_SIZE or "").strip()
 
     if model.startswith("dall-e-3"):
-        size = size_override if size_override in {
-            "1024x1024",
-            "1792x1024",
-            "1024x1792",
-        } else "1024x1024"
+        if size_override in {"1024x1024", "1792x1024", "1024x1792"}:
+            size = size_override
+        elif settings.SCENE_IMAGE_LANDSCAPE_FOR_DIAGRAMS:
+            size = "1792x1024"
+        else:
+            size = "1024x1024"
         qual = q_raw if q_raw in {"standard", "hd"} else "hd"
         return {
             "model": model,
@@ -101,7 +125,12 @@ def _openai_image_generate_kwargs(prompt: str) -> dict:
         }
 
     if model.startswith("gpt-image"):
-        size = size_override if size_override else "1024x1024"
+        if size_override:
+            size = size_override
+        elif settings.SCENE_IMAGE_LANDSCAPE_FOR_DIAGRAMS:
+            size = "1536x1024"
+        else:
+            size = "1024x1024"
         if q_raw in {"high", "medium", "low", "auto"}:
             qual: str = q_raw
         elif q_raw in {"hd", "best"}:
@@ -167,7 +196,31 @@ async def _fetch_remote_image(url: str) -> str | None:
 
 def _max_slots_for_skeleton(skeleton: SceneSkeleton) -> int:
     room = _MAX_SCENE_ELEMENTS - len(skeleton.elements)
-    return max(0, min(room, settings.SCENE_AI_IMAGE_COUNT, 3))
+    return max(0, min(room, settings.SCENE_AI_IMAGE_COUNT))
+
+
+def _frame_anchor_image_rect(frame: SceneFrame, cols: int) -> tuple[float, float, float, float]:
+    """Size like one column in an N-column row (e.g. 3 text cells + 1 diagram cell).
+
+    Anchored bottom-right of the frame content area, vertically centered on the
+    lower-middle band where slide bodies usually sit.
+    """
+    pad = 14.0
+    inner_w = max(48.0, frame.width - 2 * pad)
+    inner_h = max(48.0, frame.height - 2 * pad)
+    gutter = 10.0
+    ncols = max(3, min(8, cols))
+    slot_w = max(88.0, (inner_w - gutter * (ncols - 1)) / float(ncols))
+    img_w = slot_w
+    img_h = min(max(slot_w * 1.06, 96.0), inner_h * 0.52)
+
+    x = frame.x + frame.width - pad - img_w
+    row_anchor_y = frame.y + pad + inner_h * 0.44
+    y = row_anchor_y - img_h / 2.0
+
+    x = max(frame.x + pad, min(x, frame.x + frame.width - pad - img_w))
+    y = max(frame.y + pad, min(y, frame.y + frame.height - pad - img_h))
+    return x, y, img_w, img_h
 
 
 def _embed_bottom_strip(
@@ -179,8 +232,8 @@ def _embed_bottom_strip(
     cw = float(skeleton.canvas_width)
     ch = float(skeleton.canvas_height)
     n = len(data_urls)
-    # Larger on-canvas footprint than before so downscaling from 1024² is less harsh.
-    img_side = min(240.0, max(120.0, cw / float(n + 3)))
+    # Strip layout: slightly larger tiles for diagram previews.
+    img_side = min(300.0, max(148.0, cw / float(n + 2)))
 
     max_bottom = 0.0
     for el in skeleton.elements:
@@ -265,12 +318,9 @@ def _embed_visual_images(
             continue
 
         f = frames[i]
-        pad = 14.0
-        img_side = min(220.0, max(88.0, min(f.width, f.height) * 0.28))
-        x = f.x + f.width - img_side - pad
-        y = f.y + f.height - img_side - pad
-        x = max(f.x + pad, min(x, f.x + f.width - img_side - pad))
-        y = max(f.y + pad, min(y, f.y + f.height - img_side - pad))
+        x, y, img_w, img_h = _frame_anchor_image_rect(
+            f, settings.SCENE_IMAGE_FRAME_GRID_COLUMNS
+        )
 
         fid = f"ladder-hero-{i}-{ts}"
         mime = _mime_from_data_url(data_url)
@@ -286,15 +336,15 @@ def _embed_visual_images(
                 type="image",
                 x=x,
                 y=y,
-                width=img_side,
-                height=img_side,
+                width=img_w,
+                height=img_h,
                 fileId=fid,
             )
         )
 
     note_tail = (
-        " Embedded hero thumbnails (AI/remote) anchored to outline frames "
-        "(bottom-right per frame)."
+        " Embedded diagram thumbnails (AI/remote): grid-column width inside each "
+        "outline frame (see SCENE_IMAGE_FRAME_GRID_COLUMNS)."
     )
     notes = (skeleton.notes or "") + note_tail
     if len(notes) > 4000:
