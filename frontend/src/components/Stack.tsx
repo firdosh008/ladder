@@ -2,8 +2,8 @@ import { motion } from "framer-motion";
 import { fadeUp, stagger } from "../lib/motion";
 
 const ROWS = [
-  { layer: "script", provider: "Claude Sonnet 4.5", via: "SSE stream" },
-  { layer: "scene", provider: "Claude Sonnet 4.5", via: ".excalidraw JSON" },
+  { layer: "script", provider: "Claude Haiku 4.5", via: "SSE stream" },
+  { layer: "scene", provider: "Claude Haiku 4.5", via: ".excalidraw JSON" },
   { layer: "edit", provider: "Claude Vision", via: "screenshot → diff" },
   { layer: "research", provider: "GPT-4o + TubeLab", via: "weekly cron" },
   { layer: "extract", provider: "Gemini 1.5 Pro", via: "content rewrite" },

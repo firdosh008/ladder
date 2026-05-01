@@ -277,9 +277,9 @@ function LiveStatus() {
   }, []);
 
   const rows = [
-    { fn: "stream_script", model: "sonnet-4.5", cost: "$0.12" },
-    { fn: "gen_outline", model: "sonnet-4.5", cost: "$0.03" },
-    { fn: "build_scene", model: "sonnet-4.5", cost: "$0.31" },
+    { fn: "stream_script", model: "haiku-4.5", cost: "$0.04" },
+    { fn: "gen_outline", model: "haiku-4.5", cost: "$0.01" },
+    { fn: "build_scene", model: "haiku-4.5", cost: "$0.10" },
   ];
 
   return (

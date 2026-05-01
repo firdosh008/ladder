@@ -33,10 +33,10 @@ from app.models.db import ResearchIdeas, UserProfileSlice
 from app.services.usage import log_usage
 
 
-# Rough Anthropic Sonnet pricing (USD per 1M tokens). Good enough for the
+# Rough Anthropic Haiku pricing (USD per 1M tokens). Good enough for the
 # usage_log until we pipe real billing.
-_PRICE_IN_PER_MTOK = 3.0
-_PRICE_OUT_PER_MTOK = 15.0
+_PRICE_IN_PER_MTOK = 1.0
+_PRICE_OUT_PER_MTOK = 5.0
 
 # Readable role → stable agent key (matches the frontend AGENT_LABELS map).
 _ROLE_TO_KEY = {

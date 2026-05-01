@@ -26,8 +26,8 @@ from app.models.db import IdeaSlice, Outline, Script, UserProfileSlice
 from app.services.usage import log_usage
 
 
-_PRICE_IN_PER_MTOK = 3.0
-_PRICE_OUT_PER_MTOK = 15.0
+_PRICE_IN_PER_MTOK = 1.0
+_PRICE_OUT_PER_MTOK = 5.0
 
 _ROLE_TO_KEY = {
     "Script writer": "script_writer",

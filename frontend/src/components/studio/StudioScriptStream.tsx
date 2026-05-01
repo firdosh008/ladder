@@ -138,6 +138,12 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
   // to false the moment the new stream starts, so subsequent
   // navigation/refresh still rehydrate the latest saved artifact.
   const forceFreshRef = useRef(false);
+  /** Keeps latest session id for patchSession when `session` is still null (new idea path). */
+  const sessionIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   const startStream = useCallback(() => {
     let cancelled = false;
@@ -193,7 +199,22 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
           setOutline(ev.outline);
           break;
         case "persisted":
-          if (ev.session_id) setSessionId(ev.session_id);
+          if (ev.session_id) {
+            const sid = ev.session_id;
+            sessionIdRef.current = sid;
+            setSessionId(sid);
+            // GET /by-idea returned no row yet — without a session object the studio
+            // header can't show brand & Studio.tsx auto-brand bails on `if (!sess)`.
+            setSession((prev) =>
+              prev ?? {
+                id: sid,
+                brand_id: null,
+                brand_color: null,
+                output_type: null,
+                thumbnail_selected_id: null,
+              },
+            );
+          }
           break;
         case "usage":
           setCost(ev.token_usage.cost_usd);
@@ -299,7 +320,19 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
   const rerun = regenerate;
 
   const patchSession = useCallback((patch: Partial<StudioSessionRow>) => {
-    setSession((prev) => (prev ? { ...prev, ...patch } : prev));
+    setSession((prev) => {
+      if (prev) return { ...prev, ...patch };
+      const sid = sessionIdRef.current;
+      if (!sid) return prev;
+      return {
+        id: sid,
+        brand_id: null,
+        brand_color: null,
+        output_type: null,
+        thumbnail_selected_id: null,
+        ...patch,
+      };
+    });
   }, []);
 
   return useMemo(

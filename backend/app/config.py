@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     EXA_API_KEY: str | None = None
     SCRAPECREATORS_API_KEY: str | None = None
 
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5"
 
     #: Claude structured outputs compile JSON Schema to a grammar; large schemas
     #: (e.g. full ``SceneSkeleton``) routinely hit 400 "Schema is too complex"

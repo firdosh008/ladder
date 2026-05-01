@@ -234,7 +234,7 @@ export default function MakePage() {
                     : "Research & stream"}
               </Button>
               <p className="text-[11.5px] text-mist font-mono pt-0.5">
-                exa · sonnet-4.6 ·{" "}
+                exa · haiku-4.5 ·{" "}
                 <span className="text-white/75">{duration}-min target</span>
                 {hasRestoredRun && !researchSetup ? " · last run restored below" : ""}
               </p>
@@ -274,7 +274,7 @@ export default function MakePage() {
             <p className="text-[11px] text-mist font-mono pt-1.5">
               {contentTooShort
                 ? `${contentLength}/80 chars`
-                : "sonnet-4.6 · auto-saves & opens studio"}
+                : "haiku-4.5 · auto-saves & opens studio"}
             </p>
           </OptionCard>
         </div>
