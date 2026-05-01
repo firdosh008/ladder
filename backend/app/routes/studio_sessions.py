@@ -15,6 +15,10 @@ Routes:
         artifact. Mirrors the same versioning behavior as the streaming
         crew so history is preserved.
 
+  POST /studio-sessions/{session_id}/scene
+        Persist an updated scene skeleton (e.g. typography-only refresh)
+        as a new versioned `excalidraw` artifact — same shape as crew output.
+
   POST /studio-sessions/{session_id}/scene/share
         Upload a fully-inflated `.excalidraw` envelope to public Storage
         and return the public URL. The frontend uses this URL to open the
@@ -87,6 +91,17 @@ class OutlineSaveBody(BaseModel):
 
 
 class OutlineSaveResponse(BaseModel):
+    artifact_id: str
+    version: int
+
+
+class SceneSkeletonSaveBody(BaseModel):
+    """Scene payload matching ``SceneSkeleton`` / frontend ``Scene`` type."""
+
+    scene: dict[str, Any]
+
+
+class SceneSkeletonSaveResponse(BaseModel):
     artifact_id: str
     version: int
 
@@ -300,6 +315,83 @@ async def save_outline(
         pass
 
     return OutlineSaveResponse(
+        artifact_id=str(inserted.data[0]["id"]),
+        version=next_version,
+    )
+
+
+@router.post(
+    "/{session_id}/scene",
+    response_model=SceneSkeletonSaveResponse,
+)
+async def save_scene_skeleton(
+    session_id: str,
+    body: SceneSkeletonSaveBody,
+    ctx: tuple = Depends(current_user),
+) -> SceneSkeletonSaveResponse:
+    """Persist an updated scene skeleton as a new versioned ``excalidraw`` row.
+
+    Used for founder-driven edits that keep geometry intact — e.g. bulk
+    ``fontFamily`` swaps — without re-running the scene LLM crew.
+    """
+    user_id, token = ctx
+    client = await user_client(token)
+
+    sess_resp = (
+        await client.from_("studio_sessions")
+        .select("id")
+        .eq("id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    sess = sess_resp.data if sess_resp is not None else None
+    if not sess:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    scene = body.scene
+    elements = scene.get("elements") if isinstance(scene, dict) else None
+    if not isinstance(elements, list) or len(elements) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="scene.elements must be a non-empty list",
+        )
+
+    latest = (
+        await client.from_("artifacts")
+        .select("version")
+        .eq("session_id", session_id)
+        .eq("type", "excalidraw")
+        .order("version", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_version = int(latest.data[0]["version"]) + 1 if latest.data else 1
+
+    cw = scene.get("canvas_width")
+    ch = scene.get("canvas_height")
+    summary = (
+        f"Scene skeleton — {len(elements)} elements on a "
+        f"{cw}×{ch} canvas."
+    )
+
+    inserted = (
+        await client.from_("artifacts")
+        .insert(
+            {
+                "user_id": str(user_id),
+                "session_id": session_id,
+                "type": "excalidraw",
+                "version": next_version,
+                "content_text": summary,
+                "content_json": scene,
+            }
+        )
+        .execute()
+    )
+    if not inserted.data:
+        raise HTTPException(status_code=500, detail="scene insert returned no row")
+
+    return SceneSkeletonSaveResponse(
         artifact_id=str(inserted.data[0]["id"]),
         version=next_version,
     )

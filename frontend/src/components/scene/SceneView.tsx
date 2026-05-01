@@ -34,6 +34,22 @@ type Props = {
   sessionId: string;
 };
 
+/** Stable key so Excalidraw remounts when typography changes (`updateScene` alone often misses font swaps). */
+function sceneTypographyKey(scene: Scene): string {
+  return scene.elements
+    .map((e) => {
+      const lf =
+        e.label &&
+        typeof e.label === "object" &&
+        "fontFamily" in e.label &&
+        (e.label as { fontFamily?: number }).fontFamily != null
+          ? String((e.label as { fontFamily?: number }).fontFamily)
+          : "";
+      return `${e.id}:${e.fontFamily ?? ""}:${lf}`;
+    })
+    .join("|");
+}
+
 function buildEnvelope(scene: Scene): {
   type: "excalidraw";
   version: 2;
@@ -91,6 +107,7 @@ function isLightCanvas(hex: string | null | undefined): boolean {
 }
 
 export function SceneView({ scene, sessionId }: Props) {
+  const typographyKey = useMemo(() => sceneTypographyKey(scene), [scene]);
   const envelope = useMemo(() => buildEnvelope(scene), [scene]);
   const lightCanvas = isLightCanvas(scene.background_color);
   const themeName: "light" | "dark" = lightCanvas ? "light" : "dark";
@@ -254,6 +271,7 @@ export function SceneView({ scene, sessionId }: Props) {
         }}
       >
         <Excalidraw
+          key={`${sessionId}-${typographyKey}`}
           excalidrawAPI={(api) => {
             apiRef.current = api;
           }}

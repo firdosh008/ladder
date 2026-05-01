@@ -16,30 +16,68 @@ import { cn } from "../../lib/cn";
 import {
   publishScene,
   runSceneStream,
+  saveSceneSkeleton,
   type AgentEvent,
   type Scene,
+  type SceneSkeletonElement,
 } from "../../lib/agents";
 
-// Excalidraw 0.18 built-in fontFamily integers. Custom font registration
-// (true SF Pro / Times Roman) is private API in 0.18 — these are the
-// closest visually-distinct options the renderer ships with.
-const FONT_OPTIONS: { value: number | null; label: string; hint: string }[] = [
-  { value: null, label: "Hand-drawn", hint: "Excalifont · default" },
-  { value: 2, label: "Sans (Arial)", hint: "Helvetica · system Arial / SF" },
-  { value: 7, label: "Display", hint: "Lilita One · bold poster" },
-  { value: 6, label: "Rounded", hint: "Nunito · soft sans" },
-  { value: 9, label: "Neutral Sans", hint: "Liberation Sans" },
-  { value: 3, label: "Mono", hint: "Cascadia · code" },
+// Excalidraw 0.18 only exposes bundled fontFamily ints; labels follow the
+// product copy while mapping to the nearest renderer preset.
+const FONT_OPTIONS: { value: number | null; label: string }[] = [
+  { value: null, label: "Handmade" },
+  { value: 9, label: "Arial" }, // Liberation Sans — neutral sans
+  { value: 1, label: "Times Roman" }, // Virgil — closest bundled serif mood
+  { value: 2, label: "SF Pro" }, // Helvetica stack → SF on Apple
 ];
 
 const FONT_STORAGE_KEY = "ladder:scene:font_family";
+
+const ALLOWED_FONT_IDS = new Set(
+  FONT_OPTIONS.map((o) => o.value).filter((v): v is number => typeof v === "number"),
+);
+
+function applyFontFamilyToScene(scene: Scene, fontFamily: number | null): Scene {
+  const elements = scene.elements.map((el: SceneSkeletonElement) => {
+    const labelObj = el.label;
+    const hasLabel =
+      labelObj != null &&
+      typeof labelObj === "object" &&
+      String(labelObj.text ?? "").trim().length > 0;
+    const hasTextField =
+      typeof el.text === "string" && el.text.trim().length > 0;
+    const isTextEl = el.type === "text";
+    if (!isTextEl && !hasLabel && !hasTextField) return el;
+
+    const next: SceneSkeletonElement = { ...el };
+
+    if (hasLabel && labelObj) {
+      const lbl = { ...labelObj };
+      if (fontFamily === null) {
+        delete lbl.fontFamily;
+      } else {
+        lbl.fontFamily = fontFamily;
+      }
+      next.label = lbl;
+    }
+
+    if (fontFamily === null) {
+      delete next.fontFamily;
+    } else {
+      next.fontFamily = fontFamily;
+    }
+    return next;
+  });
+  return { ...scene, elements };
+}
 
 function loadStoredFont(): number | null {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(FONT_STORAGE_KEY);
   if (!raw) return null;
   const n = Number(raw);
-  return Number.isFinite(n) && FONT_OPTIONS.some((o) => o.value === n) ? n : null;
+  if (!Number.isFinite(n) || !ALLOWED_FONT_IDS.has(n)) return null;
+  return n;
 }
 
 function storeFont(value: number | null): void {
@@ -119,6 +157,7 @@ export function SceneRunPanel({
   const [cost, setCost] = useState<number | null>(null);
   const [openingExcalidraw, setOpeningExcalidraw] = useState(false);
   const [fontFamily, setFontFamily] = useState<number | null>(loadStoredFont);
+  const [applyingFont, setApplyingFont] = useState(false);
 
   useEffect(() => {
     setScene(initialScene);
@@ -206,6 +245,22 @@ export function SceneRunPanel({
     };
   }, [sessionId, sceneAccentHex, fontFamily, onSceneReady]);
 
+  const regenerateTypography = useCallback(async () => {
+    if (!sessionId || !scene) return;
+    setApplyingFont(true);
+    setError(null);
+    try {
+      const next = applyFontFamilyToScene(structuredClone(scene), fontFamily);
+      await saveSceneSkeleton(sessionId, next);
+      setScene(next);
+      onSceneReady?.(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setApplyingFont(false);
+    }
+  }, [sessionId, scene, fontFamily, onSceneReady]);
+
   const onFontChange = useCallback((value: number | null) => {
     setFontFamily(value);
     storeFont(value);
@@ -253,8 +308,9 @@ export function SceneRunPanel({
     }
   }, [scene, sessionId]);
 
-  const canStart = !!sessionId && outlineReady && status !== "running";
+  const canStart = !!sessionId && outlineReady && status !== "running" && !applyingFont;
   const isRunning = status === "running";
+  const hidePreviewCluster = isRunning || applyingFont;
 
   return (
     <div className="flex flex-col gap-2">
@@ -280,7 +336,7 @@ export function SceneRunPanel({
                 </span>
               ) : null}
             </div>
-            <FontPicker value={fontFamily} onChange={onFontChange} disabled={isRunning} />
+            <FontPicker value={fontFamily} onChange={onFontChange} disabled={hidePreviewCluster} />
             <Button
               size="sm"
               variant="primary"
@@ -316,28 +372,33 @@ export function SceneRunPanel({
               <FontPicker
                 value={fontFamily}
                 onChange={onFontChange}
-                disabled={isRunning}
+                disabled={hidePreviewCluster}
               />
+              {!hidePreviewCluster ? (
+                <>
+                  <FooterIconBtn
+                    icon={Eye}
+                    label="Preview"
+                    onClick={onPreview}
+                    title="Preview the canvas"
+                  />
+                  <FooterIconBtn
+                    icon={openingExcalidraw ? Spinner : ArrowSquareOut}
+                    label={openingExcalidraw ? "Uploading…" : "Open in Excalidraw"}
+                    onClick={onOpenInExcalidraw}
+                    disabled={openingExcalidraw}
+                    spinning={openingExcalidraw}
+                    title="Open scene in excalidraw.com"
+                  />
+                </>
+              ) : null}
               <FooterIconBtn
-                icon={Eye}
-                label="Preview"
-                onClick={onPreview}
-                title="Preview the canvas"
-              />
-              <FooterIconBtn
-                icon={openingExcalidraw ? Spinner : ArrowSquareOut}
-                label={openingExcalidraw ? "Uploading…" : "Open in Excalidraw"}
-                onClick={onOpenInExcalidraw}
-                disabled={openingExcalidraw}
-                spinning={openingExcalidraw}
-                title="Open scene in excalidraw.com"
-              />
-              <FooterIconBtn
-                icon={ArrowsClockwise}
-                label="Regenerate"
-                onClick={startRun}
+                icon={applyingFont ? Spinner : ArrowsClockwise}
+                label={applyingFont ? "Applying…" : "Regenerate"}
+                onClick={regenerateTypography}
                 disabled={!canStart}
-                title="Regenerate scene from the latest outline"
+                spinning={applyingFont}
+                title="Apply the selected font to this scene (layout unchanged)"
               />
               <FooterIconBtn
                 icon={ImageIcon}
@@ -352,6 +413,9 @@ export function SceneRunPanel({
       </div>
 
       {/* Run progress + errors */}
+      {applyingFont ? (
+        <p className="font-mono text-[11px] text-mist px-1">Updating typography…</p>
+      ) : null}
       {(status === "running" || status === "failed") && (
         <div className="rounded-lg border border-hairline bg-surface p-3 space-y-2">
           {AGENT_ORDER.map((key) => {
@@ -462,10 +526,7 @@ function FooterIconBtn({
 
 /**
  * Native <select> wrapped in a chip-style label. Excalidraw 0.18 only ships
- * built-in font integers (custom-font registration is private API), so the
- * options list maps user-facing labels to the closest visually-distinct
- * built-ins. Persists selection in localStorage so the choice carries across
- * sessions without backend storage.
+ * bundled font integers — labels are founder-facing; see FONT_OPTIONS mapping.
  */
 function FontPicker({
   value,
@@ -486,7 +547,7 @@ function FontPicker({
         "transition-colors",
         disabled ? "opacity-40 pointer-events-none" : "cursor-pointer",
       )}
-      title={`Scene font · ${active.hint}`}
+      title={`Scene font · ${active.label}`}
     >
       <TextAa size={11} weight="bold" className="shrink-0" />
       <span className="text-[12px] font-medium font-sans whitespace-nowrap">
@@ -504,7 +565,7 @@ function FontPicker({
       >
         {FONT_OPTIONS.map((o) => (
           <option key={String(o.value)} value={o.value === null ? "default" : String(o.value)}>
-            {o.label} — {o.hint}
+            {o.label}
           </option>
         ))}
       </select>

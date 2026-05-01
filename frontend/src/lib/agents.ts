@@ -135,7 +135,8 @@ export type SceneSkeletonElement = {
   width: number;
   height: number;
   text?: string | null;
-  label?: { text: string } | null;
+  /** Bound caption on shapes — may carry its own fontFamily for Excalidraw. */
+  label?: { text: string; fontFamily?: number | null } | null;
   strokeColor?: string | null;
   backgroundColor?: string | null;
   fillStyle?: "solid" | "hachure" | "cross-hatch" | null;
@@ -426,6 +427,39 @@ export async function saveOutline(
     throw new Error(`Failed to save outline (${res.status})`);
   }
   return (await res.json()) as SaveOutlineResult;
+}
+
+// ─── saveSceneSkeleton ────────────────────────────────────────────────────
+
+export type SaveSceneSkeletonResult = {
+  artifact_id: string;
+  version: number;
+};
+
+/**
+ * Persist an updated scene skeleton as a new versioned `excalidraw` artifact
+ * (same storage path as the scene crew). Keeps layout; used for font swaps.
+ */
+export async function saveSceneSkeleton(
+  sessionId: string,
+  scene: Scene,
+): Promise<SaveSceneSkeletonResult> {
+  const token = await authToken();
+  const res = await fetch(
+    `${API_URL}/studio-sessions/${encodeURIComponent(sessionId)}/scene`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ scene }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to save scene (${res.status})`);
+  }
+  return (await res.json()) as SaveSceneSkeletonResult;
 }
 
 // ─── runExtractStream ─────────────────────────────────────────────────────
