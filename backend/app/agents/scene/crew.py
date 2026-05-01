@@ -35,10 +35,10 @@ from app.models.db import (
     IdeaSlice,
     Outline,
     SceneLayout,
-    SceneSkeleton,
     Script,
     UserProfileSlice,
 )
+from app.services.scene_visual_assets import enrich_scene_visuals
 from app.services.usage import log_usage
 
 
@@ -199,6 +199,8 @@ async def run_scene_build(
             brand_color=brand_color,
             font_family=font_family,
         )
+
+        skeleton = await enrich_scene_visuals(skeleton, idea, outline, layout)
 
         yield {
             "type": "task_complete",

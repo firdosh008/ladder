@@ -23,6 +23,7 @@ Routes:
         Upload a fully-inflated `.excalidraw` envelope to public Storage
         and return the public URL. The frontend uses this URL to open the
         scene in excalidraw.com via `excalidraw.com/#url=<encoded>`.
+        Max serialized envelope size is configurable (`SCENE_PUBLISH_MAX_ENVELOPE_BYTES`).
         See PRD §5.5 (the canonical "open in Excalidraw" affordance).
 """
 
@@ -37,13 +38,13 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from app.config import settings
 from app.deps import service_client, user_client
 from app.middleware.auth import current_user
 
 router = APIRouter(prefix="/studio-sessions", tags=["studio_sessions"])
 
 _SCENE_BUCKET = "excalidraw_scenes"
-_MAX_ENVELOPE_BYTES = 2 * 1024 * 1024  # 2 MB hard cap
 
 
 class StudioSessionByIdea(BaseModel):
@@ -441,10 +442,16 @@ async def publish_scene(
         )
 
     blob = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
-    if len(blob) > _MAX_ENVELOPE_BYTES:
+    max_bytes = settings.SCENE_PUBLISH_MAX_ENVELOPE_BYTES
+    if len(blob) > max_bytes:
+        cap_mb = max_bytes / (1024 * 1024)
         raise HTTPException(
             status_code=413,
-            detail=f"envelope exceeds {_MAX_ENVELOPE_BYTES // 1024} KB cap",
+            detail=(
+                f"envelope exceeds publish limit ({cap_mb:.1f} MiB). "
+                "Raise SCENE_PUBLISH_MAX_ENVELOPE_BYTES in server config or "
+                "reduce embedded images in the scene."
+            ),
         )
 
     storage_path = f"{user_id}/{session_id}/{uuid4().hex}.excalidraw"

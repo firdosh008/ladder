@@ -28,6 +28,7 @@ from app.agents.scene.skeleton_scene_cleanup import (
     enforce_readable_colors,
     repair_arrow_bindings,
     sync_canvas_from_layout,
+    wrap_scene_text_elements,
 )
 from app.agents.scene.skeleton_text_layout import repack_rect_body_text_below_labels
 from app.agents.scene.tasks import _outline_dump, _script_summary
@@ -128,12 +129,14 @@ Per-frame element rules (use the frame's `kind`):
   • cta / diagram — pick the closest of the above.
 
 Hard rules:
+  • **Icons:** Prefix **every** shape `label.text` and every prominent standalone `type:text` heading with **one** Unicode emoji (single grapheme) that matches the idea — e.g. ⚡ 💡 ✅ 🎯 📌 🔑 🚀 📊 🧭 ✨ — so the board reads icon-forward like a polished slide deck.
   • Every shape stays strictly inside its frame's bounding box (use the planner's x/y/width/height as a hard clamp). At least 24px internal padding.
   • Every element has a unique stable string id ('f1-box', 'arrow-1-2', etc).
   • Arrows reference start/end via {{id: '<element-id>'}}. Referenced ids MUST exist and MUST point only to rectangle, diamond, or ellipse elements — NEVER bind arrow endpoints to type:text (broken arrows / inverted geometry).
   • Style: roughness=1, strokeWidth=2. Canvas is **white (#FFFFFF)** — standalone type:text MUST use strokeColor='#1F2937' (dark grey — readable body copy). Arrow and line shafts MUST use strokeColor='#1F2937'. Title/cta cards use fillStyle='solid' with backgroundColor='{brand_color}' and strokeColor='#FFFFFF' so bound labels stay readable on the fill (never leave captions implied-default). Wireframe rectangles/diamonds use strokeColor='#1F2937'. Use '{brand_color}' on at least one prominent stroke per frame as an accent line OUTSIDE of captions if helpful. Never use #FFFFFF / white / near-white strokeColor on unfilled shapes or on type:text — invisible on white.
   • Text elements use the `text` field (not `label`). Shape elements with bound captions use `label.text`.
   • Shape labels are SHORT titles (≤48 chars, single line — Excalidraw centers them in the shape). For multi-line content, paragraphs, or bullet lists, use a separate `type: "text"` element **below the title strip**: `x = rect.x + 12`, `y = rect.y + 40`, `width = rect.width - 24`, `height` filling the rest of the card — never center that body at the rectangle's midpoint (it overlaps the bound label). Never cram long copy into `label.text`.
+  • **Body `type:text`:** give each block a **realistic `width`** (≥180px for paragraphs). Long sentences must either use explicit newline characters (`\\n`) between lines **or** rely on that width — the app reflows single-line blobs to ~12–56 chars per line. Set `height` generously when you expect multiple lines (≥ `line_count × fontSize × 1.25`).
   • Width and height for every rectangle, diamond, ellipse, and similar shape must be **positive** (greater than zero). Never use negative width or height — reposition with `x`/`y` instead of flipping signs.
   • Add ONE text element near the top of the canvas with the video title (use the first outline label).
   • Aim for 12-40 elements total — vary shape sizes by importance, never produce a uniform grid.{font_clause}"""
@@ -283,6 +286,7 @@ def _finalize_skeleton(skeleton: SceneSkeleton, layout: SceneLayout) -> SceneSke
     """Deterministic cleanup after the model (geometry, contrast, arrows)."""
     sk = sync_canvas_from_layout(skeleton, layout)
     sk = repack_rect_body_text_below_labels(sk, layout)
+    sk = wrap_scene_text_elements(sk)
     sk = enforce_readable_colors(sk)
     sk = repair_arrow_bindings(sk)
     return sk

@@ -37,6 +37,16 @@ const ALLOWED_FONT_IDS = new Set(
   FONT_OPTIONS.map((o) => o.value).filter((v): v is number => typeof v === "number"),
 );
 
+function inferTypographyFontFromScene(scene: Scene | null): number | null {
+  if (!scene?.elements?.length) return null;
+  for (const el of scene.elements) {
+    if (typeof el.fontFamily === "number") return el.fontFamily;
+    const lbl = el.label as { fontFamily?: number } | null | undefined;
+    if (lbl != null && typeof lbl.fontFamily === "number") return lbl.fontFamily;
+  }
+  return null;
+}
+
 function applyFontFamilyToScene(scene: Scene, fontFamily: number | null): Scene {
   const elements = scene.elements.map((el: SceneSkeletonElement) => {
     const labelObj = el.label;
@@ -157,11 +167,15 @@ export function SceneRunPanel({
   const [cost, setCost] = useState<number | null>(null);
   const [openingExcalidraw, setOpeningExcalidraw] = useState(false);
   const [fontFamily, setFontFamily] = useState<number | null>(loadStoredFont);
+  const [fontCommittedToScene, setFontCommittedToScene] = useState<number | null>(
+    () => inferTypographyFontFromScene(initialScene),
+  );
   const [applyingFont, setApplyingFont] = useState(false);
 
   useEffect(() => {
     setScene(initialScene);
     setStatus(initialScene ? "ready" : "idle");
+    setFontCommittedToScene(inferTypographyFontFromScene(initialScene));
   }, [initialScene]);
 
   const startRun = useCallback(() => {
@@ -205,6 +219,7 @@ export function SceneRunPanel({
         }
         case "scene_ready":
           setScene(ev.scene);
+          setFontCommittedToScene(inferTypographyFontFromScene(ev.scene));
           onSceneReady?.(ev.scene);
           break;
         case "usage":
@@ -253,6 +268,7 @@ export function SceneRunPanel({
       const next = applyFontFamilyToScene(structuredClone(scene), fontFamily);
       await saveSceneSkeleton(sessionId, next);
       setScene(next);
+      setFontCommittedToScene(fontFamily ?? null);
       onSceneReady?.(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -260,6 +276,26 @@ export function SceneRunPanel({
       setApplyingFont(false);
     }
   }, [sessionId, scene, fontFamily, onSceneReady]);
+
+  const handleRegenerate = useCallback(() => {
+    if (!sessionId || !scene) return;
+    const picker = fontFamily ?? null;
+    const committed = fontCommittedToScene ?? null;
+    if (picker !== committed) {
+      void regenerateTypography();
+    } else {
+      startRun();
+    }
+  }, [
+    sessionId,
+    scene,
+    fontFamily,
+    fontCommittedToScene,
+    regenerateTypography,
+    startRun,
+  ]);
+
+  const fontPickerDiffersFromCanvas = (fontFamily ?? null) !== (fontCommittedToScene ?? null);
 
   const onFontChange = useCallback((value: number | null) => {
     setFontFamily(value);
@@ -393,12 +429,18 @@ export function SceneRunPanel({
                 </>
               ) : null}
               <FooterIconBtn
-                icon={applyingFont ? Spinner : ArrowsClockwise}
-                label={applyingFont ? "Applying…" : "Regenerate"}
-                onClick={regenerateTypography}
+                icon={applyingFont || isRunning ? Spinner : ArrowsClockwise}
+                label={
+                  applyingFont ? "Applying…" : isRunning ? "Rebuilding…" : "Regenerate"
+                }
+                onClick={handleRegenerate}
                 disabled={!canStart}
-                spinning={applyingFont}
-                title="Apply the selected font to this scene (layout unchanged)"
+                spinning={applyingFont || isRunning}
+                title={
+                  fontPickerDiffersFromCanvas
+                    ? "Apply the selected font only (layout unchanged)"
+                    : "Rebuild the full scene from the outline using the current font"
+                }
               />
               <FooterIconBtn
                 icon={ImageIcon}
@@ -415,6 +457,8 @@ export function SceneRunPanel({
       {/* Run progress + errors */}
       {applyingFont ? (
         <p className="font-mono text-[11px] text-mist px-1">Updating typography…</p>
+      ) : isRunning && scene ? (
+        <p className="font-mono text-[11px] text-mist px-1">Rebuilding scene from outline…</p>
       ) : null}
       {(status === "running" || status === "failed") && (
         <div className="rounded-lg border border-hairline bg-surface p-3 space-y-2">
