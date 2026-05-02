@@ -13,8 +13,9 @@ import {
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/cn";
 import {
-  generateDiagramFromScript,
+  runVisualBuild,
   saveSceneSkeleton,
+  type AgentEvent,
   type Scene,
   type SceneSkeletonElement,
 } from "../../lib/agents";
@@ -94,19 +95,17 @@ type Status = "idle" | "running" | "ready" | "failed";
 
 type Props = {
   sessionId: string | null;
-  diagramScript: string;
-  initialScene: Scene | null;
   outlineReady: boolean;
+  initialScene: Scene | null;
   onPreview: () => void;
   onSceneReady?: (scene: Scene) => void;
 };
 
-/** ``POST /generate-diagram`` plus scene typography controls · Preview opens the modal viewer. */
+/** Live MCP canvas build · streams ``/ws/agents/visual`` · typography controls + preview. */
 export function SceneRunPanel({
   sessionId,
-  diagramScript,
-  initialScene,
   outlineReady,
+  initialScene,
   onPreview,
   onSceneReady,
 }: Props) {
@@ -118,6 +117,10 @@ export function SceneRunPanel({
     () => inferTypographyFontFromScene(initialScene),
   );
   const [applyingFont, setApplyingFont] = useState(false);
+  // Most recent MCP tool call name + a short text-delta tail. Surfaces under
+  // the strip while the agent draws so the user has *something* to read
+  // beyond a spinner. Cleared back to null on success/failure.
+  const [activity, setActivity] = useState<string | null>(null);
 
   useEffect(() => {
     setScene(initialScene);
@@ -125,33 +128,41 @@ export function SceneRunPanel({
     setFontCommittedToScene(inferTypographyFontFromScene(initialScene));
   }, [initialScene]);
 
-  const scriptOk = diagramScript.trim().length >= 8;
-
   const startRun = useCallback(async () => {
-    if (!sessionId || !scriptOk) return;
+    if (!sessionId) return;
     setStatus("running");
     setError(null);
+    setActivity("starting…");
     try {
-      const res = await generateDiagramFromScript({
-        script: diagramScript,
-        session_id: sessionId,
-      });
-      let next = res.json;
+      const onEvent = (ev: AgentEvent) => {
+        if (ev.type === "tool_call") setActivity(`tool · ${ev.tool}`);
+        else if (ev.type === "agent_start") setActivity("agent online");
+        else if (ev.type === "scene_ready") setActivity("finalising…");
+        else if (ev.type === "text_delta") {
+          // Surface a tiny tail of what the agent is narrating right now.
+          const tail = ev.content.replace(/\s+/g, " ").trim().slice(-60);
+          if (tail) setActivity(tail);
+        }
+      };
+      const res = await runVisualBuild(sessionId, {}, onEvent);
+      if (!res.scene) {
+        throw new Error("agent finished without producing a scene");
+      }
+      let next = res.scene;
       if ((fontFamily ?? null) !== null) {
         next = applyFontFamilyToScene(structuredClone(next), fontFamily);
       }
       setScene(next);
       setFontCommittedToScene(fontFamily ?? null);
       setStatus("ready");
+      setActivity(null);
       onSceneReady?.(next);
-      if (typeof res.diagram_url === "string" && res.diagram_url) {
-        console.info("Diagram PNG:", res.diagram_url);
-      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus("failed");
+      setActivity(null);
     }
-  }, [sessionId, diagramScript, scriptOk, fontFamily, onSceneReady]);
+  }, [sessionId, fontFamily, onSceneReady]);
 
   const regenerateTypography = useCallback(async () => {
     if (!sessionId || !scene) return;
@@ -189,7 +200,7 @@ export function SceneRunPanel({
   }, []);
 
   const canStart =
-    !!sessionId && outlineReady && scriptOk && status !== "running" && !applyingFont;
+    !!sessionId && outlineReady && status !== "running" && !applyingFont;
   const isRunning = status === "running";
   const hidePreviewCluster = isRunning || applyingFont;
 
@@ -202,15 +213,13 @@ export function SceneRunPanel({
                 <span
                   className={cn(
                     "inline-block h-1.5 w-1.5 rounded-full shrink-0",
-                    outlineReady && scriptOk ? "bg-cinnabar" : "bg-white/20",
+                    outlineReady ? "bg-cinnabar" : "bg-white/20",
                   )}
                 />
                 <p className="text-[12.5px] text-white/85 truncate">
-                  {outlineReady && scriptOk
-                    ? "Outline + script ready — generate to draw via Claude + MCP."
-                    : outlineReady
-                      ? "Waiting for script text."
-                      : "Waiting on the outline."}
+                  {outlineReady
+                    ? "Outline ready — generate to draw on the live MCP canvas."
+                    : "Waiting on the outline."}
                 </p>
               </div>
               <FontPicker value={fontFamily} onChange={onFontChange} disabled={hidePreviewCluster} />
@@ -284,9 +293,8 @@ export function SceneRunPanel({
           <p className="font-mono text-[11px] text-mist px-1">Updating typography…</p>
         ) : null}
         {isRunning ? (
-          <p className="font-mono text-[11px] text-mist px-1">
-            Claude is driving the Excalidraw MCP tools on the server — use Preview when the
-            diagram is ready to inspect it.
+          <p className="font-mono text-[11px] text-mist px-1 truncate">
+            Visual agent driving MCP canvas{activity ? ` · ${activity}` : "…"}
           </p>
         ) : null}
 

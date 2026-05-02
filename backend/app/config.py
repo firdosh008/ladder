@@ -53,8 +53,13 @@ class Settings(BaseSettings):
     SCRAPECREATORS_API_KEY: str | None = None
 
     ANTHROPIC_MODEL: str = "claude-haiku-4-5"
-    #: Model for MCP-style diagram agent (distinct from CrewAI defaults).
-    DIAGRAM_ANTHROPIC_MODEL: str = "claude-haiku-4-5"
+    #: Model for the studio visual agent (Build + Sharpen flows). Sonnet 4.6
+    #: gives reliable multi-turn MCP tool use + vision on screenshots.
+    VISUAL_AGENT_ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+    #: Max CrewAI agent iterations per visual run. The agent does
+    #: batch_create + screenshot + fix loops; this caps total turns so a
+    #: stuck loop can't burn an unbounded number of API calls.
+    VISUAL_AGENT_MAX_ITER: int = Field(default=36, ge=4, le=80)
 
     #: Base URL where ``mcp_excalidraw`` Express canvas listens (MCP mirrors these routes).
     EXCALIDRAW_HTTP_URL: str = "http://127.0.0.1:3000"
@@ -64,8 +69,10 @@ class Settings(BaseSettings):
     EXCALIDRAW_CANVAS_AUTOSTART: bool = True
     #: Seconds to wait for ``GET /health`` after spawning Node (first ``npm run build`` on drvfs/WSL can be slow).
     EXCALIDRAW_CANVAS_HEALTH_WAIT_SECONDS: int = Field(default=240, ge=30, le=1200)
-    #: Max Claude↔canvas tool rounds per ``POST /generate-diagram``.
-    DIAGRAM_AGENT_MAX_TURNS: int = Field(default=36, ge=4, le=80)
+    #: Path (relative to vendor root) to the MCP stdio entry. Upstream
+    #: ``yctimlin/mcp_excalidraw`` ships this at ``dist/index.js`` after
+    #: ``npm run build``. Override only if upstream renames the file.
+    MCP_EXCALIDRAW_ENTRY: str = "dist/index.js"
 
     #: Claude structured outputs compile JSON Schema to a grammar; large schemas
     #: (e.g. full ``SceneSkeleton``) routinely hit 400 "Schema is too complex"

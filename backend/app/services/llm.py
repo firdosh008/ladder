@@ -35,10 +35,15 @@ def _require_key() -> str:
     return settings.ANTHROPIC_API_KEY
 
 
-def anthropic_llm(temperature: float = 0.5) -> LLM:
-    """CrewAI LLM bound to Anthropic + server-default key."""
+def anthropic_llm(temperature: float = 0.5, *, model: str | None = None) -> LLM:
+    """CrewAI LLM bound to Anthropic + server-default key.
+
+    ``model`` overrides the default ``settings.ANTHROPIC_MODEL`` when an
+    individual agent needs a specific tier (e.g. the visual agent runs
+    on Sonnet 4.6 even when the global default is Haiku).
+    """
     return LLM(
-        model=f"anthropic/{settings.ANTHROPIC_MODEL}",
+        model=f"anthropic/{model or settings.ANTHROPIC_MODEL}",
         api_key=_require_key(),
         temperature=temperature,
     )

@@ -1,10 +1,21 @@
 # Ladder Content OS — Handoff / Context Doc
 
-Last updated: 2026-04-26. Purpose: bring a fresh session (or a human contributor) up to speed without re-reading the whole chat history.
+Last updated: 2026-05-02. Purpose: bring a fresh session (or a human contributor) up to speed without re-reading the whole chat history.
 
-**Recent (research vertical, 2026-04-26):** Research crew now fans out across **5 platforms in parallel** — Exa (web), Reddit, YouTube, X, Instagram. Single async HTTP wrapper at `app/providers/scrapecreators.py` covers the four social platforms via the **ScrapeCreators API** (`SCRAPECREATORS_API_KEY`); provider returns normalized dataclasses (`RedditPost`, `YouTubeVideo`, `XTweet`, `InstagramReel`) so swapping to official APIs later only changes that file. Each tool emits **platform-tagged** `SourceRef`s through the existing `sources_emitter_var` side-channel; the `ResearchRunPanel` source rail renders a colored pill (web/reddit/yt/x/ig) on every card. ScrapeCreators is intended as the temporary unified backend until per-platform official APIs come online (Reddit OAuth, YouTube Data API v3, etc.).
+**Recent (visual cut-over, 2026-05-02 — PR1 + PR2 LANDED):** The Excalidraw vertical is now driven by the live `mcp_excalidraw` MCP server + CrewAI Skills. The old `services/diagram_service.py` (Anthropic agent loop with 9 hand-rolled `diagram_*` REST tools) and its `POST /generate-diagram` route are **gone**. The "Generate Visual" button now opens a WebSocket to `/ws/agents/visual` and streams the live agent's tool calls + text deltas while it draws on the MCP canvas. The right-rail Sharpen chat is still a UI stub — that's PR3.
 
-**Earlier (scene vertical, 2026-04-25):** Excalidraw **build_scene** is wired end-to-end as a hybrid crew: **planner is CrewAI** (`layout_planner` → `SceneLayout`), **designer is a direct Anthropic structured-outputs call** (`element_designer` → `SceneSkeleton`). The designer used to be a CrewAI task with `output_pydantic`, but prompted JSON dropped the top-level `elements` array on a large fraction of runs. Grammar-constrained sampling (`output_format: json_schema`) makes that failure mode mathematically impossible. `SceneSkeleton` persisted as `artifacts.type = excalidraw`, embed + “open in excalidraw.com” on the studio page. **No critic / fixer** in the current pipeline.
+- One CrewAI agent (`StudioVisualAgent`, Sonnet 4.6) reused by **two flows** — `run_visual_build` (one-shot, PR2 LANDED) and `SharpenChatFlow` (long-lived chat with three modes: Refine text · Screenshot to edit · Regenerate scene; persists to `chat_messages`; PR3 PENDING).
+- Tools: full 26-tool MCP surface from `yctimlin/mcp_excalidraw` via `crewai_tools.MCPServerAdapter` (stdio), plus 4 backend tools — `ScriptOutlineTool`, `BrandPaletteTool`, `KnowledgeRetrievalTool`, `PersistArtifactTool`.
+- Skills (verbatim prompt injection): `excalidraw-canvas` (operational MCP tips), `excalidraw-diagram` (methodology — moved from `backend/excalidraw-diagram-skill-main/`, Playwright renderer dropped, render section repointed at MCP `get_canvas_screenshot`), `ladder-voice` (non-sycophantic / opinionated / voice-preserving). All three load at INSTRUCTIONS level via CrewAI's filesystem skill loader. User-uploaded `skill_files` inject per-turn in PR3.
+
+Cut-over PRs:
+- **PR1 (landed 2026-05-02):** scaffolding — `crewai-tools[mcp]` dep, skills folder moved + authored, `app/agents/visual/{__init__,agent,tools,mcp,skills,context}.py`, settings + `.env.example` extended.
+- **PR2 (landed 2026-05-02):** `run_visual_build` async generator + `WS /ws/agents/visual` route (`backend/app/routes/visual.py`) + frontend `runVisualBuild` WS client + `SceneRunPanel` repointed. Deleted: `services/diagram_service.py` (610 lines), `services/excalidraw_http.py` (175 lines), `routes/diagram.py` (179 lines), `tests/test_diagram_route.py`, `app/agents/scene/` (shim), `DIAGRAM_ANTHROPIC_MODEL` + `DIAGRAM_AGENT_MAX_TURNS` settings. Backend: **67 passing** (legacy diagram-route test was the only loss). Frontend `npx tsc --noEmit` clean. Frontend dropped: `generateDiagramFromScript`, `GenerateDiagramResponse`, `buildDiagramScriptInput`. New event type `scene_ready` carries the final scene JSON. Live activity tail (most recent tool call name / text-delta tail) surfaces under the strip while the agent draws.
+- **PR3 (next):** `SharpenChatFlow` + WS `/ws/agents/sharpen`. Real `chat_messages` persistence. `SkillDropdown` reads `skill_files` rows. Frontend `ChatPanel.send()` rewired to WS pump.
+
+Open implementation calls (all confirmed 2026-05-02): per-WS adapter spawn (option a), single shared canvas for local dev, browser → `ws://localhost:3000` direct (proxy lands when hosted), hybrid skills storage (system in repo, user in Storage), kill the legacy "Generate Visual" path entirely (chat is the only refinement entry), Sonnet 4.6.
+
+**Earlier (research vertical, 2026-04-26):** Research crew fans out across **5 platforms in parallel** — Exa (web), Reddit, YouTube, X, Instagram. Single async HTTP wrapper at `app/providers/scrapecreators.py` covers the four social platforms via the **ScrapeCreators API** (`SCRAPECREATORS_API_KEY`); provider returns normalized dataclasses (`RedditPost`, `YouTubeVideo`, `XTweet`, `InstagramReel`) so swapping to official APIs later only changes that file. Each tool emits **platform-tagged** `SourceRef`s through the existing `sources_emitter_var` side-channel; the `ResearchRunPanel` source rail renders a colored pill (web/reddit/yt/x/ig) on every card. ScrapeCreators is the temporary unified backend until per-platform official APIs come online (Reddit OAuth, YouTube Data API v3, etc.).
 
 ---
 
@@ -64,7 +75,7 @@ See `backend-dys.md` for the full data-layer spec (source of truth — read it) 
 9. **Every LLM is constructed through `services/llm.py`**, never inline. That's the single place where model ID, provider, and API key get bound. When BYOK lands in v2, only this factory changes. Two factories live there:
    - `anthropic_llm()` — CrewAI `LLM` (litellm under the hood). Use inside Crews.
    - `anthropic_client()` — raw `AsyncAnthropic` SDK client. Use when you need features CrewAI's wrapper can't express — most importantly **structured outputs** (grammar-constrained JSON via `output_format: json_schema`).
-10. **Structured artifacts use Anthropic structured outputs, not CrewAI `output_pydantic`.** CrewAI's `output_pydantic` injects the schema into the system prompt and asks nicely. That's fine for small/flat schemas (`Script`, `Outline`, `ResearchIdeas`). For **large nested schemas** like `SceneSkeleton` it fails — the model regularly drops required arrays under in-context bias from prior tasks. Use `client.messages.create(extra_body={"output_format": {"type": "json_schema", "schema": <pydantic>.model_json_schema()}}, extra_headers={"anthropic-beta": "structured-outputs-2025-11-13"})` for those. Strip Anthropic-unsupported keywords (`minimum`/`maximum`/`minLength`/`maxLength`/`pattern`/`format`/`default`) from the schema before sending; Pydantic still validates server-side.
+10. **Structured artifacts use Anthropic structured outputs, not CrewAI `output_pydantic`.** CrewAI's `output_pydantic` injects the schema into the system prompt and asks nicely. That's fine for small/flat schemas (`Script`, `Outline`, `ResearchIdeas`). For **large nested schemas** the model regularly drops required arrays under in-context bias. Use `client.messages.create(extra_body={"output_format": {"type": "json_schema", "schema": <pydantic>.model_json_schema()}}, extra_headers={"anthropic-beta": "structured-outputs-2025-11-13"})` for those. Strip Anthropic-unsupported keywords (`minimum`/`maximum`/`minLength`/`maxLength`/`pattern`/`format`/`default`) from the schema before sending; Pydantic still validates server-side. **Note (post 2026-05-02):** the new visual agent doesn't produce a structured artifact — it drives a live MCP canvas via tool calls — so this rule does not apply there. The canvas state is exported via `export_scene` (an MCP tool) and persisted as a versioned `excalidraw` artifact by `PersistArtifactTool`.
 11. **Per-platform providers wrap a single backend.** `app/providers/scrapecreators.py` is the only file that talks to ScrapeCreators. Each platform-shaped async function (`reddit_subreddit`, `youtube_search`, `x_user_tweets`, `instagram_reels_search`) returns a normalized frozen dataclass. When the official APIs land (Reddit OAuth via `asyncpraw`, YouTube Data API v3, Twikit for X, …), the swap is **module-internal**: signatures and dataclasses don't change, just the HTTP plumbing under each function. Tools, `SourceRef`, frontend types, and the WS event protocol must stay stable across the transition.
 
 ---
@@ -93,13 +104,19 @@ ladder-os/
 │   │   │   ├── research/                 # research crew (3 agents → ResearchIdeas)
 │   │   │   ├── studio/                   # studio crew (script_writer → outline_planner)
 │   │   │   ├── content_extract/          # content_extract crew (analyzer → extractor)
-│   │   │   └── scene/                    # scene crew (layout_planner → element_designer) → SceneSkeleton
+│   │   │   └── visual/                   # PR2 LANDED: StudioVisualAgent + run_visual_build (BuildVisualFlow) + 4 backend tools + MCP adapter + skill loader. SharpenChatFlow ships in PR3.
 │   │   └── routes/
 │   │       ├── health.py                 # GET /health
 │   │       ├── auth.py                   # GET /auth/me, POST /auth/onboard
 │   │       ├── ideas.py                  # GET/POST/PATCH/DELETE /ideas
 │   │       ├── studio_sessions.py        # GET /studio-sessions/by-idea/{id}, POST …/scene/share
-│   │       └── agents.py                 # WebSocket /ws/agents/{research,studio,extract,scene}
+│   │       ├── agents.py                 # WebSocket /ws/agents/{research,studio,extract}
+│   │       └── visual.py                 # WebSocket /ws/agents/visual (PR2 LANDED)
+│   ├── skills/                           # NEW (2026-05-02): system skills loaded by visual agent. Verbatim prompt injection.
+│   │   ├── excalidraw-canvas/SKILL.md         # operational MCP tool tips
+│   │   ├── excalidraw-diagram/                # methodology + references/ (color-palette, element-templates, json-schema). Moved from backend/excalidraw-diagram-skill-main/.
+│   │   └── ladder-voice/SKILL.md         # non-sycophantic / voice-preserving rules
+│   ├── vendor/mcp_excalidraw/            # cloned yctimlin/mcp_excalidraw checkout (gitignored). dist/server.js = canvas, dist/index.js = MCP stdio. Build with `npm ci && npm run build` once.
 │   ├── tests/                            # pytest-asyncio + httpx + starlette TestClient
 │   ├── pyproject.toml
 │   ├── .python-version                   # 3.12 (pyo3/pydantic-core 3.14 pin)
@@ -239,59 +256,62 @@ PRD §2 Option 3 is now fully live. Paste long-form content on `/make`, get an i
 - `frontend/src/components/extract/ContentExtractPanel.tsx` — inline panel on `/make` Option 3. 2-agent timeline + extracted-video preview card + source rail. Auto-navigates to `/studio/:idea_id` ~700ms after `persisted` so the user sees the success state, then lands in studio with the script already hydrated from artifacts (no re-run).
 - `frontend/src/pages/Make.tsx` — Option 3 is now live: input enabled, button gated on ≥80 chars, character counter when below threshold. Research and content-extract panels are mutually exclusive (starting one clears the other's setup state).
 
-### AI — Scene (Excalidraw) vertical (shipped 2026-04-25, hybrid rewrite 2026-04-25 late)
-End-to-end **build_scene**: outline + script in → Excalidraw **skeleton** out → persisted + embedded in Studio.
+### AI — Visual + Sharpen vertical (PR2 landed 2026-05-02; PR3 pending)
 
-- **Data shape:** `SceneSkeleton` in `app/models/db.py` mirrors `@excalidraw/excalidraw`’s `ExcalidrawElementSkeleton` (camelCase fields) so the frontend can call `convertToExcalidrawElements()` with no translation. Persisted as `artifacts.type = excalidraw` (versioned JSON in `content_json`).
-- **Hybrid pipeline** (`backend/app/agents/scene/`):
-  1. **Planner — CrewAI** (`agents.py` + `tasks.py`). Single `layout_planner` agent, single sequential task with `output_pydantic=SceneLayout`. Streams `agent_start` / `text_delta` / `task_complete` via `Crew(stream=True)`.
-  2. **Designer — direct Anthropic** (`designer.py`). `client.messages.create(...)` with `output_format: json_schema(SceneSkeleton)` and the `structured-outputs-2025-11-13` beta header. Grammar-constrained sampling guarantees `elements` exists. One-shot, non-streaming (the artifact is structural, not narrative).
-- The crew has **no critic**. Don't reintroduce one without a strong reason — the original critic + `output_pydantic` design was the source of the validation noise that motivated this rewrite.
-- **WebSocket** `GET /ws/agents/scene?token=...&session_id=...` — loads session + latest script + outline + idea + profile, runs `run_scene_build`, streams the usual `agent_start` / `text_delta` / `task_complete`, then `scene_ready` + `usage`, then persists and emits `persisted` with `scene_artifact_id` and `complete`. The frontend `SceneRunPanel` agent keys (`layout_planner`, `element_designer`) are unchanged — only the implementation behind the designer key shifted.
-- **Open in Excalidraw:** frontend inflates the skeleton, then `POST /studio-sessions/{session_id}/scene/share` uploads the full Excalidraw file JSON to Storage bucket `excalidraw_scenes` (public read; RLS path-scoped write). Public URL is opened as `excalidraw.com/#url=<encodeURIComponent(url)>`. Migration: `20260425000001_excalidraw_bucket.sql`.
-- **Hydration:** `GET /studio-sessions/by-idea/{idea_id}` returns `scene` = latest `excalidraw` artifact (or null). No separate critique row.
-- **Frontend:** `SceneRunPanel` + lazy `SceneView` (`@excalidraw/excalidraw`), download + share affordances. `useStudioStream` holds `sessionId` + `scene` for the scene column.
+The Excalidraw vertical is now driven by the live `mcp_excalidraw` MCP server + CrewAI Skills. The legacy `DiagramService` Anthropic-loop agent and the prior `SceneSkeleton` hybrid crew are both **gone**. See top-of-file "Recent (visual cut-over)" for the headline summary.
 
-#### Postmortem — why the second agent had to leave CrewAI
+**Backend (PR1 + PR2 landed):**
+- `backend/pyproject.toml` adds `crewai-tools[mcp]` (lockfile: `crewai-tools==1.14.2`, `mcpadapt==0.1.20`).
+- `backend/skills/` populated: `excalidraw-canvas/SKILL.md` (~75 lines operational MCP tool tips — tool ordering, batching, snapshot discipline, screenshot-fix loop), `excalidraw-diagram/SKILL.md` (the 552-line methodology, moved here from `backend/excalidraw-diagram-skill-main/`; render section repointed at MCP `get_canvas_screenshot` / `export_to_image`; Playwright renderer + helper files dropped), `ladder-voice/SKILL.md` (~50 lines non-sycophantic working rules). `excalidraw-diagram/references/` keeps `color-palette.md` + `element-templates.md` + `json-schema.md`. CrewAI 1.14.2 supports `Agent(skills=[Path,...])`; the discoverer walks **child folders** of each path so we hand it the parent `backend/skills/` once.
+- `backend/app/agents/visual/` package:
+  - `agent.py` — `build_visual_agent(context, mcp_tools, *, extra_skill_paths=None, temperature=0.45)` factory. One CrewAI `Agent` reused by both flows. Backstory anchors session facts; methodology lives in the skills. Bound to Sonnet 4.6 via `VISUAL_AGENT_ANTHROPIC_MODEL` + `services/llm.py`'s extended `anthropic_llm(*, model=...)`.
+  - `tools.py` — four backend `BaseTool`s (`ScriptOutlineTool`, `BrandPaletteTool`, `KnowledgeRetrievalTool`, `PersistArtifactTool`). State (`jwt`, `user_id`, `session_id`, `brand`) declared as Pydantic fields. `KnowledgeRetrievalTool` gracefully returns `{items: []}` when `OPENAI_API_KEY` is unset (embedding pipeline is §6 P1 #9 — separate ship).
+  - `mcp.py` — `mcp_excalidraw_tools()` cm wraps `mcpadapt.MCPAdapt(StdioServerParameters(command="node", args=[<vendor>/dist/index.js], env={EXPRESS_SERVER_URL: settings.EXCALIDRAW_HTTP_URL, **os.environ}), _SanitisingCrewAIAdapter())`. Sanitiser flattens upstream's multi-type JSON schemas (`type: [...]`) to a single type so CrewAI's strict converter accepts them — see "Multi-type JSON Schema mismatch" postmortem below. Per-WS spawn (option a in the cut-over decisions), tears down on exit.
+  - `skills.py` — `system_skill_paths()` returns `[Path(backend/skills)]` so CrewAI's discoverer enumerates all three system skills in one entry. Empty-folder defensive.
+  - `context.py` — `SessionContext` Pydantic model + `load_session_context(user_id, jwt, session_id)` async loader. Rehydrates idea + profile + brand + latest script + latest outline from Supabase under RLS via `user_client(jwt)`.
+  - `build.py` — `run_visual_build(context, *, steer_note=None) -> AsyncIterator[event]`. Boots the canvas (`excalidraw_canvas.ensure_canvas_running` is also called from FastAPI lifespan, but the build re-checks as a safety net), opens the MCP cm, kicks off `Crew(stream=True)` with one Task, streams chunks → wire events. Final stretch pulls `export_scene` (or `get_scene` / `describe_scene`) from MCP, persists a versioned `excalidraw` artifact via `user_client` (RLS enforced — never service-role here), emits `scene_ready` + `persisted` + `usage` + `complete`. Wraps in `log_usage("visual_build_crew", model=VISUAL_AGENT_ANTHROPIC_MODEL)` per §3 #8.
+  - `__init__.py` — re-exports `run_visual_build`.
+- `backend/app/routes/visual.py` — `WS /ws/agents/visual?token=…&session_id=…&steer=…`. Auth via `verify_ws_token`. Loads `SessionContext`, streams `run_visual_build` events. Same close-code convention as research/studio (4401 / 4400 / 1011). Registered in `app/main.py`.
+- Settings (`backend/app/config.py`): `VISUAL_AGENT_ANTHROPIC_MODEL = "claude-sonnet-4-6"`, `VISUAL_AGENT_MAX_ITER = 36`, `MCP_EXCALIDRAW_ENTRY = "dist/index.js"`. `DIAGRAM_*` settings deleted.
 
-What we kept hitting (every other run, 2026-04-25):
+**Frontend (PR2):**
+- `frontend/src/lib/agents.ts` — added `runVisualBuild(sessionId, opts={steer?}, onEvent)` returning `{scene, scene_artifact_id, cost_usd}`. Removed `generateDiagramFromScript`, `GenerateDiagramResponse`, `buildDiagramScriptInput`. `AgentEvent` gained `scene_ready` carrying the final `Scene`.
+- `frontend/src/components/scene/SceneRunPanel.tsx` — `startRun()` opens the WS via `runVisualBuild`. Surfaces an `activity` tail under the strip (most recent tool call name / text-delta tail) so the user sees something while the agent draws. Dropped the `diagramScript` prop entirely — the agent reads script + outline through its own `get_script_and_outline` tool.
+- `frontend/src/pages/Studio.tsx` — dropped `buildDiagramScriptInput` import + the derived `diagramScript` memo; `<SceneRunPanel>` no longer receives `diagramScript`.
 
-```
-ERROR:root:Anthropic API call failed: 1 validation error for SceneSkeleton
-elements
-  Field required [type=missing, input_value={'canvas_width': 2000, 'c...able (pricing models).'}]
-```
+**Verified (2026-05-02):**
+- Backend: `uv run pytest -q` → **67 passed, 2 xfailed, 3 xpassed**. Drop from 68 is the deleted `tests/test_diagram_route.py` only.
+- Frontend: `npx tsc --noEmit` clean.
+- Smoke: routes registered as `/ws/agents/{research,studio,extract,visual}`. Diagram route is gone.
 
-…and intermittently the planner's `frames[].description` blew past its 400-char cap.
+**Local-dev runtime requirement (unchanged from prior commit):**
+`backend/vendor/mcp_excalidraw/` must be a clone of `yctimlin/mcp_excalidraw` with `npm ci && npm run build` run once. That produces:
+- `dist/server.js` — Express + Vite canvas (port 3000); FastAPI lifespan auto-spawns it.
+- `dist/index.js` — MCP stdio adapter; the visual flow spawns this per-WS via `MCPServerAdapter`. The MCP server reads `EXPRESS_SERVER_URL` to find the canvas.
 
-Two real problems, one architectural:
+**Still ahead (PR3):**
 
-1. **In-context contamination.** `Task(context=[plan_task])` puts the planner's `SceneLayout` (with `frames[].description`) directly into the designer's prompt. The model then mirrors that shape and emits `{canvas_width, ..., frames-style-descriptions}` instead of `{..., elements: [...]}`. Prompted JSON has no defense against this — the schema is just text in the system prompt fighting more recent text in the user prompt.
-2. **CrewAI retry doesn't help.** `output_pydantic` retries re-prompt with the same conceptual mistake; the model converges on the wrong shape, not the right one.
+- **`SharpenChatFlow`** — long-lived WS at `/ws/agents/sharpen?token=…&session_id=…`. Three modes from the existing `ChatPanel.tsx`:
+  - **Refine text** — agent told "no canvas tools allowed this turn"; edits script/outline in-place. Emits `script_delta` / `outline_delta` for the left pane to pick up.
+  - **Screenshot to edit** — user pastes PNG → agent uses MCP `query_elements` + Sonnet vision → JSON diff → `update_element`/`delete_element`/`batch_create_elements` → confirms.
+  - **Regenerate scene** — proxies into `BuildVisualFlow` with the user's steer note pre-pended; outline preserved per PRD §11.5.
+  - Per-turn write to `chat_messages`. PRD §11.7 budget: last 15 turns verbatim + rolling summary, total ~18K tokens/turn. User-uploaded `skill_files` from Storage inject as one extra skill on the turn they're picked.
 
-The correct fix was structural, not prompt-engineering:
+**Open implementation calls (locked 2026-05-02):**
+1. **Per-WS-connection MCP adapter spawn** (option a): each `BuildVisualFlow` / `SharpenChatFlow` opens `mcp_excalidraw_tools()` for its lifetime. Slow first boot; clean lifecycle. Singleton-adapter alternative rejected — would mix tool calls across users.
+2. **Single shared canvas** for local dev (one Node `dist/server.js` on port 3000, managed by `services/excalidraw_canvas.py`). Hosted multi-tenant canvas isolation is a separate item — needs upstream rooms or per-session subprocess.
+3. **Browser → `ws://localhost:3000` direct** for live canvas updates (the canvas server already broadcasts WebSocket frames on every element change). Hosted version proxies through FastAPI.
+4. **Hybrid skills storage** — system skills in repo (`backend/skills/`), user-uploaded skills in Supabase Storage (referenced via `skill_files` table). System skills load every turn; user skill loads on selection.
+5. **Single entry point for visual generation = chat.** No "quick draw without chat" path. Chat agent's `regenerate scene` mode covers it. The legacy `SceneRunPanel`'s "Generate Visual" button stays in PR2 but calls the new endpoint, not the old one.
+6. **Sonnet 4.6** for the visual agent — diagram-driving with vision + multi-turn MCP needs the headroom.
 
-- **Planner stayed as CrewAI** — its schema (`SceneLayout`) is small and flat; prompted JSON is fine and we keep token-by-token streaming for the UI.
-- **Designer became a direct Anthropic call** with `output_format: {type: "json_schema", schema: SceneSkeleton.model_json_schema()}`. The schema is compiled into a grammar that constrains token sampling; the model literally cannot emit JSON missing `elements`. This is Anthropic's "Structured Outputs" feature (beta header `structured-outputs-2025-11-13`, GA on Sonnet 4.6).
-- **Schema cleaning.** Anthropic's grammar compiler is fussy about JSON Schema. `designer._clean_schema()` walks the Pydantic-emitted schema and:
-  - **Strips unsupported keywords** (`minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `format`, `default`, `not`, `if`/`then`/`else`).
-  - **Forces `additionalProperties: false` on every `object` node.** Without this Anthropic 400s with `"For 'object' type, 'additionalProperties' must be explicitly set to false"`. Pydantic only emits it when the model has `extra="forbid"` — walking the schema is more defensive than touching every model class.
-  - `SceneSkeleton.model_validate()` still runs server-side as defence in depth.
-- **Resilience.** Structured outputs is beta and the grammar compiler can return transient `503 overloaded_error` / `"Grammar compilation is temporarily unavailable"`. The designer handles this in three layers:
-  1. **Retry** the structured-outputs call up to 3 times with 1.5s + 4s backoff on `overloaded_error` / 429 / 503 / 529.
-  2. **Fall back to prompted JSON** if structured outputs stays unavailable. Same system prompt + the JSON Schema appended; we extract the first `{...}` blob (handles fenced output) and validate with Pydantic.
-  3. **Self-correction pass** on the prompted-JSON path — if validation fails, re-prompt once with the Pydantic error injected and a hard reminder that `elements` is required.
+**Don't repeat:** the prior cut-over (commit `33d206d`, "fix the canvas implementation using mcp") replaced the structured-outputs designer with a hand-rolled Anthropic agent loop that exposed only 9 of the 26 MCP tools and bypassed the MCP protocol entirely (talked REST directly). It also never injected the methodology skill (552 lines sitting on the floor at `backend/excalidraw-diagram-skill-main/SKILL.md`, never reaching the system prompt). The visual cut-over fixes both.
 
-  Every other (non-overload) `APIError` raises immediately.
+**Multi-type JSON Schema mismatch (PR2 hot-fix, 2026-05-02):** the upstream MCP server's tool definitions use `type: ["string", "number"]` for `fontFamily` (and may add similar fields later). `mcpadapt`'s schema converter handles this fine, but `crewai_tools.MCPServerAdapter` then re-runs the schema through CrewAI's strict `crewai.utilities.pydantic_schema_utils.create_model_from_schema`, which raises `Unsupported JSON schema type: ['string', 'number']`. We bypass `MCPServerAdapter` entirely and use `mcpadapt.MCPAdapt` directly with a tiny `_SanitisingCrewAIAdapter` subclass that flattens multi-type properties to a single non-null type before delegating. The upstream server's `normalizeFontFamily()` accepts both names and numeric IDs at runtime, so narrowing to `string` doesn't lose behaviour. Don't fix this by patching `vendor/mcp_excalidraw/src/index.ts` — the sanitiser survives upstream re-clones / re-builds and absorbs future multi-type fields automatically.
 
-- **Visible/invisible-constraint trap (don't repeat this).** Pydantic post-validation MUST NOT enforce constraints we strip from the schema we send to Anthropic. We hit this with `string_too_long` on a label cap: the model produced a perfectly grammar-valid output, our schema cleaner stripped `maxLength` so the model had no way to know the cap existed, and Pydantic then rejected. The fix has two halves:
-  1. **Caps on `SceneElementLabel.text` / `SceneSkeletonElement.text` / `SceneSkeleton.notes` are now generous** — sanity ceilings (2000 / 4000 / 4000), not UX guidelines. Aesthetic guidance lives in the system prompt, not the validator.
-  2. **`_validate_with_salvage()`** in `designer.py` truncates over-cap strings rather than raising, but only when *every* validation error is a length cap — real shape mismatches still raise loudly. A truncated scene is better than a 500.
+**Anthropic 20-strict-tool cap (PR2 hot-fix, 2026-05-02):** Anthropic's API caps `strict` tools at 20 per request, and CrewAI's Anthropic provider sends every tool we expose as strict. The vendored MCP server ships **26 tools** plus our 4 backend tools = 30, which 400s with `Too many strict tools (30)`. Fix is a deliberate **build whitelist** in `app/agents/visual/mcp.py` (`_BUILD_TOOL_NAMES`, 12 tools — CRUD + inspect + viewport + snapshots + final read). Total exposed = 12 MCP + 4 backend = **16**, comfortably under the cap. Dropped: `create_element` (use `batch_create_elements` instead — even single-element creates batch), `group_elements`/`ungroup_elements`/`lock_elements`/`unlock_elements` (human-editor concerns, not agent-relevant), `distribute_elements`/`duplicate_elements` (`align_elements` + position math suffice), `import_scene`/`create_from_mermaid` (user-controlled inputs, not agent path), `read_diagram_guide` (duplicate of the verbatim-injected `excalidraw-diagram` skill), `get_resource`/`get_element` (`query_elements` + `describe_scene` cover both), `export_to_image`/`export_to_excalidraw_url` (we persist via `export_scene` + our own `POST .../scene/share` route). PR3's `SharpenChatFlow` may want a slightly different set — `mcp_excalidraw_tools(tool_names=...)` accepts an override. Live verified post-trim: 16 tools register; the prompts in `agent.py` + `excalidraw-canvas/SKILL.md` + `excalidraw-diagram/SKILL.md` were updated to stop directing the agent at dropped tools.
 
-  General rule: anything `_clean_schema()` strips before sending should be a soft constraint on our side too (loose, salvageable) — never a hard reject.
-- **`SceneFrame.description` cap raised** 400 → 1000 in `app/models/db.py`. The planner reasonably writes longer-form intent notes; the cap was producing false validation failures upstream of the real bug.
-
-**Standing rule going forward** (also encoded in §3 #10): any agent step that produces a large nested artifact (Script + Scene + future Sharpen edits + edit_scene diffs) should use `anthropic_client()` + structured outputs, not CrewAI `output_pydantic`. Reserve `output_pydantic` for small/flat schemas where prompted JSON is reliable.
+**Reading the new flow when adding features (e.g. PR3 sharpen):** PR3's `SharpenChatFlow` should reuse the same building blocks PR2 wired — `mcp_excalidraw_tools()` cm, `build_visual_agent(context, mcp_tools, extra_skill_paths=...)`, and the same wire-event protocol. The chat loop differs only in shape: a long-lived WS that accepts user turns interleaved with tool calls (CrewAI Flow with `@listen("user_message")`), and per-turn writes to `chat_messages`. The agent itself is the same.
 
 ### Shared agent plumbing
 - `frontend/src/lib/agents.ts` — `runStudioStream`, `runExtractStream`, `runSceneStream`, `fetchStudioByIdea`, `publishScene`, plus event types. Common WS pump: `consumeStream(url, onEvent, finalise, initialPayload?)`.
@@ -308,14 +328,13 @@ The correct fix was structural, not prompt-engineering:
 ## 6. What's NOT built yet — priority-ordered backlog
 
 ### P0 — close the studio loop
-1. **Sharpen crew** — Studio chat sidebar. Small streaming crew that rewrites script sections on request; persist to `chat_messages` (`ChatPanel` still placeholder in Studio).
-2. **gen_outline polish** — Inline editing for the scene outline (rename / reorder / add / delete frames) per PRD.
-3. **gen_thumbnail** — DALL·E 3 (or product-chosen) variants, refinement loops, reference URL flow.
-4. **Approve-and-build gating** — `outline_approved` + button semantics so regens are intentional.
-5. **Studio header pills** — Output type, brand, duration: interactive pills + regen affordances, three-zone duration slider.
-6. **Error recovery** — e.g. retry from step, “taking longer” copy (no silent fallbacks; align with product rules).
-7. **edit_scene (screenshot-to-edit)** — Vision parse → label→element map → JSON diff + artifact update.
-8. **Optional later:** reintroduce a **critic** or post-validator only if we need automated QA on skeletons (e.g. arrow-binding sanity, label uniqueness). Don't put it back in CrewAI's `output_pydantic` path — run it as a second Anthropic structured-outputs call so a critic failure can't silently corrupt the designer's grammar-valid output.
+1. **Visual cut-over PR3 — `SharpenChatFlow` + WS.** Replaces `ChatPanel.send()`'s stub. WS at `/ws/agents/sharpen?token=…&session_id=…`. Three modes: Refine text · Screenshot to edit · Regenerate scene. Real `chat_messages` persistence (table already exists). `SkillDropdown` reads `skill_files` rows; selected skill loads from Storage and injects per-turn (capped per PRD §11.7). Reuses the same `build_visual_agent` factory + `mcp_excalidraw_tools` cm PR2 shipped — only the loop shape changes.
+3. **gen_outline polish** — Inline editing for the scene outline (rename / reorder / add / delete frames) per PRD.
+4. **gen_thumbnail** — DALL·E 3 (or product-chosen) variants, refinement loops, reference URL flow.
+5. **Approve-and-build gating** — `outline_approved` + button semantics so regens are intentional.
+6. **Studio header pills** — Output type, brand, duration: interactive pills + regen affordances, three-zone duration slider.
+7. **Error recovery** — e.g. retry from step, "taking longer" copy (no silent fallbacks; align with product rules).
+8. **Optional later:** reintroduce a **critic** or post-validator only if the visual agent's output needs automated QA (e.g. arrow-binding sanity, label uniqueness across the canvas). Don't put it back as a CrewAI `output_pydantic` task. Run it as a second Anthropic call (vision + structured outputs) over the persisted `excalidraw` artifact, returning a list of fixups the visual agent then applies via MCP tools.
 
 ### P1 — knowledge + retrieval
 9. **Embedding pipeline** — OpenAI `text-embedding-3-small` (1536 dims) writes to `knowledge_nodes`. Triggered on new newsletter_items, ideas, artifacts. OpenAI SDK is already installed.
@@ -396,15 +415,11 @@ Project ref: `lqjlfuhucwgsxerulqlf`.
 
 ## 10. What to do next session (suggested)
 
-Pick one vertical from **§6 P0** — most product leverage next:
+The visual cut-over (§5 "Visual + Sharpen vertical") is the active workstream. PR1 + PR2 have landed (Generate Visual now drives the live MCP canvas via `/ws/agents/visual`). **PR3 is next** — wire the right-rail Sharpen chat: WS `/ws/agents/sharpen`, three modes (Refine text / Screenshot to edit / Regenerate scene), real `chat_messages` persistence, real `skill_files` dropdown.
 
-- **Sharpen (chat) crew** + `chat_messages` persistence — unblocks in-flow script/outline edits from Studio.
-- **gen_thumbnail** — closes the Loom + social slice after scene + script are stable.
-- **edit_scene** — vision on screenshot → diff on `SceneSkeleton` (depends on stable labels/ids in designer output).
+Parallel tracks (§6 P1 #9–11) — embedding pipeline + retrieval — would unlock `KnowledgeRetrievalTool` (today it gracefully degrades to `{items: []}`).
 
-**Embedding + retrieval (§6 P1 #9–11)** is the parallel track: first real consumer of `match_knowledge_nodes` for personalized script/scene context.
-
-When touching agents: follow the existing **native `Crew(stream=True)`** pattern in `research/`, `studio/`, `content_extract/`, and `scene/` — do not reintroduce threaded `step_callback` bridges. For any step that returns a **large nested artifact** (anything Skeleton-shaped), follow `scene/designer.py` and call Anthropic directly with `output_format: json_schema` — do not put it back inside CrewAI `output_pydantic` (see §5 scene postmortem and §3 #10).
+When touching agents: follow the existing **native `Crew(stream=True)`** pattern in `research/`, `studio/`, and `content_extract/` — do not reintroduce threaded `step_callback` bridges. The new visual agent doesn't produce a structured artifact (it drives MCP tool calls), so the §3 #10 standing rule about Anthropic structured outputs does not apply there; use it for any future Skeleton-shaped output instead.
 
 ---
 
@@ -427,6 +442,7 @@ Every `/ws/agents/*` endpoint emits events in this shape. The frontend drawer is
 - Research: `ideas_ready`
 - Studio: `script_ready`, `outline_ready`, then `persisted` with `script_artifact_id` + `outline_artifact_id`
 - Extract: `extract_ready`, then `persisted` with `idea_id` + `session_id` + artifact ids
-- Scene: `scene_ready` (payload: `Scene` / skeleton), then `usage`, then `persisted` with `scene_artifact_id` (no critique in current build)
+- **Visual (PR2 LANDED):** `agent_start` (`agent: "visual_director"`), `tool_call` for every MCP / backend tool the agent invokes (e.g. `batch_create_elements`, `get_canvas_screenshot`, `update_element`, `persist_scene_artifact`), `text_delta` for narrative reasoning, `task_complete` once the single build task finishes, `scene_ready` carrying the final `Scene` JSON, `persisted` with `scene_artifact_id`, `usage`, then `complete`. The frontend may additionally subscribe directly to `ws://localhost:3000` (the canvas server's own WebSocket) for real-time canvas frames — that channel is **separate** from `/ws/agents/visual` and is not auth'd in local dev.
+- **Sharpen (PR3, PENDING):** terminal events depend on mode — `script_delta` / `outline_delta` for "Refine text", `tool_call` + `scene_ready` for "Screenshot to edit" and "Regenerate scene", plus `chat_message_persisted` per turn for `chat_messages` writes.
 
 Shared: `agent_start`, `text_delta`, `task_complete`, `usage`, `complete`, `error`. Research emits `tool_call` + `sources` for **every** search tool — Exa (`platform=web`), Reddit (`platform=reddit`), YouTube (`platform=youtube`), X (`platform=x`), Instagram (`platform=instagram`) — all flowing through the same `app.agents.research.streaming.sources_emitter_var` ContextVar. Each emitted `SourceRef` carries its `platform` tag; older clients that don't read `platform` simply default-render as `web`.

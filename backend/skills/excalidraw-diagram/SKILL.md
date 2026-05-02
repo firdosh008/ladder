@@ -207,30 +207,30 @@ After generating the JSON, you MUST run the render-view-fix loop until the diagr
 
 ## Large / Comprehensive Diagram Strategy
 
-**For comprehensive or technical diagrams, you MUST build the JSON one section at a time.** Do NOT attempt to generate the entire file in a single pass. This is a hard constraint — Claude Code has a ~32,000 token output limit per response, and a comprehensive diagram easily exceeds that in one shot. Even if it didn't, generating everything at once leads to worse quality. Section-by-section is better in every way.
+**For comprehensive or technical diagrams, you MUST build the canvas one section at a time.** Do NOT attempt to dump every element through a single `batch_create_elements` call. This is a hard constraint — model output is bounded per turn and a comprehensive diagram easily exceeds that. Even if it didn't, generating everything at once leads to worse quality. Section-by-section is better in every way.
 
 ### The Section-by-Section Workflow
 
 **Phase 1: Build each section**
 
-1. **Create the base file** with the JSON wrapper (`type`, `version`, `appState`, `files`) and the first section of elements.
-2. **Add one section per edit.** Each section gets its own dedicated pass — take your time with it. Think carefully about the layout, spacing, and how this section connects to what's already there.
-3. **Use descriptive string IDs** (e.g., `"trigger_rect"`, `"arrow_fan_left"`) so cross-section references are readable.
+1. **First section sets up the page** — call `clear_canvas` if the canvas isn't empty (or `snapshot_scene` first if you want a rollback point), then `batch_create_elements` for the entry section.
+2. **Add one section per turn.** Each section gets its own dedicated `batch_create_elements` call — take your time with it. Think carefully about the layout, spacing, and how this section connects to what's already there. (There is no single-element create tool exposed; always batch.)
+3. **Use descriptive string IDs** (e.g., `"trigger_rect"`, `"arrow_fan_left"`) so cross-section references are readable. The MCP server preserves your IDs.
 4. **Namespace seeds by section** (e.g., section 1 uses 100xxx, section 2 uses 200xxx) to avoid collisions.
-5. **Update cross-section bindings** as you go. When a new section's element needs to bind to an element from a previous section (e.g., an arrow connecting sections), edit the earlier element's `boundElements` array at the same time.
+5. **Update cross-section bindings** as you go. When a new section's element needs to bind to an element from a previous section (e.g., an arrow connecting sections), `update_element` on the earlier element's `boundElements` array at the same time.
 
 **Phase 2: Review the whole**
 
-After all sections are in place, read through the complete JSON and check:
+After all sections are in place, call `describe_scene` (cheap, returns a textual inventory of every element with its bbox + text) and check:
 - Are cross-section arrows bound correctly on both ends?
 - Is the overall spacing balanced, or are some sections cramped while others have too much whitespace?
 - Do IDs and bindings all reference elements that actually exist?
 
-Fix any alignment or binding issues before rendering.
+Fix any alignment or binding issues before screenshotting — `describe_scene` is the fastest way to spot structural problems without spending a render.
 
 **Phase 3: Render & validate**
 
-Now run the render-view-fix loop from the Render & Validate section. This is where you'll catch visual issues that aren't obvious from JSON — overlaps, clipping, imbalanced composition.
+Now run the screenshot-fix loop from the Render & Validate section. This is where you'll catch visual issues that aren't obvious from element lists — overlaps, clipping, imbalanced composition.
 
 ### Section Boundaries
 
@@ -245,9 +245,9 @@ Each section should be independently understandable: its elements, internal arro
 
 ### What NOT to Do
 
-- **Don't generate the entire diagram in one response.** You will hit the output token limit and produce truncated, broken JSON. Even if the diagram is small enough to fit, splitting into sections produces better results.
-- **Don't use a coding agent** to generate the JSON. The agent won't have sufficient context about the skill's rules, and the coordination overhead negates any benefit.
-- **Don't write a Python generator script.** The templating and coordinate math seem helpful but introduce a layer of indirection that makes debugging harder. Hand-crafted JSON with descriptive IDs is more maintainable.
+- **Don't try to create the whole diagram in one `batch_create_elements`.** Output will be cramped, layout will collapse, and you'll burn the turn. Section-by-section is faster overall.
+- **Don't ask another agent to generate the elements for you.** You have the skill, the canvas state, and the context. Delegation just loses information.
+- **Don't compute layouts in code.** No "let me write a Python loop to lay out these boxes." The templating and coordinate math seem helpful but introduce indirection that makes debugging harder. Hand-craft positions with descriptive IDs.
 
 ---
 
@@ -450,17 +450,18 @@ You cannot judge a diagram from JSON alone. After generating or editing the Exca
 
 ### How to Render
 
-```bash
-cd .claude/skills/excalidraw-diagram/references && uv run python render_excalidraw.py <path-to-file.excalidraw>
-```
+You are running against a live Excalidraw MCP canvas. Use the MCP tools, not a local renderer:
 
-This outputs a PNG next to the `.excalidraw` file. Then use the **Read tool** on the PNG to actually view it.
+- `get_canvas_screenshot` — fastest way to see what's on the canvas right now. Returns a PNG you can look at directly.
+- `export_scene` — read the full structural state of the canvas (elements + appState + files) when you're done; pair it with `persist_scene_artifact` to save a versioned snapshot.
+
+The Playwright-based `render_excalidraw.py` script that the original skill referenced is **not** available in this environment. Neither is `export_to_image` — the visual agent reads the final scene via `export_scene`, not as a PNG.
 
 ### The Loop
 
-After generating the initial JSON, run this cycle:
+After generating the initial elements (`batch_create_elements`), run this cycle:
 
-**1. Render & View** — Run the render script, then Read the PNG.
+**1. Render & View** — Call `get_canvas_screenshot`, then look at the returned image.
 
 **2. Audit against your original vision** — Before looking for bugs, compare the rendered result to what you designed in Steps 1-4. Ask:
 - Does the visual structure match the conceptual structure you planned?
@@ -480,14 +481,16 @@ After generating the initial JSON, run this cycle:
 - Text too small to read at the rendered size
 - Overall composition feels lopsided or unbalanced
 
-**4. Fix** — Edit the JSON to address everything you found. Common fixes:
-- Widen containers when text is clipped
-- Adjust `x`/`y` coordinates to fix spacing and alignment
-- Add intermediate waypoints to arrow `points` arrays to route around elements
-- Reposition labels closer to the element they describe
-- Resize elements to rebalance visual weight across sections
+**4. Fix** — Use the MCP edit tools, not a JSON file rewrite. Common fixes:
+- Widen a container: `update_element` with new `width`
+- Adjust position: `update_element` with new `x`/`y`
+- Reroute an arrow: `update_element` on the arrow with new `points` waypoints
+- Reposition a label: `update_element` with new `x`/`y`
+- Rebuild a whole section: `delete_element` the bad ones, `batch_create_elements` the replacements
+- Realign a row/column: `align_elements` with the relevant ids
+- After any large batch, call `set_viewport` (or the equivalent fit-to-content) so collaborators see the whole composition
 
-**5. Re-render & re-view** — Run the render script again and Read the new PNG.
+**5. Re-render & re-view** — Call `get_canvas_screenshot` again.
 
 **6. Repeat** — Keep cycling until the diagram passes both the vision check (Step 2) and the defect check (Step 3). Typically takes 2-4 iterations. Don't stop after one pass just because there are no critical bugs — if the composition could be better, improve it.
 
@@ -499,14 +502,6 @@ The loop is done when:
 - Arrows route cleanly and connect to the right elements
 - Spacing is consistent and the composition is balanced
 - You'd be comfortable showing it to someone without caveats
-
-### First-Time Setup
-If the render script hasn't been set up yet:
-```bash
-cd .claude/skills/excalidraw-diagram/references
-uv sync
-uv run playwright install chromium
-```
 
 ---
 

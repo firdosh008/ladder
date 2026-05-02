@@ -1,16 +1,16 @@
 /**
- * Client for the /ws/agents/* WebSocket endpoints + HTTP diagram route.
+ * Client for the /ws/agents/* WebSocket endpoints.
  *
  * WebSocket streams:
  *   runResearchStream  — /ws/agents/research?token&topic
  *   runStudioStream    — /ws/agents/studio?token&idea_id&duration
  *   runExtractStream   — /ws/agents/extract (source posted as 1st WS msg)
- *
- * Diagrams: ``generateDiagramFromScript`` — POST /generate-diagram (auth).
+ *   runVisualBuild     — /ws/agents/visual?token&session_id&steer (optional)
  *
  * All streams share the same AgentEvent protocol. Research drafts are NOT
- * auto-persisted; Studio + Extract DO persist (artifacts + idea row) and
- * emit a `persisted` event with the new ids.
+ * auto-persisted; Studio + Extract + Visual DO persist (artifacts + idea row
+ * for extract / scene artifact for visual) and emit a `persisted` event with
+ * the new ids.
  */
 
 import { supabase } from "./supabase";
@@ -96,32 +96,6 @@ export type Outline = {
   items: OutlineItem[];
 };
 
-/** Concatenate script + outline for ``POST /generate-diagram`` (Claude + MCP canvas). */
-export function buildDiagramScriptInput(
-  script: Script | null,
-  outline: Outline | null,
-): string {
-  const blocks: string[] = [];
-  if (outline?.items?.length) {
-    blocks.push("## Scene outline");
-    outline.items.forEach((it) => {
-      blocks.push(`${it.number}. ${it.label} — ${it.beat}`);
-    });
-  }
-  if (script?.sections?.length) {
-    blocks.push("\n## Script (talking points)");
-    script.sections.forEach((sec, i) => {
-      blocks.push(
-        `\n### ${i + 1}. ${sec.heading} (${sec.duration_min} min)`,
-      );
-      sec.talking_points.forEach((tp) => blocks.push(`- ${tp}`));
-      if (sec.transition?.trim())
-        blocks.push(`→ Transition: ${sec.transition}`);
-    });
-  }
-  return blocks.join("\n").trim();
-}
-
 export type ExtractedVideo = {
   title: string;
   rationale: string;
@@ -187,42 +161,6 @@ export type Scene = {
   files?: Record<string, SceneBinaryFile> | null;
 };
 
-export type GenerateDiagramResponse = {
-  diagram_url: string | null;
-  json: Scene;
-  artifact_id?: string | null;
-};
-
-/**
- * Claude draws on the synced Excalidraw MCP canvas; keep the iframe on
- * ``VITE_EXCALIDRAW_CANVAS_URL`` connected so screenshots / PNG export succeed.
- */
-export async function generateDiagramFromScript(payload: {
-  script: string;
-  session_id?: string | null;
-}): Promise<GenerateDiagramResponse> {
-  const token = await authToken();
-  const res = await fetch(`${API_URL}/generate-diagram`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      script: payload.script,
-      session_id: payload.session_id ?? undefined,
-    }),
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(
-      t ? `generate-diagram failed (${res.status}): ${t}` : `generate-diagram failed (${res.status})`,
-    );
-  }
-  const data = (await res.json()) as GenerateDiagramResponse;
-  return data;
-}
-
 export type TokenUsage = {
   input: number;
   output: number;
@@ -248,6 +186,7 @@ export type AgentEvent =
   | { type: "script_ready"; script: Script }
   | { type: "outline_ready"; outline: Outline }
   | { type: "extract_ready"; extracted: ExtractedVideo }
+  | { type: "scene_ready"; scene: Scene }
   | { type: "usage"; token_usage: TokenUsage }
   | {
       type: "persisted";
@@ -387,6 +326,57 @@ export async function runStudioStream(
   const url = `${wsBaseUrl()}/ws/agents/studio?${params.toString()}`;
 
   return consumeStream(url, onEvent, (ev) => ({ cost_usd: ev.cost_usd }));
+}
+
+// ─── runVisualBuild ───────────────────────────────────────────────────────
+
+export type VisualRunResult = {
+  scene: Scene | null;
+  scene_artifact_id: string | null;
+  cost_usd: number;
+};
+
+/**
+ * Open ``/ws/agents/visual`` and stream the live MCP canvas build.
+ *
+ * The agent reads script / outline / brand directly through its own backend
+ * tools, so we don't pre-flatten the script into the URL here. Pass an
+ * optional ``steer`` to bias the build (PRD §2 "Regenerate scene" — useful
+ * when the founder has a specific direction).
+ *
+ * Final-event capture: ``scene_ready`` carries the persisted Scene JSON
+ * (re-used as the read-only viewer's source); ``persisted`` carries the
+ * ``scene_artifact_id`` for any follow-up share / hydrate flows.
+ */
+export async function runVisualBuild(
+  sessionId: string,
+  opts: { steer?: string | null },
+  onEvent: (ev: AgentEvent) => void,
+): Promise<VisualRunResult> {
+  const token = await authToken();
+  const params = new URLSearchParams({ token, session_id: sessionId });
+  if (opts.steer && opts.steer.trim()) {
+    params.set("steer", opts.steer.trim().slice(0, 1200));
+  }
+  const url = `${wsBaseUrl()}/ws/agents/visual?${params.toString()}`;
+
+  let scene: Scene | null = null;
+  let sceneArtifactId: string | null = null;
+
+  const wrappedOnEvent = (ev: AgentEvent) => {
+    if (ev.type === "scene_ready") {
+      scene = ev.scene;
+    } else if (ev.type === "persisted" && ev.scene_artifact_id) {
+      sceneArtifactId = ev.scene_artifact_id;
+    }
+    onEvent(ev);
+  };
+
+  return consumeStream(url, wrappedOnEvent, (ev) => ({
+    scene,
+    scene_artifact_id: sceneArtifactId,
+    cost_usd: ev.cost_usd,
+  }));
 }
 
 // ─── publishScene ─────────────────────────────────────────────────────────

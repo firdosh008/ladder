@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routes import agents, auth, diagram, health, ideas, studio_sessions
+from app.routes import agents, auth, health, ideas, studio_sessions, visual
 from app.services import excalidraw_canvas
 
 log = logging.getLogger(__name__)
@@ -45,4 +45,4 @@ app.include_router(auth.router)
 app.include_router(ideas.router)
 app.include_router(studio_sessions.router)
 app.include_router(agents.router)
-app.include_router(diagram.router)
+app.include_router(visual.router)

@@ -6,8 +6,7 @@ Endpoints:
   /ws/agents/studio
   /ws/agents/extract
 
-Scene diagrams run through Claude plus the bundled Excalidraw MCP canvas;
-use HTTP ``POST /generate-diagram``.
+Visual diagrams ship through ``app.routes.visual`` (``/ws/agents/visual``).
 
 Common WebSocket payloads:
   {"type": "agent_start",    "agent": "..."}
