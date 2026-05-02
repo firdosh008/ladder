@@ -3,8 +3,10 @@
 Spawns ``node dist/server.js`` using synchronous ``subprocess.Popen`` from a thread
 (avoids Windows asyncio subprocess limitations). Runs ``npm ci`` / ``npm install``
 plus ``npm run build`` when ``dist/`` is missing (same bootstrap as commit
-``33d206d``). Optionally starts ``scripts/headless-canvas.mjs`` so PNG export has a
-WebSocket client.
+``33d206d``). Optionally starts Playwright headless Chromium against the canvas UI
+(``backend/excalidraw_headless/``, or
+``<vendor>/scripts/headless-canvas.mjs`` when present on a fork) so PNG export has
+a WebSocket client.
 """
 
 from __future__ import annotations
@@ -31,10 +33,44 @@ _headless_proc: subprocess.Popen[bytes] | None = None
 _we_started_canvas = False
 _we_started_headless = False
 _build_lock = asyncio.Lock()
+_headless_bundle_lock = asyncio.Lock()
 
 
 def default_vendor_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "vendor" / "mcp_excalidraw"
+
+
+def _backend_root() -> Path:
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def _bundled_headless_root() -> Path:
+    """Directory with ``package.json`` + bundled Playwright helper."""
+    return _backend_root() / "excalidraw_headless"
+
+
+def _resolve_headless_script(vendor: Path | None) -> tuple[Path, Path]:
+    """Return ``(script_path, cwd)`` for the Playwright headless tab.
+
+    Prefer ``<vendor>/scripts/headless-canvas.mjs`` when present (fork override);
+    otherwise use the bundled helper shipped with ladder-os.
+
+    ``cwd`` is used as subprocess ``cwd``. For the bundled helper this directory
+    must expose Playwright from ``node_modules``.
+    """
+    root = _resolve_vendor(vendor)
+    vendor_script = root / "scripts" / "headless-canvas.mjs"
+    bundled = _bundled_headless_root() / "headless-canvas.mjs"
+    if vendor_script.is_file():
+        return vendor_script, root
+    if bundled.is_file():
+        return bundled, bundled.parent
+    raise RuntimeError(
+        "Cannot attach a headless export client: no headless-canvas.mjs found. "
+        f"Expected {vendor_script} or {bundled}. Install Playwright for the "
+        "bundled helper:\n"
+        f"  cd {bundled.parent} && npm install && npx playwright install chromium"
+    )
 
 
 def boot_error_message(exc: BaseException) -> str:
@@ -109,6 +145,42 @@ async def ensure_vendor_build(vendor: Path) -> None:
             )
 
 
+async def ensure_headless_bundle_deps(bundle_dir: Path) -> None:
+    """``npm install`` Playwright locally and fetch Chromium binaries (once marked)."""
+    if not (bundle_dir / "package.json").is_file():
+        raise RuntimeError(f"Bundled headless helper missing package.json at {bundle_dir}")
+    playwright_pkg = bundle_dir / "node_modules" / "playwright"
+    marker = bundle_dir / "node_modules" / ".ladder_playwright_chromium"
+    loop = asyncio.get_running_loop()
+
+    async with _headless_bundle_lock:
+
+        def _ensure_npm() -> None:
+            lockfile = bundle_dir / "package-lock.json"
+            if lockfile.is_file():
+                subprocess.run(_npm_cmd("ci"), cwd=str(bundle_dir), check=True)
+            else:
+                subprocess.run(_npm_cmd("install"), cwd=str(bundle_dir), check=True)
+
+        if not playwright_pkg.is_dir():
+            await loop.run_in_executor(None, _ensure_npm)
+        if marker.is_file():
+            return
+
+        def _pw_chromium() -> None:
+            subprocess.run(
+                _npm_cmd("exec", "--", "playwright", "install", "chromium"),
+                cwd=str(bundle_dir),
+                check=True,
+            )
+
+        await loop.run_in_executor(None, _pw_chromium)
+        try:
+            marker.touch(exist_ok=True)
+        except OSError:
+            pass
+
+
 def _parse_http_base(http_base: str) -> tuple[str, int]:
     u = urlparse(http_base if "://" in http_base else f"http://{http_base}")
     host = u.hostname or "127.0.0.1"
@@ -154,7 +226,7 @@ async def wait_for_websocket_clients(
         f"No WebSocket client connected to canvas within {timeout_s}s. "
         "PNG export requires one browser tab on the canvas. "
         "Fix: set EXCALIDRAW_HEADLESS_AUTOSTART=true and run "
-        "`cd <vendor>/mcp_excalidraw && npx playwright install chromium`, "
+        "`cd backend/excalidraw_headless && npx playwright install chromium`, "
         f"or open {base_url.rstrip('/')}/ in a normal browser while generating."
     )
 
@@ -207,12 +279,9 @@ async def _ensure_playwright_ws_client(*, base: str, vendor: Path | None) -> Non
         log.debug("Canvas already has %s WebSocket client(s)", payload.get("websocket_clients"))
         return
 
-    root = _resolve_vendor(vendor)
-    headless_script = root / "scripts" / "headless-canvas.mjs"
-    if not headless_script.is_file():
-        raise RuntimeError(
-            f"Missing {headless_script}. Cannot attach a headless export client."
-        )
+    headless_script, headless_cwd = _resolve_headless_script(vendor)
+    if headless_cwd.resolve() == _bundled_headless_root().resolve():
+        await ensure_headless_bundle_deps(headless_cwd)
 
     node = _node_cmd()
     env_h = os.environ.copy()
@@ -224,7 +293,7 @@ async def _ensure_playwright_ws_client(*, base: str, vendor: Path | None) -> Non
 
         def _spawn_headless() -> subprocess.Popen[bytes]:
             kw: dict[str, Any] = {
-                "cwd": str(root),
+                "cwd": str(headless_cwd),
                 "env": env_h,
                 "stdout": subprocess.DEVNULL,
                 "stderr": subprocess.DEVNULL,
@@ -240,8 +309,8 @@ async def _ensure_playwright_ws_client(*, base: str, vendor: Path | None) -> Non
     if _headless_proc is not None and _headless_proc.poll() is not None:
         raise RuntimeError(
             "Playwright headless canvas exited immediately (exit "
-            f"code {_headless_proc.poll()}). From the vendor folder run: "
-            f"cd {root} && npx playwright install chromium"
+            f"code {_headless_proc.poll()}). Install Chromium for the "
+            f"headless helper: cd {headless_cwd} && npx playwright install chromium"
         )
 
     await wait_for_websocket_clients(

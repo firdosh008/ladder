@@ -160,30 +160,124 @@ def _balanced_json_object_slice(text: str) -> str | None:
     return None
 
 
+def _close_truncated_json(text: str) -> str | None:
+    """Salvage a top-level JSON object that was cut off mid-string by max_tokens.
+
+    Walks the text string-aware, tracking the bracket/brace stack. Records the
+    position right after every closing ``}`` that finishes an *element of the
+    top-level array* (i.e., one entry of ``elements``). On EOF without a
+    matching outer ``}``, rewinds to that last-safe position and emits the
+    minimal closes (``]}`` for our schema) to balance the stack.
+
+    Returns ``None`` if the JSON has no salvageable element boundary (e.g.,
+    truncation happened before the first element closed).
+    """
+    n = len(text)
+    if n == 0:
+        return None
+    start = text.find("{")
+    if start < 0:
+        return None
+
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    last_safe_pos = -1  # position right after a closed top-level array element
+
+    pos = start
+    while pos < n:
+        ch = text[pos]
+        if esc:
+            esc = False
+            pos += 1
+            continue
+        if in_str:
+            if ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            pos += 1
+            continue
+        if ch == '"':
+            in_str = True
+            pos += 1
+            continue
+        if ch in "{[":
+            stack.append(ch)
+            pos += 1
+            continue
+        if ch in "}]":
+            if not stack:
+                pos += 1
+                continue
+            popped = stack.pop()
+            if not stack:
+                # closed the outer object → JSON is complete, nothing to salvage
+                return text[start : pos + 1]
+            # Element-of-array boundary: post-pop stack is exactly [{, [] — outer
+            # object holds an array which holds the element we just closed.
+            if (
+                popped == "{"
+                and len(stack) == 2
+                and stack[0] == "{"
+                and stack[1] == "["
+            ):
+                last_safe_pos = pos + 1
+            pos += 1
+            continue
+        pos += 1
+
+    if last_safe_pos < 0:
+        return None
+    # We were inside the elements array when truncated. Close: `]` then `}`.
+    return text[start:last_safe_pos] + "]}"
+
+
 def _extract_json_object(raw: str) -> dict[str, Any]:
-    """Parse model JSON with fences, brace-balancing, quote normalization, trailing-comma repair."""
+    """Parse model JSON. Layered fallbacks: fenced → balanced-brace → greedy →
+    salvage truncated. Cleans smart quotes + trailing commas before each
+    ``json.loads`` so cosmetic quirks don't masquerade as truncation."""
     text = raw.strip()
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.I)
     if fence:
         text = fence.group(1).strip()
 
-    blob = _balanced_json_object_slice(text)
-    if blob is None:
-        lo = text.find("{")
-        hi = text.rfind("}")
-        if lo == -1 or hi == -1 or hi <= lo:
-            raise ValueError("Model did not return a JSON object")
-        blob = text[lo : hi + 1]
+    candidates: list[str] = []
+    balanced = _balanced_json_object_slice(text)
+    if balanced is not None:
+        candidates.append(balanced)
+    lo = text.find("{")
+    hi = text.rfind("}")
+    if lo != -1 and hi != -1 and hi > lo:
+        candidates.append(text[lo : hi + 1])
 
-    blob = _strip_trailing_commas(_normalize_json_quotes(blob))
-    try:
-        return json.loads(blob)
-    except json.JSONDecodeError as e:
-        log.warning(
-            "JSON decode failed (snippet): %s…",
-            blob[:320].replace("\n", " "),
-        )
-        raise ValueError(f"Invalid JSON from model: {e}") from e
+    last_err: Exception | None = None
+    for blob in candidates:
+        cleaned = _strip_trailing_commas(_normalize_json_quotes(blob))
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            last_err = e
+            continue
+
+    salvaged = _close_truncated_json(text)
+    if salvaged is not None:
+        cleaned = _strip_trailing_commas(_normalize_json_quotes(salvaged))
+        try:
+            payload = json.loads(cleaned)
+            n_elements = len(payload.get("elements") or [])
+            log.warning(
+                "draft JSON salvaged from truncation — recovered %d elements", n_elements
+            )
+            return payload
+        except json.JSONDecodeError as e:
+            last_err = e
+
+    snippet = (candidates[0] if candidates else text)[:320].replace("\n", " ")
+    log.warning("JSON decode failed (snippet): %s…", snippet)
+    if last_err is None:
+        raise ValueError("Model did not return a JSON object")
+    raise ValueError(f"Invalid JSON from model: {last_err}") from last_err
 
 
 def _clean_server_element(el: dict[str, Any]) -> dict[str, Any]:
@@ -288,21 +382,29 @@ class DiagramService:
             "Reply with **exactly one** JSON object and nothing else: no markdown fences, no prose before or after.\n"
             "Use valid JSON only — double-quoted keys and strings, **no trailing commas**, escape internal quotes as \\\".\n"
             "Root keys must include at minimum `\"elements\": [ ... ]` (array of Excalidraw element objects).\n"
+            "**Token budget — non-negotiable:** keep the entire response under ~12,000 characters. "
+            "Strongly prefer **fewer-richer** elements over many-thin ones. Omit any property that has its "
+            "Excalidraw default value (`opacity:100`, `angle:0`, empty `groupIds`, `seed`, `version*`, "
+            "`isDeleted`, `boundElements:null`, `link:null`, `locked:false`). The closing `]` of the elements "
+            "array and the outer closing `}` are mandatory — if you sense you are running long, finish the "
+            "current element, then close both immediately.\n"
         )
 
         user_content = "".join(parts)
         system_prompt = (
             "You are an expert instructional diagram designer who invents context-native visuals — "
             "never canned layouts. "
-            "Your entire reply body must be one parseable JSON object (diagram draft)."
+            "Your entire reply body must be one parseable JSON object (diagram draft) that closes cleanly."
         )
 
         # Structured outputs cannot express arbitrary Excalidraw element shapes without additionalProperties:true,
         # which Anthropic rejects; assistant-message prefill is not supported on several Sonnet 4.x models — keep a
         # plain user→assistant turn plus tolerant parsing below.
+        # max_tokens raised 8192 → 16384: previous cap truncated mid-string on dense diagrams (~21k chars of JSON
+        # over 880 lines), and the salvage path can't recover when truncation lands inside the first element.
         msg = await client.messages.create(
             model=settings.DIAGRAM_ANTHROPIC_MODEL,
-            max_tokens=8192,
+            max_tokens=16384,
             temperature=0.28,
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
@@ -312,6 +414,14 @@ class DiagramService:
         self._add_usage(msg)
         raw_text = _response_text(msg).strip()
 
+        stop_reason = getattr(msg, "stop_reason", None)
+        if stop_reason == "max_tokens":
+            log.warning(
+                "draft response stopped on max_tokens (chars=%d) — output likely truncated; "
+                "_extract_json_object will attempt salvage",
+                len(raw_text),
+            )
+
         try:
             payload = json.loads(raw_text)
         except json.JSONDecodeError:
@@ -319,6 +429,8 @@ class DiagramService:
 
         if not isinstance(payload.get("elements"), list):
             raise ValueError("Draft JSON missing elements[]")
+        if not payload["elements"]:
+            raise ValueError("Draft JSON elements[] is empty after parse/salvage")
         return payload
 
     async def _vision_review(

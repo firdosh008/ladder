@@ -1,10 +1,12 @@
 # Ladder Content OS — Handoff / Context Doc
 
-Last updated: 2026-04-26. Purpose: bring a fresh session (or a human contributor) up to speed without re-reading the whole chat history.
+Last updated: 2026-05-02. Purpose: bring a fresh session (or a human contributor) up to speed without re-reading the whole chat history.
 
-**Recent (research vertical, 2026-04-26):** Research crew now fans out across **5 platforms in parallel** — Exa (web), Reddit, YouTube, X, Instagram. Single async HTTP wrapper at `app/providers/scrapecreators.py` covers the four social platforms via the **ScrapeCreators API** (`SCRAPECREATORS_API_KEY`); provider returns normalized dataclasses (`RedditPost`, `YouTubeVideo`, `XTweet`, `InstagramReel`) so swapping to official APIs later only changes that file. Each tool emits **platform-tagged** `SourceRef`s through the existing `sources_emitter_var` side-channel; the `ResearchRunPanel` source rail renders a colored pill (web/reddit/yt/x/ig) on every card. ScrapeCreators is intended as the temporary unified backend until per-platform official APIs come online (Reddit OAuth, YouTube Data API v3, etc.).
+**Recent (scene vertical, 2026-05-02 — commit `5583651`):** Diagram prompt rewritten from "context-first illustration" to **explainer / whiteboard illustration** mode in `backend/app/agents/excalidraw_design_guide.py` — explicit anti-UI / anti-dashboard rules, hand-drawn organic asymmetry, multi-point curved arrows, hierarchy *without* heavy rectangles, soft accents (`#f08c00` strokes / `#ffec99` whisper fills, ≤ ~55% opaque coverage), default `roughness: 1`, density target **12–26 elements**. Vision QA prompt updated to reject "dashboard / Kanban cards / admin panels" outputs. JSON parser in `app/services/diagram_service.py` hardened: balanced-brace slicer (respects strings), smart-quote normalization, idempotent trailing-comma stripping, plus an explicit "Output contract" appended to the user prompt; temperature dropped 0.35 → 0.28; added `stop_sequences=["```"]`. Frontend Studio.tsx no longer renders the in-page Live Excalidraw iframe block — the live canvas now appears only inside `ScenePreviewModal` while a diagram run is active (gated by `VITE_EXCALIDRAW_CANVAS_URL`). New **`backend/excalidraw-skill-master/`** drop-in Claude Code skill (`SKILL.md` + `CLAUDE.md` + `README.md`) documenting MCP setup, 10 visual techniques, and the screenshot-iterate loop — reference docs, not part of the runtime.
 
-**Earlier (scene vertical, 2026-04-25):** Excalidraw **build_scene** is wired end-to-end as a hybrid crew: **planner is CrewAI** (`layout_planner` → `SceneLayout`), **designer is a direct Anthropic structured-outputs call** (`element_designer` → `SceneSkeleton`). The designer used to be a CrewAI task with `output_pydantic`, but prompted JSON dropped the top-level `elements` array on a large fraction of runs. Grammar-constrained sampling (`output_format: json_schema`) makes that failure mode mathematically impossible. `SceneSkeleton` persisted as `artifacts.type = excalidraw`, embed + “open in excalidraw.com” on the studio page. **No critic / fixer** in the current pipeline.
+**Major architectural shift (between 2026-04-26 and 2026-05-02):** Scene generation has bifurcated. The original CrewAI-planner-+-Anthropic-structured-outputs-designer path **still exists** in `app/agents/scene/{agents,tasks,designer,crew}.py`, but is now gated behind `settings.ENABLE_MCP_SCENE_DIAGRAM`. When that flag is **on** (the active path now), `run_scene_build` delegates to `app.agents.scene.mcp_diagram.run_scene_mcp_diagram`, which drives a **live local Excalidraw canvas** (vendored `mcp_excalidraw` Express server at `127.0.0.1:3000`) via `ExcalidrawCanvasClient` HTTP and runs an iterative draft → draw → PNG export → vision-QA loop in `app/services/diagram_service.py`. A Playwright headless tab supplies the WebSocket client required for PNG export. Default model for diagram drafting + vision QA is `DIAGRAM_ANTHROPIC_MODEL=claude-sonnet-4-6`; default `ANTHROPIC_MODEL` is now `claude-haiku-4-5`. **Structured outputs is OFF by default** for the legacy designer path (`SCENE_DESIGNER_STRUCTURED_OUTPUTS=False`) because grammar compilation kept hitting "Schema is too complex" / overload errors — the legacy designer falls straight through to prompted-JSON + `_validate_with_salvage`.
+
+**Earlier (research vertical, 2026-04-26):** Research crew fans out across **5 platforms in parallel** — Exa (web), Reddit, YouTube, X, Instagram. Single async HTTP wrapper at `app/providers/scrapecreators.py` covers the four social platforms via the **ScrapeCreators API** (`SCRAPECREATORS_API_KEY`); provider returns normalized dataclasses (`RedditPost`, `YouTubeVideo`, `XTweet`, `InstagramReel`). Each tool emits **platform-tagged** `SourceRef`s through `sources_emitter_var`; `ResearchRunPanel` source rail renders a colored pill (web/reddit/yt/x/ig) on every card.
 
 ---
 
@@ -87,20 +89,35 @@ ladder-os/
 │   │   │   ├── exa.py                    # async wrapper around exa-py neural search
 │   │   │   └── scrapecreators.py         # async wrapper for Reddit/YouTube/X/IG via ScrapeCreators
 │   │   ├── services/
-│   │   │   ├── llm.py                    # anthropic_llm() — CrewAI LLM factory
-│   │   │   └── usage.py                  # log_usage() async context manager
+│   │   │   ├── llm.py                    # anthropic_llm() / anthropic_client() factories
+│   │   │   ├── usage.py                  # log_usage() async context manager
+│   │   │   ├── excalidraw_canvas.py      # spawn + supervise vendored mcp_excalidraw Node server (+ headless Playwright tab)
+│   │   │   ├── excalidraw_http.py        # ExcalidrawCanvasClient — async wrapper over /api/* on the live canvas
+│   │   │   ├── diagram_service.py        # plan → draw on canvas → PNG export → vision QA loop → SceneSkeleton
+│   │   │   └── scene_visual_assets.py    # post-step that decorates SceneSkeleton with hero images/icons
 │   │   ├── agents/
+│   │   │   ├── excalidraw_design_guide.py  # DESIGN_SKILL_SYSTEM_RULES / DIAGRAM_JSON_INSTRUCTIONS / VISION_REVIEW_PROMPT (explainer-illustration prompt set)
 │   │   │   ├── research/                 # research crew (3 agents → ResearchIdeas)
 │   │   │   ├── studio/                   # studio crew (script_writer → outline_planner)
 │   │   │   ├── content_extract/          # content_extract crew (analyzer → extractor)
-│   │   │   └── scene/                    # scene crew (layout_planner → element_designer) → SceneSkeleton
+│   │   │   └── scene/                    # legacy CrewAI planner + structured-output designer (now gated behind ENABLE_MCP_SCENE_DIAGRAM=False)
+│   │   │       ├── agents.py             # layout_planner only (designer left CrewAI in 2026-04-25 hybrid rewrite)
+│   │   │       ├── tasks.py              # planner task (output_pydantic=SceneLayout)
+│   │   │       ├── designer.py           # direct Anthropic call → SceneSkeleton (structured outputs OFF by default; prompted-JSON + salvage)
+│   │   │       ├── crew.py               # run_scene_build — branches on ENABLE_MCP_SCENE_DIAGRAM
+│   │   │       ├── mcp_diagram.py        # NEW path: drives DiagramService, mirrors scene_build wire events
+│   │   │       ├── skeleton_text_layout.py
+│   │   │       └── skeleton_scene_cleanup.py
 │   │   └── routes/
 │   │       ├── health.py                 # GET /health
 │   │       ├── auth.py                   # GET /auth/me, POST /auth/onboard
 │   │       ├── ideas.py                  # GET/POST/PATCH/DELETE /ideas
 │   │       ├── studio_sessions.py        # GET /studio-sessions/by-idea/{id}, POST …/scene/share
+│   │       ├── diagram.py                # POST /generate-diagram (REST entry to DiagramService — also persists artifact + uploads PNG)
 │   │       └── agents.py                 # WebSocket /ws/agents/{research,studio,extract,scene}
 │   ├── tests/                            # pytest-asyncio + httpx + starlette TestClient
+│   ├── vendor/                           # untracked — `mcp_excalidraw` Node Express canvas (cloned/built at runtime)
+│   ├── excalidraw-skill-master/          # Claude Code skill drop-in (SKILL.md + CLAUDE.md + README.md) — reference docs only
 │   ├── pyproject.toml
 │   ├── .python-version                   # 3.12 (pyo3/pydantic-core 3.14 pin)
 │   ├── .env                              # gitignored, filled
@@ -293,6 +310,73 @@ The correct fix was structural, not prompt-engineering:
 
 **Standing rule going forward** (also encoded in §3 #10): any agent step that produces a large nested artifact (Script + Scene + future Sharpen edits + edit_scene diffs) should use `anthropic_client()` + structured outputs, not CrewAI `output_pydantic`. Reserve `output_pydantic` for small/flat schemas where prompted JSON is reliable.
 
+### AI — Scene (Excalidraw, **live MCP canvas path**) — current default since ~2026-04-30
+The hybrid CrewAI+structured-outputs designer described above is now **dormant by default**. `run_scene_build` (in `app/agents/scene/crew.py`) branches on `settings.ENABLE_MCP_SCENE_DIAGRAM`; the active production path delegates to `app.agents.scene.mcp_diagram.run_scene_mcp_diagram`, which drives a real Excalidraw canvas through `app/services/diagram_service.py`. This path treats the diagram as a **drawing-on-a-live-canvas problem**, not a "produce JSON in one shot" problem — Claude drafts JSON, the backend pushes it to a real Excalidraw via HTTP, exports a PNG, then asks Claude (vision) to grade its own work and emit element-level patches.
+
+#### Lifecycle (per scene WS run)
+
+1. **Boot the canvas (once per process).** `app/main.py` lifespan calls `excalidraw_canvas.ensure_canvas_running(...)`:
+   - Resolves the vendor checkout (`backend/vendor/mcp_excalidraw` by default; override via `EXCALIDRAW_VENDOR_ROOT`).
+   - If `dist/` is missing: runs `npm ci` (or `npm install`) + `npm run build` under an `asyncio.Lock`.
+   - Spawns `node dist/server.js` with `HOST`/`PORT` from `EXCALIDRAW_HTTP_URL`. Stderr is teed to `/tmp/ladder-exc-canvas-<pid>-<port>.stderr.log` so we can surface tail on EADDRINUSE.
+   - Polls `GET /health` until `status=="healthy"` (timeout `EXCALIDRAW_CANVAS_HEALTH_WAIT_SECONDS`).
+   - **Headless tab** — when `EXCALIDRAW_HEADLESS_AUTOSTART=true`, spawns Playwright `scripts/headless-canvas.mjs` (env `EXCALIDRAW_HEADLESS_URL`) so PNG export has at least one WebSocket client; waits for `/health.websocket_clients ≥ 1` (timeout `EXCALIDRAW_HEADLESS_CONNECT_TIMEOUT_S`). On Playwright bootstrap failure the error tells the user to `cd <vendor>/mcp_excalidraw && npx playwright install chromium`.
+   - Module-level globals (`_canvas_proc`, `_headless_proc`, `_we_started_*`) track ownership; lifespan shutdown calls `shutdown_managed_children()` to terminate only the procs we spawned.
+2. **Compose the brief.** `mcp_diagram.compose_scene_brief()` flattens `idea.title`, voice/audience snippets from `UserProfileSlice`, the numbered outline beats, and per-section script talking points + bridges into a single Markdown blob. This is the only thing the drafter sees — no schemas, no founder PII, no in-context contamination from a planner pass.
+3. **Wait for a live viewer.** `DiagramService.stream_diagram_generation()` calls `excalidraw_canvas.wait_for_websocket_clients(timeout_s=120)` first. If the headless tab hasn't connected yet, the run blocks here — PNG export needs at least one client; the upstream MCP server returns 503 on `POST /api/export/image` otherwise.
+4. **Outer loop — at most `DIAGRAM_MAX_ITERATIONS` redraws** (default **1**, configurable up to 8). Each iteration:
+   - **Draft.** `_draft_payload()` calls `anthropic_client().messages.create(model=DIAGRAM_ANTHROPIC_MODEL, max_tokens=8192, temperature=0.28, stop_sequences=["```"])` with the system rules from `excalidraw_design_guide.DESIGN_SKILL_SYSTEM_RULES + DIAGRAM_JSON_INSTRUCTIONS`, the script brief, an iteration-specific layout hint, optional `brand_color`, optional `font_family`, accumulated `feedback_notes` from prior passes, and a final "Output contract" block demanding `{ "elements": [...] }`. Returns a JSON dict — no structured outputs (Anthropic rejects `additionalProperties: true` and prefill is unsupported on the Sonnet 4.x models we use, so we lean on tolerant parsing).
+   - **Parse.** `json.loads(raw_text)` first; on failure `_extract_json_object()` strips ``` ``` fences, runs the **balanced-brace slicer** `_balanced_json_object_slice()` (string-aware — avoids greedy `rfind('}')` truncation), normalizes smart quotes (`“”‘’` → ASCII), and idempotently strips trailing commas. Reject if `elements` isn't a list.
+   - **Re-id.** `assign_fresh_element_ids()` rewrites every LLM-supplied id to a 14-char `[a-z0-9]` token and remaps `startBinding.elementId`, `endBinding.elementId`, `boundElements[].id`, `start.id`, `end.id`. This is the single piece of state that survives between drafter and vision QA — vision must reference these canvas-truth ids verbatim, never semantic placeholders like `step1`.
+   - **Push to canvas.** `ExcalidrawCanvasClient.clear_canvas()` → `batch_create_elements(elements)` → 150ms breath → `set_viewport(scroll_to_content=True)` so the headless tab has the full diagram in frame for the PNG.
+   - **Inner vision-QA loop — up to 3 passes per outer iteration.** Each pass:
+     1. `export_image_png_base64()` — POST `/api/export/image`, base64 PNG.
+     2. `get_all_elements()` — fresh truth from the canvas (id-keyed).
+     3. `_vision_review(png_b64, elements)` — Claude vision call with `VISION_REVIEW_PROMPT` and the elements JSON (truncated to 140k chars). Returns `{approved: bool, corrections: [{id, patch}], notes}`. Non-JSON response auto-approves with `notes="parse_error"` (cheap-out fallback rather than a hard fail).
+     4. **If approved:** export final PNG bytes, run `canvas_elements_to_scene_dict()` to clean server-only fields (`createdAt`/`updatedAt`/`version`) and recompute the bounding-box canvas (clamped to `800–4800 × 600–4800` with 120px padding), validate against `SceneSkeleton.model_validate()` (warning-only — never raises), break.
+     5. **If patches:** filter to ids actually on the canvas (logged warning for any others), `update_element(id, patch)` each one via `PUT /api/elements/{id}`, append `notes` to outer-loop `feedback`, retry the inner pass.
+     6. **If no patches but rejected:** record the note as feedback for the next outer redraw and break the inner loop.
+   - **Outer-loop redraw bias.** `_iteration_design_guidance()` rewrites the prompt for pass N: pass 1 forbids habitual templates; pass 2+ tells the model "prior composition failed QA — abandon its spatial archetype entirely" so we don't get cyclic layouts. `feedback` from QA notes is concatenated into each subsequent draft prompt.
+5. **Persist.** When the inner loop breaks with `approved=True` (or after exhausting iterations), `mcp_diagram.run_scene_mcp_diagram` validates the scene dict, runs `enrich_scene_visuals(...)` (hero images / icons via `scene_visual_assets.py`), and yields `task_complete` → `diagram_complete` (`{iterations}`) → `scene_ready` (full `Scene`) → `usage`. The WebSocket route in `agents.py` (§ `/ws/agents/scene`) writes a versioned `excalidraw` artifact and emits `persisted` with `scene_artifact_id`.
+6. **Token + cost accounting.** `DiagramService.last_input_tokens` / `last_output_tokens` accumulate across **every** Anthropic call in the run (drafter + vision QA). Billed as flat `$1/Mtok` in, `$5/Mtok` out into `usage_log` under `function_name="scene_build_mcp_canvas"`, model `DIAGRAM_ANTHROPIC_MODEL`.
+
+#### Wire events the frontend sees during a run
+- `agent_start { agent: "diagram_agent" }` — once at the top.
+- `diagram_draft { phase: "waiting_live_viewer" }` then per iteration `phase: "drawn"` with `iteration` + `element_count`.
+- `diagram_iteration { iteration, phase: "draft" | "vision" | "approved", layout_hint? }` — UX progress beats.
+- `task_complete { agent: "diagram_agent", preview: "" }` once the canvas is approved.
+- `diagram_complete { iterations }`.
+- `scene_ready { scene: <SceneSkeleton dict> }`.
+- `usage { token_usage: {input, output, cost_usd} }`.
+- `persisted { scene_artifact_id }` (added by the WS route, not `DiagramService`).
+
+#### Frontend surface for the live canvas
+
+- `frontend/src/pages/Studio.tsx` no longer iframes the canvas inline (commit `5583651` deleted that section). The live view appears only inside `ScenePreviewModal` while a diagram run is active: `Studio` flips `liveCanvasDuringRun=true` via the `onDiagramRunActive` callback the moment `SceneRunPanel` opens its WS, and the modal swaps its body from the read-only `SceneView` (lazy-loaded `@excalidraw/excalidraw`) to a sandboxed `<iframe>` pointing at `VITE_EXCALIDRAW_CANVAS_URL` (e.g. `http://127.0.0.1:3000`). When that env var is unset the modal renders an honest empty state telling the user how to wire it up.
+- After the run terminates the modal flips back to `SceneView` driven by the persisted scene JSON. "Open in Excalidraw" still routes through `POST /studio-sessions/{session_id}/scene/share` (Storage upload + `excalidraw.com/#url=…`) — the live-canvas iframe is preview-only.
+
+#### Settings that govern the path
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `ENABLE_MCP_SCENE_DIAGRAM` | `False` | When True, `/ws/agents/scene` runs the live-canvas path; otherwise it runs the legacy CrewAI planner + Anthropic designer. **Production currently runs with this on.** |
+| `EXCALIDRAW_VENDOR_ROOT` | `backend/vendor/mcp_excalidraw` | Where to find / build the Node canvas. |
+| `EXCALIDRAW_HTTP_URL` | `http://127.0.0.1:3000` | Canvas Express server URL. Same value goes into `VITE_EXCALIDRAW_CANVAS_URL`. |
+| `EXCALIDRAW_CANVAS_AUTOSTART` | `True` | Spawn `node dist/server.js` if `/health` is unreachable. |
+| `EXCALIDRAW_CANVAS_HEALTH_WAIT_SECONDS` | `240` | Boot timeout — first build can be slow. |
+| `EXCALIDRAW_HEADLESS_AUTOSTART` | `True` | Spawn Playwright headless tab so PNG export has a WS client. |
+| `EXCALIDRAW_HEADLESS_CONNECT_TIMEOUT_S` | `180.0` | How long to wait for the tab to connect. |
+| `DIAGRAM_ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Model for both drafter + vision QA. **Must support vision.** |
+| `DIAGRAM_MAX_ITERATIONS` | `1` | Outer redraw cap. Each iteration clears the canvas and starts fresh. |
+| `SCENE_DESIGNER_STRUCTURED_OUTPUTS` | `False` | Legacy designer toggle (off — too many "Schema is too complex" 400s). |
+| `ANTHROPIC_MODEL` | `claude-haiku-4-5` | Default for crews **other** than diagram (research / studio / extract). |
+
+#### Why this exists (postmortem)
+The 2026-04-25 hybrid (planner-CrewAI + structured-outputs-designer) hit a wall on two fronts simultaneously: (1) Anthropic's grammar compiler started returning persistent `Schema is too complex` 400s on the full `SceneSkeleton` schema, which was already being trimmed via `_clean_schema()`, and (2) the resulting one-shot JSON outputs read as **dashboard mocks** — uniform card grids, framed every block, dense filled rectangles — because the model was producing what it knew "looked like a diagram" rather than a hand-explained illustration. The live-canvas path solves both: no structured outputs (so no compiler errors), and a vision-QA loop that can *see* the rendered output and reject UI-mock aesthetics. The 2026-05-02 prompt rewrite codified the rejection rule into `VISION_REVIEW_PROMPT` ("Reject when: Layout reads as dashboard, Kanban cards, admin panels…").
+
+#### Skill file: `backend/excalidraw-skill-master/`
+Added in commit `5583651`. This is **not runtime code** — it's a Claude Code skill drop-in (`SKILL.md` + `CLAUDE.md` + `README.md`) that documents the same MCP canvas + screenshot-iterate workflow. It's intended for engineers using Claude Code interactively to draw diagrams against a local `mcp_excalidraw` install (the upstream `yctimlin/mcp_excalidraw` repo, not our vendored fork). Can be deleted without affecting the API.
+
 ### Shared agent plumbing
 - `frontend/src/lib/agents.ts` — `runStudioStream`, `runExtractStream`, `runSceneStream`, `fetchStudioByIdea`, `publishScene`, plus event types. Common WS pump: `consumeStream(url, onEvent, finalise, initialPayload?)`.
 - `backend/app/routes/agents.py` — WS routes share helpers: `_load_profile`, `_load_idea`, `_load_session`, `_load_latest_artifact`, `_ensure_studio_session`, `_persist_script_outline`, `_persist_scene_skeleton`, `_safe_send_json`, `_next_artifact_version`.
@@ -363,8 +447,9 @@ npm run dev
 - `backend/.env` — `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CORS_ORIGINS`. **No JWT secret needed** (JWKS verification). Old `SUPABASE_JWT_SECRET` line can stay unused.
   - **Required to run any agent vertical:** `ANTHROPIC_API_KEY`, `EXA_API_KEY`. The factories intentionally raise `RuntimeError` on missing keys rather than silently falling back to a cheaper provider.
   - **Required for the multi-platform research crew (Reddit/YouTube/X/Instagram):** `SCRAPECREATORS_API_KEY` (sign up at scrapecreators.com — 100 free credits, then $10 / 5k credits, 1 credit per call across all four platforms).
-  - Optional: `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`), `OPENAI_API_KEY` (for embeddings, not used yet).
-- `frontend/.env` — `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_URL=http://localhost:8000`. The frontend derives the WebSocket base URL from `VITE_API_URL` (`http://` → `ws://`, `https://` → `wss://`).
+  - **Required for the live-canvas scene path (active default):** Node 18+ + npm on `PATH` (the Express canvas builds + runs from `backend/vendor/mcp_excalidraw`); Playwright Chromium for the headless export tab (run `cd backend/vendor/mcp_excalidraw && npx playwright install chromium` once). Set `ENABLE_MCP_SCENE_DIAGRAM=true` to flip `/ws/agents/scene` onto the live-canvas pipeline; see the table in §5 "AI — Scene (live MCP canvas path)" for every related toggle.
+  - Optional: `ANTHROPIC_MODEL` (default `claude-haiku-4-5` for non-diagram crews), `DIAGRAM_ANTHROPIC_MODEL` (default `claude-sonnet-4-6` — must support vision), `OPENAI_API_KEY` (for embeddings, not used yet, and for `dall-e-3` hero thumbnails when `SCENE_IMAGE_GEN_ENABLED=true`).
+- `frontend/.env` — `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_URL=http://localhost:8000`, `VITE_EXCALIDRAW_CANVAS_URL=http://127.0.0.1:3000` (optional — when set, `ScenePreviewModal` shows the live MCP canvas in an iframe while a diagram run is active). The frontend derives the WebSocket base URL from `VITE_API_URL` (`http://` → `ws://`, `https://` → `wss://`).
 
 ---
 
@@ -406,6 +491,8 @@ Pick one vertical from **§6 P0** — most product leverage next:
 
 When touching agents: follow the existing **native `Crew(stream=True)`** pattern in `research/`, `studio/`, `content_extract/`, and `scene/` — do not reintroduce threaded `step_callback` bridges. For any step that returns a **large nested artifact** (anything Skeleton-shaped), follow `scene/designer.py` and call Anthropic directly with `output_format: json_schema` — do not put it back inside CrewAI `output_pydantic` (see §5 scene postmortem and §3 #10).
 
+When touching the diagram pipeline: changes to **prompt copy** live in `app/agents/excalidraw_design_guide.py` (three constants — `DESIGN_SKILL_SYSTEM_RULES`, `DIAGRAM_JSON_INSTRUCTIONS`, `VISION_REVIEW_PROMPT`); **JSON parser robustness** lives in `_extract_json_object()` / `_balanced_json_object_slice()` in `app/services/diagram_service.py`; **iteration cadence** is `DIAGRAM_MAX_ITERATIONS` × inner 3-pass vision QA, hard-coded inside `stream_diagram_generation`. The id-rewrite step (`assign_fresh_element_ids`) is the load-bearing piece that makes vision corrections referenceable — don't skip it. Any change to the canvas HTTP client surface (`excalidraw_http.py`) must also handle the upstream MCP server returning 503 on PNG export when `websocket_clients == 0`.
+
 ---
 
 ## 11. Agent event protocol (reference)
@@ -427,6 +514,7 @@ Every `/ws/agents/*` endpoint emits events in this shape. The frontend drawer is
 - Research: `ideas_ready`
 - Studio: `script_ready`, `outline_ready`, then `persisted` with `script_artifact_id` + `outline_artifact_id`
 - Extract: `extract_ready`, then `persisted` with `idea_id` + `session_id` + artifact ids
-- Scene: `scene_ready` (payload: `Scene` / skeleton), then `usage`, then `persisted` with `scene_artifact_id` (no critique in current build)
+- Scene (legacy CrewAI path, `ENABLE_MCP_SCENE_DIAGRAM=False`): `agent_start { agent: "layout_planner" | "element_designer" }` → `text_delta` → `task_complete` → `scene_ready` → `usage` → `persisted { scene_artifact_id }`.
+- Scene (live MCP canvas path, `ENABLE_MCP_SCENE_DIAGRAM=True` — current default): `agent_start { agent: "diagram_agent" }` → `diagram_draft { phase: "waiting_live_viewer" | "drawn", iteration?, element_count? }` → `diagram_iteration { iteration, phase: "draft" | "vision" | "approved", layout_hint? }` (repeats per iteration / inner pass) → `task_complete { agent: "diagram_agent" }` → `diagram_complete { iterations }` → `scene_ready` → `usage` → `persisted { scene_artifact_id }`.
 
 Shared: `agent_start`, `text_delta`, `task_complete`, `usage`, `complete`, `error`. Research emits `tool_call` + `sources` for **every** search tool — Exa (`platform=web`), Reddit (`platform=reddit`), YouTube (`platform=youtube`), X (`platform=x`), Instagram (`platform=instagram`) — all flowing through the same `app.agents.research.streaming.sources_emitter_var` ContextVar. Each emitted `SourceRef` carries its `platform` tag; older clients that don't read `platform` simply default-render as `web`.
