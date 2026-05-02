@@ -392,8 +392,9 @@ class DiagramService:
 
         user_content = "".join(parts)
         system_prompt = (
-            "You are an expert instructional diagram designer who invents context-native visuals — "
-            "never canned layouts. "
+            "You are an expert instructional diagram designer who treats every brief as a "
+            "teachable multi-zone canvas (zoom-friendly, pannable storytelling) — never canned "
+            "single-viewport dashboards. "
             "Your entire reply body must be one parseable JSON object (diagram draft) that closes cleanly."
         )
 

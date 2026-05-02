@@ -1,6 +1,6 @@
 ---
 name: excalidraw
-description: Draw professional diagrams on a live Excalidraw canvas via MCP. Use when asked to create architecture diagrams, flowcharts, system maps, comparison visuals, or any visual explanation. Covers setup, 10 visual techniques, design preferences, layout best practices, and the screenshot-iterate loop.
+description: Draw professional diagrams on a live Excalidraw canvas via MCP. Use when asked to create architecture diagrams, flowcharts, system maps, comparison visuals, or teaching-style explainers. Covers setup, zoom-isolated explanation zones (YouTube/live teaching), 10 visual techniques, layout rules, and the screenshot-iterate loop.
 ---
 
 # Excalidraw Diagramming Skill
@@ -62,11 +62,13 @@ The key insight: the agent can **see its own canvas** via screenshots. This crea
 ## Workflow (ALWAYS follow this order)
 
 1. **Read the design guide** -- call `read_diagram_guide` first for color palette and sizing rules
-2. **Plan the layout** -- decide on structure based on content (vertical cards, horizontal flow, grid)
-3. **Create 3 variations** -- ALWAYS produce 3 different layout options before committing. Save each as a snapshot. Show a screenshot of each.
-4. **Let the user choose** -- present all 3 with a short description of each
-5. **Refine the chosen version** -- clean up based on feedback
-6. **Final screenshot** -- verify everything looks right before exporting
+2. **Classify the brief** -- If it is **teaching, YouTube-style walkthrough, live explanation with zoom/pan, or scripted section-by-section delivery**, treat the canvas as a **large navigable presentation board** (see **Zoom-Based Canvas Architecture** below). Otherwise use compact layout conventions in **Layout Rules**.
+3. **Plan before drawing** -- **Never** place elements first and "pack" afterward. Decide zones, approximate bounding regions, gutters, and flow **before** `batch_create_elements`. For teaching canvases this is mandatory.
+4. **Plan the layout** -- Structure from content (vertical cards, horizontal flow, grid, **or** spaced teaching zones along a narrative path).
+5. **Create 3 variations** -- Produce 3 different layout options before committing (for teaching canvases vary **zone order, flow direction, and gutter scale**, not just colors). Save each as a snapshot. Show a screenshot of each.
+6. **Let the user choose** -- present all 3 with a short description of each
+7. **Refine the chosen version** -- clean up based on feedback
+8. **Final screenshot** -- verify everything looks right; for teaching canvases run **Zoom Isolation Check**
 
 ### Variation Strategies
 
@@ -75,6 +77,114 @@ When creating 3 options, vary these dimensions:
 2. **Shape variety** -- all rectangles vs mixed (circles, diamonds, rectangles)
 3. **Information density** -- minimal (just labels) vs detailed (labels + descriptions + examples)
 4. **Visual personality** -- clean/professional vs playful/sketchy (roughness: 0 vs 1)
+5. **Teaching canvases additionally** -- global flow direction (LR vs TB vs hybrid), gutter scale vs zone footprint, ordering of beats
+
+---
+
+## Zoom-Based Canvas Architecture
+
+Use this section whenever the diagram should support **explainer pacing**: presenter or viewer **zooms into one beat at a time** and **pans** to the next (YouTube narration, live teaching, staged reveal). Goal: **section isolation**, not a single cramped slide.
+
+### 1. Section isolation (critical)
+
+- Treat each logical part of the content as its own **explanation zone**.
+- Each zone must be **visually independent**: its own grouping of elements reads as **one coherent "slide"** when framed.
+- Maintain an **invisible bounding region** per zone **while planning coordinates** (padding around all elements in that zone). These regions must **never overlap** and must **not come close**—if two zones feel visually adjacent, spacing has failed.
+- Do **not** rely on tight side-by-side packing; that breaks zoom isolation (see the anti-pattern: two circles of focus overlapping in the middle).
+
+### 2. Mandatory spacing rules
+
+Measure using each zone’s **approximate width and height** (tight bounding box of its content + internal padding):
+
+- **Horizontal gap between zones:** at least **1.5×–2×** the **width** of the **wider** of the two adjacent zones.
+- **Vertical gap between zones:** at least **1.5×** the **height** of the **taller** of the two adjacent zones.
+- **Prefer excessive spacing** over compact layouts. When in doubt, **widen the canvas** and push zones apart.
+- If two zones still feel "near" at a comfortable zoom, **increase** gutter until they feel **clearly separate**.
+
+> **Conflict with compact rules:** Default **Layout Rules → Spacing** (e.g. 30–40px between cards) applies to **single-zone** technical diagrams. **Teaching / multi-zone explainers override** with the minimum multipliers above.
+
+### 3. Zoom visibility constraint
+
+For each zone, **simulate** a zoom that frames **only that zone’s content** (typical explainer viewport):
+
+- **Valid:** Only that zone’s elements (plus intentional whitespace) appear in frame; **no** neighbor section’s shapes or labels peek in.
+- **Invalid:** Any meaningful part of another zone is visible → **increase** horizontal/vertical gaps, shrink per-zone footprint, or move zones—**do not** ship a crowded layout.
+
+If **multiple explainer zones** are visible in the same frame without intent, the layout is **wrong** for this use case.
+
+### 4. Layout planning before drawing
+
+**Forbidden for teaching canvases:** drawing elements first, then nudging until they fit one screen.
+
+**Required order:**
+
+1. Parse content into **logical sections** (intro, concept, example, …).
+2. Assign **one zone** per section.
+3. Choose **global flow** (left→right, top→bottom, or guided hybrid).
+4. **Allocate large canvas regions** and **gutters** using the spacing rules—place **empty space on purpose**.
+5. **Then** populate each zone **independently** inside its region.
+6. Connect distant zones with **arrows, paths, or numbered flow** that live in **gutter space** where possible.
+
+### 5. Navigation over compactness
+
+- **Do not** optimize for fitting everything in one viewport.
+- **Do** optimize for **zoom clarity** and **pan-based storytelling** (wide canvas, obvious path).
+- Use **directional cues** (arrows, gentle paths, step numbers) to link zones that are **far apart**—distance is a feature.
+
+### 6. Avoid section crowding
+
+Strictly avoid:
+
+- Side-by-side **tight** placement of major sections (classic failure mode).
+- Overlapping or ambiguous **conceptual** territories (viewer unsure which zone a label belongs to).
+- Dense clustering where several "slides" occupy one screenful.
+
+### 7. Balanced but spacious layout
+
+- **Intentional** alignment and rhythm **within** each zone; **large** intentional gaps **between** zones.
+- Avoid **perfect rigid grids** that repeat across every zone (feels templated).
+- Avoid **chaotic** scatter—spatial story should still read clearly at **overview** zoom (full canvas screenshot).
+
+---
+
+## Teaching / explainer workflow (updated drawing workflow)
+
+Use this **instead of improvising density** whenever **Zoom-Based Canvas Architecture** applies.
+
+1. Parse content into logical sections.
+2. Assign each section to a **separate** zone with its own **non-overlapping** invisible boundary.
+3. Plan canvas layout: **left→right**, **top→bottom**, or **hybrid** (e.g. Z-pattern)—document the path.
+4. Allocate **large** spacing gaps between zones (minimum multipliers above); expand canvas size freely.
+5. Design **each zone independently** (vary internal grammar zone-to-zone so it does not look copy-pasted).
+6. Connect zones with **directional flow** (arrows/paths/step numbers), preferably through **buffers**, not through dense content.
+7. Run **Zoom Isolation Check** (below) before calling the diagram done.
+
+---
+
+## Zoom isolation check (mandatory)
+
+Before finalizing any **teaching / explainer** canvas:
+
+**Per zone:**
+
+- Mentally zoom to **only this zone**.
+- ✅ **Pass:** Nothing from another zone is visible (except blank canvas margin).
+- ❌ **Fail:** Neighbor peeking in → **increase spacing** or rework positions.
+
+**Global:**
+
+- Does the canvas feel **spacious and navigable** at overview? ✅  
+- Does it feel **compressed** or **fitted to one screen**? ❌ Fix.
+
+---
+
+## Teaching canvas — expected behavior
+
+- Diagram behaves like a **presentation canvas** (many slides on one infinite board).
+- Each section behaves like **its own slide** when zoomed.
+- Smooth **pan** along the story path; **zoom** isolates one explanation at a time.
+- No **visual overlap** or **crowding** between sections.
+- Teaching usability beats **viewport compactness**.
 
 ---
 
@@ -183,7 +293,12 @@ For complex diagrams, build one section at a time using `batch_create_elements`.
 
 ### Multi-Diagram Layouts
 
-When placing multiple diagrams on one canvas, use a grid layout:
+Use this pattern for **comparing several small diagrams** on one compact canvas (architecture overview, dashboards).
+
+When the brief is a **zoom/pan teaching story** instead, **do not** reuse these tight column offsets—those gaps are usually **far too narrow** for **Zoom-Based Canvas Architecture** (use **1.5×–2×** zone-width gutters and expand the canvas).
+
+For compact multi-diagram grids only:
+
 - **2 diagrams:** side by side, ~530px apart
 - **3 diagrams:** row of 3, ~530px column spacing
 - **6 diagrams (3x2):** columns at x=50, x=560, x=1080. Rows at y=20, y=460. Each cell ~480px wide, ~420px tall.
@@ -219,6 +334,8 @@ Low-opacity background rectangles group related elements. Use a free-standing te
 {"id": "zone-label", "type": "text", "x": 70, "y": 60, "width": 200, "height": 30,
  "text": "Backend Services", "fontSize": 18, "fontFamily": "helvetica"}
 ```
+
+For **zoom-isolated teaching canvases**, tinted zone backgrounds (if used) must stay **within one explanation zone's invisible boundary**—never stretch a single slab under **two** explainer beats. Prefer **neutral canvas** plus spacing over huge shared tints.
 
 ### 3. Bound Arrows with Labels
 
@@ -309,7 +426,10 @@ Never skip the screenshot step. Always verify before moving on.
 These prevent the most common diagram problems.
 
 ### Spacing
-- **Between shapes:** 30-40px gap between connected cards/zones
+
+**Multi-zone teaching / explainer canvases:** Gutters **between explanation zones** are governed by **Zoom-Based Canvas Architecture** (minimum horizontal / vertical multiples by zone size). The bullets below mainly apply **inside a zone** and to **compact single-flow** diagrams.
+
+- **Between shapes (inside a zone):** 30-40px gap between connected cards
 - **Vertical tiers:** 80-120px between rows (enough room for arrow labels)
 - **Shape width:** `max(600, labelCharCount * 9)` for boxes with heading + description; `max(160, labelCharCount * 9)` for simple label boxes
 - **Shape height:** 60px single-line, 80px two-line, 110px for step cards with descriptions
@@ -377,6 +497,7 @@ Run this after every `batch_create_elements`. Take a screenshot and check:
 8. **Zone labels** -- Not centered in background zones (use free-standing text instead)
 9. **Alignment** -- Same-role elements sharing coordinates?
 10. **Font consistency** -- Helvetica for headings, Excalifont for descriptions?
+11. **Teaching / explainer canvas (when applicable)** -- Run **Zoom Isolation Check**; gutters meet **≥1.5×–2×** zone-width (horizontal) and **≥1.5×** zone-height (vertical) rules; neighbors do **not** appear when zoomed into one zone; canvas feels navigable not screen-crammed
 
 If anything fails: stop, fix it, re-screenshot, then continue.
 
@@ -396,6 +517,7 @@ If anything fails: stop, fix it, re-screenshot, then continue.
 - Forgetting to save snapshots before moving to the next variation
 - Building the entire diagram in one `batch_create_elements` call -- build section by section
 - Using the same stroke color for every element -- vary colors to encode meaning
+- **Teaching canvases:** Side-by-side **tight** explainer zones, **narrow** gutters, or optimizing for **one-screen fit** instead of zoom isolation (see **Zoom-Based Canvas Architecture**)
 
 ---
 
@@ -425,11 +547,11 @@ If anything fails: stop, fix it, re-screenshot, then continue.
 
 1. `clear_canvas` to start fresh
 2. Call `read_diagram_guide` for the built-in design reference
-3. Plan your coordinate grid (sketch tiers and x-positions)
+3. Plan structure: **coordinate grid + zone regions** — for teaching briefs allocate **zones and gutters first** (**Zoom-Based Canvas Architecture**); for compact diagrams use standard **Layout Rules**
 4. Create **3 variations** -- save each as a snapshot, screenshot each
 5. Present all 3, let user choose
 6. Refine the chosen version
-7. `get_canvas_screenshot` -- run the Quality Checklist
+7. `get_canvas_screenshot` -- run the Quality Checklist (and **Zoom Isolation Check** if teaching canvas)
 8. Fix issues with `update_element`, re-screenshot
 9. Export when clean: `export_to_image` (PNG/SVG) or `export_scene` (.excalidraw)
 
