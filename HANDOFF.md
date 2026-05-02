@@ -309,7 +309,49 @@ The Excalidraw vertical is now driven by the live `mcp_excalidraw` MCP server + 
 
 **Multi-type JSON Schema mismatch (PR2 hot-fix, 2026-05-02):** the upstream MCP server's tool definitions use `type: ["string", "number"]` for `fontFamily` (and may add similar fields later). `mcpadapt`'s schema converter handles this fine, but `crewai_tools.MCPServerAdapter` then re-runs the schema through CrewAI's strict `crewai.utilities.pydantic_schema_utils.create_model_from_schema`, which raises `Unsupported JSON schema type: ['string', 'number']`. We bypass `MCPServerAdapter` entirely and use `mcpadapt.MCPAdapt` directly with a tiny `_SanitisingCrewAIAdapter` subclass that flattens multi-type properties to a single non-null type before delegating. The upstream server's `normalizeFontFamily()` accepts both names and numeric IDs at runtime, so narrowing to `string` doesn't lose behaviour. Don't fix this by patching `vendor/mcp_excalidraw/src/index.ts` — the sanitiser survives upstream re-clones / re-builds and absorbs future multi-type fields automatically.
 
-**Anthropic 20-strict-tool cap (PR2 hot-fix, 2026-05-02):** Anthropic's API caps `strict` tools at 20 per request, and CrewAI's Anthropic provider sends every tool we expose as strict. The vendored MCP server ships **26 tools** plus our 4 backend tools = 30, which 400s with `Too many strict tools (30)`. Fix is a deliberate **build whitelist** in `app/agents/visual/mcp.py` (`_BUILD_TOOL_NAMES`, 12 tools — CRUD + inspect + viewport + snapshots + final read). Total exposed = 12 MCP + 4 backend = **16**, comfortably under the cap. Dropped: `create_element` (use `batch_create_elements` instead — even single-element creates batch), `group_elements`/`ungroup_elements`/`lock_elements`/`unlock_elements` (human-editor concerns, not agent-relevant), `distribute_elements`/`duplicate_elements` (`align_elements` + position math suffice), `import_scene`/`create_from_mermaid` (user-controlled inputs, not agent path), `read_diagram_guide` (duplicate of the verbatim-injected `excalidraw-diagram` skill), `get_resource`/`get_element` (`query_elements` + `describe_scene` cover both), `export_to_image`/`export_to_excalidraw_url` (we persist via `export_scene` + our own `POST .../scene/share` route). PR3's `SharpenChatFlow` may want a slightly different set — `mcp_excalidraw_tools(tool_names=...)` accepts an override. Live verified post-trim: 16 tools register; the prompts in `agent.py` + `excalidraw-canvas/SKILL.md` + `excalidraw-diagram/SKILL.md` were updated to stop directing the agent at dropped tools.
+**Anthropic strict-mode caps (PR2 hot-fix, 2026-05-02):** Anthropic's API caps `strict` tools at 20/request AND union-typed parameters at 16/request. CrewAI 1.14.2 hardcodes `"strict": True` on every tool it builds (`crewai.utilities.agent_utils.convert_tools_to_openai_schema`, line 207). The visual agent's MCP toolkit blows past both caps: 30 tools = `400 Too many strict tools (30)`; even after trimming to 16, optional MCP fields produce 45 unions = `400 too many parameters with union types`. Two complementary fixes in PR2:
+
+1. **Disable strict mode globally** — `app/services/llm.py` runs `_install_tool_schema_patches()` at module import, monkey-patching `convert_tools_to_openai_schema` to pop `strict` off every tool dict. The Anthropic provider then reads `bool(func_info.get("strict")) → False` and skips the strict path entirely; no caps apply. Idempotent (marker attribute on the wrapper). Disabling strict trades grammar-constrained tool calls for more permissive tool calls — fine here because CrewAI's own retry handles malformed calls. The patch ALSO walks `sys.modules` and rebinds the symbol in every consumer that already grabbed a reference (e.g. `crewai.agents.crew_agent_executor` does `from … import convert_tools_to_openai_schema`, copying the function reference into its own namespace — reassigning at the source module isn't enough). Affects every CrewAI agent in this process (research/studio/extract/visual), which is correct — none of them benefit meaningfully from strict.
+
+2. **Build-tool whitelist** still applies — `app/agents/visual/mcp.py` (`ALL_VISUAL_MCP_TOOLS`, 11 tools — CRUD + inspect + viewport + snapshots + final read). The whitelist is then sub-divided into per-agent slices (see "Three-agent split" below).
+
+**Why not switch providers?** DeepSeek was considered (OpenAI-compatible, cheaper). Their strict mode is **more** restrictive — "all properties of every object must be set as required, and `additionalProperties: false`" — and most MCP tools have many optional fields. Without DeepSeek strict mode, function calling works but the visual agent loses Sonnet 4.6's vision (load-bearing for screenshot loops + PR3 screenshot-to-edit). Stay on Sonnet 4.6 with strict disabled.
+
+**Three-agent split (PR2.5, 2026-05-02):** the strict-off patch alone wasn't enough — Anthropic's separate **16-union-typed-parameter cap** still fired because CrewAI's pydantic round-trip wraps every optional MCP field in `anyOf: [<type>, {type: null}]` (~45 unions across the 16-tool whitelist). Two fixes were tried and abandoned: (a) `tool_search` lazy loading via `AnthropicCompletion` — Anthropic validates *every* tool's schema upfront even when `defer_loading=True`, so the cap still fired; (b) stripping the null branch via `crewai.utilities.pydantic_schema_utils.strip_null_from_types` in the same patch site — got under the API cap, but the agent kept emitting literal `null` for optional fields and the MCP server's Zod validators (`vendor/mcp_excalidraw/src/index.ts`) rejected the calls. **The shipped fix is to split the visual agent into three agents with disjoint tool sets so each per-agent API request stays under 16 unions naturally — no schema modification.**
+
+Per-tool union count (raw, no patches — verified 2026-05-02):
+- `batch_create_elements`: 16 (one per optional field per element item)
+- `update_element`: 14
+- `query_elements`: 7
+- `set_viewport`: 5
+- `get_canvas_screenshot` / `export_scene` / `persist_scene_artifact`: 1 each
+- everything else: 0
+
+Per-agent split:
+
+| Agent (wire key) | Tools | Unions | Role |
+|---|---|---|---|
+| `visual_planner` | `get_script_and_outline`, `get_brand_palette`, `search_founder_knowledge`, `describe_scene`, `query_elements` | **7** | Reads source material + (if canvas non-empty) inspects existing state. Outputs a free-text plan. No drawing tools. |
+| `visual_drawer` | `batch_create_elements`, `delete_element`, `clear_canvas`, `align_elements`, `snapshot_scene`, `restore_snapshot` | **16** | Executes the plan on the canvas. Receives planner output (and on refine passes, the critic's notes) as task context. **No `update_element`** — edit pattern is delete + batch_create. |
+| `visual_critic` | `get_canvas_screenshot`, `describe_scene`, `query_elements`, `set_viewport`, `export_scene`, `persist_scene_artifact` | **15** | Screenshots the canvas, audits, returns either `VERDICT: PASS` (and persists) or `VERDICT: FIX` + numbered notes (back to drawer). Sonnet 4.6 vision is load-bearing. |
+
+`update_element` is dropped entirely. The "edit" pattern is delete-and-recreate — Excalidraw elements are cheap, so the critic returns a list of element ids to delete plus a list of new elements to create, and the drawer applies it via `delete_element` + `batch_create_elements`. Loses some token efficiency vs. an in-place patch, but keeps every per-agent API request under the cap with zero schema patches.
+
+Orchestration (`app/agents/visual/build.py:run_visual_build`):
+1. Open `mcp_excalidraw_tools(tool_names=ALL_VISUAL_MCP_TOOLS)` once for the whole run — one Node subprocess, slice the tool list per-agent.
+2. **Planner kickoff** (one CrewAI `Crew(stream=True)` with one task) → emit events tagged `visual_planner`. Capture the planner's output text as the `plan_brief`.
+3. **Drawer kickoff** with `plan_brief` injected into the task description → emit events tagged `visual_drawer`.
+4. **Refine loop** up to `VISUAL_REFINE_MAX_ITERS` iterations:
+   a. **Critic kickoff** → emit events tagged `visual_critic`. Parse `VERDICT: PASS|FIX` from the final task output.
+   b. If `PASS`, break. Otherwise inject the critic's `notes` into a new drawer task description and re-kickoff the drawer.
+5. **Final stretch** — pull `export_scene` from MCP (defence-in-depth re-persist if the critic skipped it), emit `scene_ready` + `persisted` + `usage` (sum of all per-Crew `streaming.result.token_usage`) + `complete`.
+
+Settings (`backend/app/config.py`):
+- `VISUAL_AGENT_ANTHROPIC_MODEL = "claude-sonnet-4-6"` — used by all three agents.
+- `VISUAL_AGENT_MAX_ITER = 24` — per-agent CrewAI tool-call cap (drawer hits this hardest).
+- `VISUAL_REFINE_MAX_ITERS = 3` — max critic-drawer refine cycles before we ship whatever's on the canvas.
+
+Wire-event protocol unchanged from PR2 except for `agent` field values: `visual_planner` / `visual_drawer` / `visual_critic` instead of `visual_director`. The frontend's `SceneRunPanel` already handles arbitrary agent names through the generic `text_delta` / `tool_call` events — no map update needed.
 
 **Reading the new flow when adding features (e.g. PR3 sharpen):** PR3's `SharpenChatFlow` should reuse the same building blocks PR2 wired — `mcp_excalidraw_tools()` cm, `build_visual_agent(context, mcp_tools, extra_skill_paths=...)`, and the same wire-event protocol. The chat loop differs only in shape: a long-lived WS that accepts user turns interleaved with tool calls (CrewAI Flow with `@listen("user_message")`), and per-turn writes to `chat_messages`. The agent itself is the same.
 

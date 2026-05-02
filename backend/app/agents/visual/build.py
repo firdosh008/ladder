@@ -1,4 +1,4 @@
-"""``BuildVisualFlow`` — one-shot canvas generation for a studio session.
+"""``run_visual_build`` — three-agent canvas generation for a studio session.
 
 Public API::
 
@@ -9,20 +9,22 @@ The flow:
 
   1. Ensure the local Excalidraw canvas (Express + Vite) is up — boots Node
      subprocess once via :func:`app.services.excalidraw_canvas.ensure_canvas_running`.
-  2. Open the MCP stdio adapter (``mcp_excalidraw_tools()``) for the duration
-     of this run; the agent gets the full 26-tool MCP surface plus our four
-     backend tools.
-  3. Build a single CrewAI ``Agent`` + ``Task`` + ``Crew(stream=True)`` and
-     stream chunks → wire events (``agent_start`` / ``tool_call`` /
-     ``text_delta`` / ``task_complete``).
-  4. Pull the final canvas state from MCP (``export_scene``) and persist it
-     as a versioned ``excalidraw`` artifact via the user-scoped client (RLS
-     enforced — never service-role here).
-  5. Emit ``scene_ready`` + ``persisted`` + ``complete`` (matches the event
-     protocol in HANDOFF.md §11).
+  2. Open the MCP stdio adapter once for the whole run via
+     ``mcp_excalidraw_tools(tool_names=ALL_VISUAL_MCP_TOOLS)``. Slice the
+     11-tool surface per-agent so each per-agent API request stays under
+     Anthropic's 16 union-typed-parameter cap.
+  3. **Planner kickoff** → free-text build plan. No drawing tools.
+  4. **Drawer kickoff** with the plan injected → executes on the canvas.
+  5. **Critic loop** up to ``VISUAL_REFINE_MAX_ITERS`` cycles:
+       a. Critic kickoff → screenshots + audits → ``VERDICT: PASS|FIX``.
+       b. PASS → break. FIX → re-kickoff drawer with critic notes.
+  6. Final stretch: pull ``export_scene`` (defence-in-depth re-persist if
+     the critic skipped it), emit ``scene_ready`` + ``persisted`` +
+     ``usage`` + ``complete``.
 
 Every run wraps in :func:`log_usage` per HANDOFF.md §3 #8 — non-negotiable
-for billing once BYOK lands.
+for billing once BYOK lands. Token usage is summed across all per-Crew
+``streaming.result.token_usage`` values.
 """
 
 from __future__ import annotations
@@ -33,11 +35,24 @@ import logging
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from crewai import Agent, Crew, Process, Task
+from crewai import Crew, Process, Task
 
-from app.agents.visual.agent import build_visual_agent
+from app.agents.visual.agent import (
+    CRITIC_AGENT_KEY,
+    DRAWER_AGENT_KEY,
+    PLANNER_AGENT_KEY,
+    build_critic_agent,
+    build_drawer_agent,
+    build_planner_agent,
+)
 from app.agents.visual.context import SessionContext
-from app.agents.visual.mcp import mcp_excalidraw_tools
+from app.agents.visual.mcp import (
+    ALL_VISUAL_MCP_TOOLS,
+    CRITIC_MCP_TOOLS,
+    DRAWER_MCP_TOOLS,
+    PLANNER_MCP_TOOLS,
+    mcp_excalidraw_tools,
+)
 from app.config import settings
 from app.deps import user_client
 from app.services import excalidraw_canvas
@@ -45,86 +60,229 @@ from app.services import excalidraw_canvas
 log = logging.getLogger(__name__)
 
 
-# Anthropic Sonnet 4.6 list pricing (USD per 1M tokens).
-# Same numbers used by the studio crew; consolidate when real billing lands.
+# Anthropic Sonnet 4.6 list pricing (USD per 1M tokens). Same numbers used
+# by the studio crew; consolidate when real billing lands.
 _PRICE_IN_PER_MTOK = 3.0
 _PRICE_OUT_PER_MTOK = 15.0
 
 
-_AGENT_KEY = "visual_director"
+# ─── Task description builders ────────────────────────────────────────────
 
 
-def _agent_key(role: str | None) -> str | None:
-    """Map CrewAI's role label back to a stable wire key.
-
-    The visual flow only has one agent so anything non-empty maps to
-    ``visual_director``. Mirrors the research/studio crews' naming pattern
-    so the frontend's ``AGENT_LABELS`` map can pick it up unchanged.
-    """
-    if not role:
-        return None
-    return _AGENT_KEY
-
-
-def _build_task_description(context: SessionContext, steer_note: str | None) -> str:
-    """Compose the single Task prompt the agent runs against.
-
-    The methodology lives in the skills (verbatim-injected by CrewAI). This
-    prompt is just the *job for this turn* — keep it terse so we don't fight
-    the skills for context budget.
-    """
+def _planner_task_description(
+    context: SessionContext, steer_note: str | None
+) -> str:
     base = (
-        "Build a polished, opinionated Excalidraw whiteboard for this "
-        "studio session. Use the live MCP canvas tools — read the "
-        "`excalidraw-canvas` skill for tool ordering and the "
-        "`excalidraw-diagram` skill for visual methodology before you "
-        "start.\n\n"
-        "Workflow (NON-NEGOTIABLE):\n"
-        "  1. `clear_canvas` only if the canvas is non-empty AND you are "
-        "starting fresh.\n"
-        "  2. `get_script_and_outline` to read the current source of "
-        "truth. Do NOT trust the system-prompt summary alone — the user "
-        "may have edited the outline since this run started.\n"
-        "  3. `get_brand_palette` to read the brand color tokens.\n"
-        "  4. Plan the composition mentally: depth assessment, pattern per "
-        "section, summary→sections→detail multi-zoom shape.\n"
-        "  5. Build section-by-section with `batch_create_elements`. After "
-        "each section, `set_viewport` (fit-to-content) and "
-        "`get_canvas_screenshot`. Audit the screenshot. Fix what you see.\n"
-        "  6. When you are confident the composition is clean, "
-        "`describe_scene` once for a final structural check.\n"
-        "  7. Call `persist_scene_artifact` with the FULL exported scene "
-        "(use the MCP `export_scene` tool to get it). Pass a one-line note "
-        "summarising the diagram.\n\n"
-        "Hard rules:\n"
-        "  • Arrows MUST bind to shape ids on both ends. No floating "
-        "arrows.\n"
-        "  • No tiled grids of equal-sized boxes. Organic spatial "
-        "hierarchy only.\n"
-        "  • Brand primary color (when present) goes on hero / accent "
-        "shapes, never on every element.\n"
-        "  • Do NOT regenerate from scratch on every retry — surgical "
-        "edits via `update_element` / `delete_element` beat full "
-        "rebuilds.\n"
+        "Produce the build plan for this studio session's whiteboard. "
+        "Read the script + outline + brand palette first, then output a "
+        "single plain-text plan with sections: (1) DEPTH, (2) STRUCTURE, "
+        "(3) SECTIONS, (4) HARD CONSTRAINTS. Be opinionated and concrete "
+        "— the drawer agent will execute exactly what you write.\n\n"
+        "Workflow:\n"
+        "  1. ``get_script_and_outline`` — source of truth.\n"
+        "  2. ``get_brand_palette``       — brand color tokens.\n"
+        "  3. (Optional) ``search_founder_knowledge`` — only if a prior "
+        "framing would meaningfully sharpen the plan.\n"
+        "  4. (Optional) ``describe_scene`` / ``query_elements`` — only "
+        "if you suspect the canvas is non-empty (e.g. a refine pass).\n"
+        "  5. Write the plan. Do NOT call any drawing tools — you don't "
+        "have any."
     )
-
     if steer_note:
         base += (
-            "\nFOUNDER STEER NOTE — apply on top of the above:\n"
+            "\n\nFOUNDER STEER NOTE — apply on top of the above:\n"
             f"  > {steer_note.strip()[:1200]}\n"
         )
-
     return base
 
 
-async def _export_scene_via_mcp(mcp_tools: list[Any]) -> dict[str, Any] | None:
-    """Call the MCP ``export_scene`` tool and return its parsed JSON payload.
+def _drawer_initial_task_description(plan_brief: str) -> str:
+    return (
+        "Execute this plan on the live Excalidraw canvas. Build "
+        "section-by-section using ``batch_create_elements``. Arrows MUST "
+        "bind to shape ids on both ends. Brand color (when present) goes "
+        "on hero / accent shapes only.\n\n"
+        "If the canvas is non-empty and the plan calls for a fresh start, "
+        "``clear_canvas`` first. Otherwise add to existing state.\n\n"
+        "End your turn with a 1-2 sentence summary of what you drew. Do "
+        "NOT call ``persist_scene_artifact`` — the critic does that on "
+        "PASS. Do NOT screenshot — the critic audits visually.\n\n"
+        "── PLAN ─────────────────────────────────────────────\n"
+        f"{plan_brief.strip()}\n"
+        "─────────────────────────────────────────────────────"
+    )
 
-    The MCP server's ``export_scene`` returns the full Excalidraw envelope —
-    elements + appState + files — which is exactly what we persist as the
-    next artifact version. Robust against tool naming drift across upstream
-    versions: also accepts ``get_scene`` / ``describe_scene`` if available.
+
+def _drawer_refine_task_description(plan_brief: str, critic_notes: str) -> str:
+    return (
+        "Apply the critic's fixups to the canvas. The plan is unchanged "
+        "from your prior pass — these notes are surgical edits.\n\n"
+        "Edit pattern is **delete + batch_create**: for each REPLACE "
+        "fixup, ``delete_element`` the old id then ``batch_create_elements`` "
+        "with the new shape. For DELETE, just ``delete_element``. For ADD, "
+        "``batch_create_elements`` only.\n\n"
+        "End your turn with a 1-2 sentence summary of what you changed.\n\n"
+        "── ORIGINAL PLAN ────────────────────────────────────\n"
+        f"{plan_brief.strip()}\n"
+        "── CRITIC NOTES ─────────────────────────────────────\n"
+        f"{critic_notes.strip()}\n"
+        "─────────────────────────────────────────────────────"
+    )
+
+
+def _critic_task_description() -> str:
+    return (
+        "Audit the canvas the drawer just produced. Run the audit "
+        "checklist (arrow binding, spatial hierarchy, brand discipline, "
+        "label sanity, outline coverage). Take at least one screenshot "
+        "via ``get_canvas_screenshot`` — your vision is load-bearing.\n\n"
+        "If everything passes, call ``persist_scene_artifact`` with the "
+        "full scene JSON (use ``export_scene`` to obtain it) THEN emit:\n"
+        "    VERDICT: PASS\n"
+        "    <one-sentence summary>\n\n"
+        "If anything fails, do NOT persist. Emit:\n"
+        "    VERDICT: FIX\n"
+        "    1. <DELETE|REPLACE|ADD> ...\n"
+        "    2. ...\n"
+        "Be specific about element ids — the drawer will execute your "
+        "notes verbatim."
+    )
+
+
+# ─── Per-kickoff streaming + token aggregation ────────────────────────────
+
+
+async def _run_kickoff(
+    crew: Crew,
+    agent_key: str,
+    *,
+    token_acc: dict[str, int],
+) -> AsyncIterator[dict[str, Any]]:
+    """Run one Crew kickoff and yield wire events tagged with ``agent_key``.
+
+    All chunks from a single sequential single-task kickoff are from one
+    agent, so we can tag them deterministically without inspecting the
+    chunk's role (which CrewAI doesn't always populate for streamed
+    text deltas).
+
+    Aggregates token usage into ``token_acc`` after the stream completes.
+    Captures the full text output and pushes it onto ``crew._final_text``
+    so the orchestrator can parse it (e.g. the critic's VERDICT line).
     """
+    streaming = await crew.akickoff()
+
+    text_buffer = ""
+    full_text = ""
+    emitted_tool_calls: set[str] = set()
+    seen_task_index = -1
+
+    async for chunk in streaming:
+        task_index = int(getattr(chunk, "task_index", 0) or 0)
+        if task_index != seen_task_index:
+            if seen_task_index >= 0:
+                yield {
+                    "type": "task_complete",
+                    "agent": agent_key,
+                    "preview": text_buffer.strip()[-240:],
+                }
+                text_buffer = ""
+            seen_task_index = task_index
+
+        chunk_type = getattr(chunk, "chunk_type", None)
+        chunk_type_name = (
+            getattr(chunk_type, "value", chunk_type)
+            if chunk_type is not None
+            else "text"
+        )
+
+        if chunk_type_name == "tool_call":
+            tc = getattr(chunk, "tool_call", None)
+            if tc is None:
+                continue
+            tool_id = str(
+                getattr(tc, "tool_id", "")
+                or f"{agent_key}:{getattr(tc, 'index', 0)}"
+            )
+            if tool_id in emitted_tool_calls:
+                continue
+            emitted_tool_calls.add(tool_id)
+            yield {
+                "type": "tool_call",
+                "agent": agent_key,
+                "tool": getattr(tc, "tool_name", None) or "unknown",
+                "arguments": getattr(tc, "arguments", "") or "",
+            }
+            continue
+
+        content = getattr(chunk, "content", "") or ""
+        if content:
+            text_buffer = (text_buffer + content)[-4000:]
+            full_text += content
+            yield {
+                "type": "text_delta",
+                "agent": agent_key,
+                "content": content,
+            }
+
+    if seen_task_index >= 0:
+        yield {
+            "type": "task_complete",
+            "agent": agent_key,
+            "preview": text_buffer.strip()[-240:],
+        }
+
+    # Aggregate token usage from this kickoff's CrewOutput.
+    crew_result = getattr(streaming, "result", None)
+    metrics = getattr(crew_result, "token_usage", None) if crew_result else None
+    if metrics is not None:
+        token_acc["input"] += int(getattr(metrics, "prompt_tokens", 0) or 0)
+        token_acc["output"] += int(getattr(metrics, "completion_tokens", 0) or 0)
+
+    # Stash full text on the crew for the orchestrator. ``Crew`` is a
+    # Pydantic model with arbitrary attribute assignment allowed; we use
+    # a private-ish name to avoid colliding with framework fields.
+    try:
+        setattr(crew, "_ladder_final_text", full_text)
+    except Exception:
+        # If pydantic validation rejects it, fall back to a side channel.
+        pass
+
+
+# ─── VERDICT parsing ──────────────────────────────────────────────────────
+
+
+def _parse_critic_verdict(text: str) -> tuple[str, str]:
+    """Return ``(verdict, notes)``. ``verdict`` is ``"PASS"`` or ``"FIX"``.
+
+    Defaults to ``"FIX"`` with the full text as notes if no verdict line
+    is found — defensive: a critic that didn't follow the protocol means
+    we should not silently persist a possibly-broken canvas.
+    """
+    if not text:
+        return "FIX", "(critic produced no output)"
+    # Look for the last VERDICT line — the critic may include the format
+    # template earlier in its scratchpad.
+    lines = text.splitlines()
+    verdict_idx = -1
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].strip().upper().startswith("VERDICT:"):
+            verdict_idx = i
+            break
+    if verdict_idx < 0:
+        return "FIX", text.strip()[-3000:]
+    verdict_line = lines[verdict_idx].strip().upper()
+    if "PASS" in verdict_line:
+        return "PASS", "\n".join(lines[verdict_idx:]).strip()
+    # Anything else (FIX, FAIL, etc.) → take everything from the verdict
+    # line forward as the notes block.
+    return "FIX", "\n".join(lines[verdict_idx:]).strip()
+
+
+# ─── MCP scene export + persistence (defence-in-depth) ────────────────────
+
+
+async def _export_scene_via_mcp(mcp_tools: list[Any]) -> dict[str, Any] | None:
+    """Call the MCP ``export_scene`` tool and return its parsed JSON payload."""
     candidates = ("export_scene", "get_scene", "describe_scene")
     by_name = {getattr(t, "name", "?"): t for t in mcp_tools}
     for name in candidates:
@@ -132,8 +290,6 @@ async def _export_scene_via_mcp(mcp_tools: list[Any]) -> dict[str, Any] | None:
         if tool is None:
             continue
         try:
-            # CrewAI BaseTool wraps `_run` — use the public `run` if exposed,
-            # else fall back to `_run` so we work across versions.
             runner = getattr(tool, "run", None) or getattr(tool, "_run", None)
             if runner is None:
                 continue
@@ -147,17 +303,9 @@ async def _export_scene_via_mcp(mcp_tools: list[Any]) -> dict[str, Any] | None:
 
 
 def _coerce_scene_json(raw: Any) -> dict[str, Any] | None:
-    """Best-effort parse of an MCP tool result into a scene dict.
-
-    MCP tools typically return a string (often JSON, sometimes wrapped in
-    a small envelope). We accept dicts as-is, parse strings, and tolerate
-    upstream wrapping like ``{"content": "<json>"}``.
-    """
     if isinstance(raw, dict):
         if "elements" in raw:
             return raw
-        # Some MCP wrappers nest the payload — pull the first dict child
-        # that looks like a scene.
         for v in raw.values():
             if isinstance(v, dict) and "elements" in v:
                 return v
@@ -201,12 +349,8 @@ async def _next_artifact_version(
 
 
 async def _persist_scene(
-    user_id: str,
-    jwt: str,
-    session_id: str,
-    scene: dict[str, Any],
+    user_id: str, jwt: str, session_id: str, scene: dict[str, Any]
 ) -> str:
-    """Insert a versioned ``excalidraw`` artifact. Returns the artifact id."""
     client = await user_client(jwt)
     version = await _next_artifact_version(jwt, session_id, "excalidraw")
     el_count = len(scene.get("elements") or [])
@@ -231,12 +375,6 @@ async def _persist_scene(
 
 
 async def _ensure_canvas_ready() -> None:
-    """Lazy-boot the Express canvas if FastAPI lifespan failed to start it.
-
-    Production path is the lifespan in ``main.py``; this is the safety net
-    when the dev server was started without the canvas (e.g. Node missing
-    on first try) and the user kicks off a build later.
-    """
     vendor: Path | None = None
     raw = settings.EXCALIDRAW_VENDOR_ROOT.strip()
     if raw:
@@ -246,6 +384,27 @@ async def _ensure_canvas_ready() -> None:
         http_base=settings.EXCALIDRAW_HTTP_URL,
         autostart=settings.EXCALIDRAW_CANVAS_AUTOSTART,
     )
+
+
+# ─── Crew construction helpers ────────────────────────────────────────────
+
+
+def _make_crew(agent, task: Task) -> Crew:
+    return Crew(
+        agents=[agent],
+        tasks=[task],
+        process=Process.sequential,
+        stream=True,
+        verbose=False,
+    )
+
+
+def _slice_mcp(mcp_tools: list[Any], names: frozenset[str]) -> list[Any]:
+    return [t for t in mcp_tools if getattr(t, "name", "") in names]
+
+
+def _final_text(crew: Crew) -> str:
+    return str(getattr(crew, "_ladder_final_text", "") or "")
 
 
 # ─── Public API ───────────────────────────────────────────────────────────
@@ -259,24 +418,23 @@ async def run_visual_build(
     """Stream wire events for one visual build, finalising with persistence.
 
     Event types emitted (matches HANDOFF.md §11):
-      agent_start    — visual_director kickoff
-      tool_call      — every MCP / backend tool the agent invokes
+      agent_start    — visual_planner / visual_drawer / visual_critic
+                       kickoff
+      tool_call      — every MCP / backend tool an agent invokes
       text_delta     — narrative reasoning between tool calls
-      task_complete  — the single build task finished
+      task_complete  — a per-agent kickoff finished
       scene_ready    — final scene JSON pulled from the canvas
       persisted      — { scene_artifact_id }
-      usage          — { token_usage }
+      usage          — { token_usage } (summed across all kickoffs)
       complete       — { cost_usd }
       error          — terminal failure message
     """
-    # Lazy import — avoid forcing usage_log + service_client at module import
-    # time when this module is read for type hints elsewhere.
     from app.services.usage import log_usage
 
-    # Cap the model name so the usage_log row reflects what the visual
-    # agent actually spoke to, not the global default.
     function_name = "visual_build_crew"
     model_name = settings.VISUAL_AGENT_ANTHROPIC_MODEL
+    refine_cap = settings.VISUAL_REFINE_MAX_ITERS
+    token_acc = {"input": 0, "output": 0}
 
     async with log_usage(
         user_id=context.user_id,
@@ -292,165 +450,167 @@ async def run_visual_build(
             return
 
         try:
-            with mcp_excalidraw_tools() as mcp_tools:
-                yield {"type": "agent_start", "agent": _AGENT_KEY}
+            with mcp_excalidraw_tools(
+                tool_names=ALL_VISUAL_MCP_TOOLS
+            ) as mcp_tools:
+                planner_mcp = _slice_mcp(mcp_tools, PLANNER_MCP_TOOLS)
+                drawer_mcp = _slice_mcp(mcp_tools, DRAWER_MCP_TOOLS)
+                critic_mcp = _slice_mcp(mcp_tools, CRITIC_MCP_TOOLS)
 
-                async for event in _stream_build_crew(
-                    context, mcp_tools, steer_note, entry
+                # ── Planner ──────────────────────────────────────────
+                yield {"type": "agent_start", "agent": PLANNER_AGENT_KEY}
+                planner = build_planner_agent(context, planner_mcp)
+                planner_task = Task(
+                    description=_planner_task_description(context, steer_note),
+                    expected_output=(
+                        "A plain-text build plan with DEPTH / STRUCTURE / "
+                        "SECTIONS / HARD CONSTRAINTS sections. No JSON."
+                    ),
+                    agent=planner,
+                )
+                planner_crew = _make_crew(planner, planner_task)
+                async for ev in _run_kickoff(
+                    planner_crew, PLANNER_AGENT_KEY, token_acc=token_acc
                 ):
-                    yield event
+                    yield ev
+                plan_brief = _final_text(planner_crew)
+                if not plan_brief.strip():
+                    yield {
+                        "type": "error",
+                        "message": "planner produced empty plan — aborting",
+                    }
+                    return
+
+                # ── Drawer (initial pass) ────────────────────────────
+                yield {"type": "agent_start", "agent": DRAWER_AGENT_KEY}
+                drawer = build_drawer_agent(context, drawer_mcp)
+                drawer_task = Task(
+                    description=_drawer_initial_task_description(plan_brief),
+                    expected_output=(
+                        "A 1-2 sentence summary of what was drawn on the "
+                        "canvas. Never a JSON dump."
+                    ),
+                    agent=drawer,
+                )
+                drawer_crew = _make_crew(drawer, drawer_task)
+                async for ev in _run_kickoff(
+                    drawer_crew, DRAWER_AGENT_KEY, token_acc=token_acc
+                ):
+                    yield ev
+
+                # ── Critic ↔ Drawer refine loop ──────────────────────
+                verdict = "FIX"
+                refine_iter = 0
+                while refine_iter < refine_cap:
+                    yield {"type": "agent_start", "agent": CRITIC_AGENT_KEY}
+                    critic = build_critic_agent(context, critic_mcp)
+                    critic_task = Task(
+                        description=_critic_task_description(),
+                        expected_output=(
+                            "Either ``VERDICT: PASS`` + one-line summary "
+                            "(after persisting), or ``VERDICT: FIX`` + "
+                            "numbered fixup list."
+                        ),
+                        agent=critic,
+                    )
+                    critic_crew = _make_crew(critic, critic_task)
+                    async for ev in _run_kickoff(
+                        critic_crew, CRITIC_AGENT_KEY, token_acc=token_acc
+                    ):
+                        yield ev
+                    critic_text = _final_text(critic_crew)
+                    verdict, notes = _parse_critic_verdict(critic_text)
+                    if verdict == "PASS":
+                        break
+                    refine_iter += 1
+                    if refine_iter >= refine_cap:
+                        # Last iteration was a FIX; we're out of budget.
+                        log.info(
+                            "visual refine cap reached (%d) — shipping with "
+                            "outstanding critic notes",
+                            refine_cap,
+                        )
+                        break
+                    # Re-kickoff the drawer with the critic's notes. Reuse
+                    # the agent + tools but a fresh Task + Crew.
+                    yield {"type": "agent_start", "agent": DRAWER_AGENT_KEY}
+                    drawer = build_drawer_agent(context, drawer_mcp)
+                    drawer_task = Task(
+                        description=_drawer_refine_task_description(
+                            plan_brief, notes
+                        ),
+                        expected_output=(
+                            "A 1-2 sentence summary of what was changed. "
+                            "Never a JSON dump."
+                        ),
+                        agent=drawer,
+                    )
+                    drawer_crew = _make_crew(drawer, drawer_task)
+                    async for ev in _run_kickoff(
+                        drawer_crew, DRAWER_AGENT_KEY, token_acc=token_acc
+                    ):
+                        yield ev
+
+                # ── Final stretch ────────────────────────────────────
+                final_scene = await _export_scene_via_mcp(list(mcp_tools))
+                if final_scene is None:
+                    yield {
+                        "type": "error",
+                        "message": (
+                            "agents finished but no scene was produced "
+                            "on the canvas."
+                        ),
+                    }
+                    return
+
+                yield {"type": "scene_ready", "scene": final_scene}
+
+                # Defence-in-depth re-persist: the critic on PASS already
+                # called persist_scene_artifact, but if we exited the loop
+                # without a PASS (refine cap) or the critic skipped the
+                # tool, persist now. Versioning is monotonic so a duplicate
+                # write is harmless.
+                try:
+                    artifact_id = await _persist_scene(
+                        context.user_id,
+                        context.jwt,
+                        context.session_id,
+                        final_scene,
+                    )
+                    yield {"type": "persisted", "scene_artifact_id": artifact_id}
+                except Exception as e:
+                    log.exception("persist excalidraw artifact failed")
+                    yield {
+                        "type": "error",
+                        "message": f"persist failed: {e}",
+                    }
+                    return
+
+                # Roll up token usage from all per-Crew streamings.
+                entry.input_tokens = token_acc["input"]
+                entry.output_tokens = token_acc["output"]
+                entry.cost_usd = round(
+                    (entry.input_tokens / 1_000_000) * _PRICE_IN_PER_MTOK
+                    + (entry.output_tokens / 1_000_000) * _PRICE_OUT_PER_MTOK,
+                    6,
+                )
+
+                yield {
+                    "type": "usage",
+                    "token_usage": {
+                        "input": entry.input_tokens,
+                        "output": entry.output_tokens,
+                        "cost_usd": entry.cost_usd,
+                    },
+                }
+                yield {"type": "complete", "cost_usd": entry.cost_usd}
         except RuntimeError as e:
-            # Most common cause: vendored mcp_excalidraw not built yet.
             log.warning("MCP adapter setup failed: %s", e)
             yield {"type": "error", "message": str(e)}
             return
         except Exception as e:
             log.exception("visual build failed unexpectedly")
             yield {"type": "error", "message": f"visual build failed: {e}"}
-
-
-async def _stream_build_crew(
-    context: SessionContext,
-    mcp_tools: list[Any],
-    steer_note: str | None,
-    entry: Any,
-) -> AsyncIterator[dict[str, Any]]:
-    """Inner generator — kicks off the crew and yields wire events."""
-    agent: Agent = build_visual_agent(context, mcp_tools)
-
-    task = Task(
-        description=_build_task_description(context, steer_note),
-        expected_output=(
-            "A finished Excalidraw whiteboard composition on the live "
-            "canvas (verified via at least one screenshot loop), persisted "
-            "as a versioned excalidraw artifact via the persist tool. "
-            "Final assistant message is a 1-2 sentence summary of what was "
-            "drawn — never a JSON dump."
-        ),
-        agent=agent,
-    )
-
-    crew = Crew(
-        agents=[agent],
-        tasks=[task],
-        process=Process.sequential,
-        stream=True,
-        verbose=False,
-    )
-
-    streaming = await crew.akickoff()
-
-    current_task_index = -1
-    text_buffer = ""
-    emitted_tool_calls: set[str] = set()
-
-    async for chunk in streaming:
-        agent_role = getattr(chunk, "agent_role", "") or ""
-        agent_key = _agent_key(agent_role) or _AGENT_KEY
-        task_index = int(getattr(chunk, "task_index", 0) or 0)
-
-        if task_index != current_task_index:
-            if current_task_index >= 0:
-                yield {
-                    "type": "task_complete",
-                    "agent": _AGENT_KEY,
-                    "preview": text_buffer.strip()[-240:],
-                }
-                text_buffer = ""
-            current_task_index = task_index
-
-        chunk_type = getattr(chunk, "chunk_type", None)
-        chunk_type_name = (
-            getattr(chunk_type, "value", chunk_type)
-            if chunk_type is not None
-            else "text"
-        )
-
-        if chunk_type_name == "tool_call":
-            tc = getattr(chunk, "tool_call", None)
-            if tc is None:
-                continue
-            tool_id = str(
-                getattr(tc, "tool_id", "")
-                or f"{agent_key}:{getattr(tc, 'index', 0)}"
-            )
-            if tool_id in emitted_tool_calls:
-                continue
-            emitted_tool_calls.add(tool_id)
-            yield {
-                "type": "tool_call",
-                "agent": agent_key,
-                "tool": getattr(tc, "tool_name", None) or "unknown",
-                "arguments": getattr(tc, "arguments", "") or "",
-            }
-            continue
-
-        content = getattr(chunk, "content", "") or ""
-        if content:
-            text_buffer = (text_buffer + content)[-4000:]
-            yield {
-                "type": "text_delta",
-                "agent": agent_key,
-                "content": content,
-            }
-
-    if current_task_index >= 0:
-        yield {
-            "type": "task_complete",
-            "agent": _AGENT_KEY,
-            "preview": text_buffer.strip()[-240:],
-        }
-
-    # Pull the final canvas state. The agent should have already called
-    # persist_scene_artifact, but we still emit `scene_ready` for the UI's
-    # live preview (and re-persist if the agent skipped it — defence in
-    # depth, never silently drop a successful build).
-    final_scene = await _export_scene_via_mcp(list(mcp_tools))
-    if final_scene is None:
-        # The canvas server is up; agent just never produced anything.
-        yield {
-            "type": "error",
-            "message": "agent finished but no scene was produced on the canvas.",
-        }
-        return
-
-    yield {"type": "scene_ready", "scene": final_scene}
-
-    # Best-effort: re-persist if the agent didn't (idempotent — versioning
-    # increments). Failure to persist is fatal for the run; the UI can't
-    # hydrate without an artifact.
-    try:
-        artifact_id = await _persist_scene(
-            context.user_id, context.jwt, context.session_id, final_scene
-        )
-        yield {"type": "persisted", "scene_artifact_id": artifact_id}
-    except Exception as e:
-        log.exception("persist excalidraw artifact failed")
-        yield {"type": "error", "message": f"persist failed: {e}"}
-        return
-
-    # Token usage: CrewAI's streaming.result has token_usage when the run
-    # completes cleanly. Pull it for the usage_log row.
-    crew_result = getattr(streaming, "result", None)
-    metrics = getattr(crew_result, "token_usage", None) if crew_result else None
-    if metrics is not None:
-        entry.input_tokens = int(getattr(metrics, "prompt_tokens", 0) or 0)
-        entry.output_tokens = int(getattr(metrics, "completion_tokens", 0) or 0)
-        entry.cost_usd = round(
-            (entry.input_tokens / 1_000_000) * _PRICE_IN_PER_MTOK
-            + (entry.output_tokens / 1_000_000) * _PRICE_OUT_PER_MTOK,
-            6,
-        )
-
-    yield {
-        "type": "usage",
-        "token_usage": {
-            "input": entry.input_tokens,
-            "output": entry.output_tokens,
-            "cost_usd": entry.cost_usd,
-        },
-    }
-    yield {"type": "complete", "cost_usd": entry.cost_usd}
 
 
 __all__ = ["run_visual_build"]

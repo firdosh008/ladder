@@ -59,7 +59,11 @@ class Settings(BaseSettings):
     #: Max CrewAI agent iterations per visual run. The agent does
     #: batch_create + screenshot + fix loops; this caps total turns so a
     #: stuck loop can't burn an unbounded number of API calls.
-    VISUAL_AGENT_MAX_ITER: int = Field(default=36, ge=4, le=80)
+    VISUAL_AGENT_MAX_ITER: int = Field(default=24, ge=4, le=80)
+    #: Max critic↔drawer refine cycles per visual build before we ship
+    #: whatever's on the canvas. Each cycle = one critic kickoff + (if
+    #: VERDICT: FIX) one drawer kickoff with the critic's notes.
+    VISUAL_REFINE_MAX_ITERS: int = Field(default=3, ge=1, le=8)
 
     #: Base URL where ``mcp_excalidraw`` Express canvas listens (MCP mirrors these routes).
     EXCALIDRAW_HTTP_URL: str = "http://127.0.0.1:3000"

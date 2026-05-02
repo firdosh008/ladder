@@ -37,7 +37,7 @@ import logging
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 from app.config import settings
 
@@ -49,59 +49,106 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-# ─── Build-tool whitelist ─────────────────────────────────────────────────
+# ─── Build-tool whitelist + per-agent slices ──────────────────────────────
 #
-# Anthropic caps "strict" tools at 20 per request and CrewAI's Anthropic
-# provider sends every tool we expose as strict. The vendored MCP server
-# ships 26 tools; we add 4 backend tools; 30 tools blow the cap with a
-# 400 invalid_request_error.
+# Anthropic caps "strict" tools at 20 per request AND union-typed parameters
+# at 16 per request. CrewAI's Anthropic provider sends every tool we expose
+# as strict and CrewAI's pydantic round-trip wraps every optional field in
+# ``anyOf: [<type>, {type: null}]``. The vendored MCP server ships 26 tools
+# with many optional fields each; even after trimming to a 12-tool build
+# set we hit ~45 unions and bust the cap.
 #
-# This whitelist is the **build set** — the tools the visual agent
-# actually needs to translate script + outline into a finished whiteboard
-# and persist it. The dropped tools fall into three buckets:
+# Strict-off is patched globally in ``app/services/llm.py`` (covers the
+# 20-tool cap). The 16-union cap is solved here by **splitting the visual
+# agent into three role-scoped agents** and slicing the MCP tool list per
+# agent so each per-agent API request stays under 16 unions naturally —
+# no schema modification, no null-strip patches.
+#
+# Per-tool union counts (verified 2026-05-02 against vendor's schema):
+#   batch_create_elements .... 16    (one per optional field per item)
+#   query_elements ........... 7
+#   set_viewport ............. 5
+#   delete_element ........... 0
+#   clear_canvas ............. 0
+#   align_elements ........... 0
+#   describe_scene ........... 0
+#   get_canvas_screenshot .... 1
+#   snapshot_scene / restore . 0 / 0
+#   export_scene ............. 1
+#
+# ``update_element`` (14 unions) is **dropped** — the edit pattern is
+# delete-and-recreate. Excalidraw elements are cheap; the critic returns
+# a list of element ids to delete plus a list of new elements, and the
+# drawer applies it via ``delete_element`` + ``batch_create_elements``.
+# Sticking ``update_element`` on a 4th agent doesn't help: it'd still
+# need ``query_elements`` (7) to know which id to target → 14+7 = 21,
+# back over the cap. See HANDOFF.md §5 "Three-agent split".
+#
+# The dropped MCP tools (beyond ``update_element``) fall into these
+# buckets, same as the prior single-agent build set:
 #
 #   • Methodology duplicates of skills we already inject — e.g.
 #     ``read_diagram_guide`` (the ``excalidraw-diagram`` skill teaches the
 #     same thing, verbatim).
 #   • Inputs from outside the agent's purview — ``import_scene`` /
-#     ``create_from_mermaid`` (the user can paste mermaid; the agent
-#     should compose natively from the script).
+#     ``create_from_mermaid``.
 #   • Niche layout helpers the agent can replicate with primitives —
 #     ``group_elements`` / ``lock_elements`` / ``distribute_elements`` /
-#     ``duplicate_elements``. Grouping/locking are human-editor concerns;
-#     ``align_elements`` covers most layout polish.
-#   • Redundant inspectors — ``get_element`` / ``get_resource`` (one-off
-#     reads are covered by ``query_elements`` + ``describe_scene``).
+#     ``duplicate_elements``.
+#   • Redundant inspectors — ``get_element`` / ``get_resource``.
 #   • Output paths we don't use — ``export_to_image`` /
-#     ``export_to_excalidraw_url`` (we persist via ``export_scene`` and
-#     publish via our own ``POST .../scene/share`` route).
-#   • ``create_element`` — the ``excalidraw-canvas`` skill explicitly
-#     directs the agent to ``batch_create_elements`` instead.
+#     ``export_to_excalidraw_url``.
+#   • ``create_element`` — the ``excalidraw-canvas`` skill directs the
+#     agent to ``batch_create_elements`` instead.
 #
-# PR3's SharpenChatFlow may want a slightly different set (e.g. drop
-# ``clear_canvas`` since sharpen is incremental). Parametrise then.
-_BUILD_TOOL_NAMES: frozenset[str] = frozenset(
+# PR3's SharpenChatFlow may want a slightly different set; parametrise then.
+
+#: Planner reads source material + (when canvas is non-empty) inspects
+#: existing state. Outputs a free-text plan. No drawing tools. ~7 unions.
+PLANNER_MCP_TOOLS: frozenset[str] = frozenset(
     {
-        # Core CRUD on canvas elements.
-        "batch_create_elements",
-        "update_element",
-        "delete_element",
-        # Inspect (cheap structural read + visual feedback loop).
-        "query_elements",
         "describe_scene",
-        "get_canvas_screenshot",
-        # Layout polish.
-        "align_elements",
-        # Fresh-start + viewport hygiene.
+        "query_elements",
+    }
+)
+
+#: Drawer executes the plan (and on refine passes, the critic's notes)
+#: on the canvas. ``batch_create_elements`` alone is 16 unions, so the
+#: rest of the drawer's tools must contribute 0 unions — they do.
+DRAWER_MCP_TOOLS: frozenset[str] = frozenset(
+    {
+        "batch_create_elements",
+        "delete_element",
         "clear_canvas",
-        "set_viewport",
-        # Defensive rollback when a refactor goes wrong mid-loop.
+        "align_elements",
         "snapshot_scene",
         "restore_snapshot",
-        # Final read of canvas state for ``persist_scene_artifact``.
+    }
+)
+
+#: Critic screenshots the canvas, audits, returns VERDICT: PASS|FIX +
+#: structured notes for the drawer. Sonnet 4.6 vision is load-bearing.
+#: Includes ``export_scene`` so the critic can persist on PASS.
+CRITIC_MCP_TOOLS: frozenset[str] = frozenset(
+    {
+        "get_canvas_screenshot",
+        "describe_scene",
+        "query_elements",
+        "set_viewport",
         "export_scene",
     }
 )
+
+#: Union of all MCP tools used across the three agents — passed to the
+#: ``mcp_excalidraw_tools()`` cm so we open ONE Node subprocess for the
+#: whole run and slice the tool list per-agent.
+ALL_VISUAL_MCP_TOOLS: frozenset[str] = (
+    PLANNER_MCP_TOOLS | DRAWER_MCP_TOOLS | CRITIC_MCP_TOOLS
+)
+
+# Backwards-compat: some callers (and old tests) may still reference the
+# pre-split name. Point both at the union.
+_BUILD_TOOL_NAMES = ALL_VISUAL_MCP_TOOLS
 
 
 def _vendor_root() -> Path:
@@ -158,6 +205,78 @@ def _stdio_params():  # type: ignore[no-untyped-def]
     )
 
 
+def _wrap_with_null_strip(func):
+    """Return a wrapper around the MCP ``func`` that scrubs nulls first.
+
+    mcpadapt invokes ``func(filtered_kwargs)`` with a single dict argument
+    after its own (shallow) None-filter. We deep-clean that dict here so
+    ``elements[i].text = null`` etc. never reaches the wire.
+
+    Logs a single warning per call when scrubbing actually removed
+    something so we can spot LLMs that are leaning hard on nulls — most
+    of the time the agent should converge on omitting optional fields
+    once it sees a few successful tool calls.
+    """
+    import functools
+
+    @functools.wraps(func)
+    def _scrubbed(arguments: dict | None = None, *args, **kwargs):
+        if isinstance(arguments, dict):
+            cleaned = _strip_nulls_recursive(arguments)
+            if log.isEnabledFor(logging.DEBUG):
+                # Cheap-ish: only count keys removed at top level for the
+                # debug line. The full recursion happened either way.
+                removed_top = [
+                    k for k, v in arguments.items() if v is None
+                ]
+                if removed_top:
+                    log.debug(
+                        "mcp tool args: stripped null keys at top level: %s",
+                        removed_top,
+                    )
+            return func(cleaned, *args, **kwargs)
+        return func(arguments, *args, **kwargs)
+
+    return _scrubbed
+
+
+def _strip_nulls_recursive(value: Any) -> Any:
+    """Drop dict keys whose values are ``None``, recursively into lists.
+
+    Why we need this: CrewAI's pydantic round-trip on tool args turns every
+    optional field into ``anyOf: [<type>, {type: null}]``. The LLM sees that
+    the schema accepts null and obligingly fills every optional field with
+    literal ``null``. The MCP server's Zod validators (in
+    ``vendor/mcp_excalidraw/src/index.ts``) do NOT accept null for those
+    fields and reject the entire call.
+
+    ``mcpadapt`` ships a top-level filter (``crewai_adapter.py:_run``) that
+    drops None values for properties whose *upstream* schema doesn't allow
+    null, but it only inspects top-level kwargs — for
+    ``batch_create_elements`` the args look like
+    ``{"elements": [{"text": null, "fontSize": null, ...}]}``. The
+    top-level ``elements`` key is a non-null list, so the filter waves it
+    through with all the nested nulls intact, and the MCP server promptly
+    rejects the call. We recurse to handle that.
+
+    Side effects: dict-typed values are returned with None-valued keys
+    removed (not present in output). List-typed values keep their length —
+    we recurse into items but don't drop list slots. Scalars pass through.
+    """
+    if isinstance(value, dict):
+        return {
+            k: _strip_nulls_recursive(v)
+            for k, v in value.items()
+            if v is not None
+        }
+    if isinstance(value, list):
+        # Don't drop None-valued list slots — that would shift indices and
+        # break things like ``points`` (list of [x, y] pairs). Just recurse
+        # into dict items.
+        return [_strip_nulls_recursive(v) for v in value]
+    return value
+
+
 def _flatten_multitype_schema(schema: Any) -> Any:
     """Recursively rewrite ``type: [<one>, <two>, ...]`` to a single string type.
 
@@ -204,10 +323,11 @@ def mcp_excalidraw_tools(
     tools are CrewAI ``BaseTool`` instances bound to MCP tool names like
     ``batch_create_elements``, ``query_elements``, ``get_canvas_screenshot``.
 
-    By default the list is filtered down to ``_BUILD_TOOL_NAMES`` (12 tools)
-    so the total surface (12 MCP + 4 backend) stays under Anthropic's 20-
-    strict-tool cap. Pass ``tool_names`` to override (e.g. PR3's sharpen
-    flow may want a slightly different set).
+    By default the list is filtered down to ``ALL_VISUAL_MCP_TOOLS`` (the
+    union of planner / drawer / critic slices, 11 tools). The caller is
+    expected to slice further per-agent — see ``app/agents/visual/build.py``.
+    Pass ``tool_names`` to override entirely (e.g. PR3's sharpen flow may
+    want a different superset).
 
     Usage::
 
@@ -234,16 +354,30 @@ def mcp_excalidraw_tools(
     log.info("mcp_excalidraw stdio params: command=%s args=%s", params.command, params.args)
 
     class _SanitisingCrewAIAdapter(CrewAIToolAdapter):  # type: ignore[misc, valid-type]
-        """Pre-flatten multi-type properties before delegating to CrewAI."""
+        """Sanitise MCP tool args + schema before they hit CrewAI / the MCP server.
+
+        Two responsibilities:
+
+          1. **Schema flattening** — collapse upstream multi-type JSON Schema
+             (``type: ["string", "number"]``) so CrewAI's strict pydantic
+             converter accepts it.
+          2. **Recursive null scrubbing** — drop None-valued dict keys at
+             every depth before the kwargs reach the MCP server's Zod
+             validators. mcpadapt's built-in filter only handles top-level
+             kwargs; we need to recurse into list-of-dict args like
+             ``batch_create_elements`` whose ``elements[i].text`` etc. arrive
+             as null and get rejected.
+        """
 
         def adapt(self, func, mcp_tool):  # type: ignore[override]
             mcp_tool.inputSchema = _flatten_multitype_schema(
                 deepcopy(mcp_tool.inputSchema)
             )
-            return super().adapt(func, mcp_tool)
+            wrapped_func = _wrap_with_null_strip(func)
+            return super().adapt(wrapped_func, mcp_tool)
 
     whitelist: frozenset[str] = (
-        frozenset(tool_names) if tool_names is not None else _BUILD_TOOL_NAMES
+        frozenset(tool_names) if tool_names is not None else ALL_VISUAL_MCP_TOOLS
     )
 
     adapter = MCPAdapt(params, _SanitisingCrewAIAdapter())
@@ -270,4 +404,10 @@ def mcp_excalidraw_tools(
         adapter.__exit__(None, None, None)
 
 
-__all__ = ["mcp_excalidraw_tools"]
+__all__ = [
+    "mcp_excalidraw_tools",
+    "ALL_VISUAL_MCP_TOOLS",
+    "PLANNER_MCP_TOOLS",
+    "DRAWER_MCP_TOOLS",
+    "CRITIC_MCP_TOOLS",
+]
