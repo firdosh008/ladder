@@ -2,71 +2,95 @@
 
 from __future__ import annotations
 
-# Consolidated from excalidraw-skill style guidance + product requirements.
+# Context-first illustration rules — templates discouraged; palette & typography locked.
 DESIGN_SKILL_SYSTEM_RULES = """
-## Audience & language
-- Use plain language; avoid jargon unless the lesson script already uses it.
-- Support Hindi / Hinglish / mixed metadata: keep Unicode as-is; never strip diacritics.
+## Prime directive (non-template design)
+- **Derive every composition from the supplied script.** Classify what the content *is* (process,
+  comparison, hierarchy, causal chain, timeline, network of relationships, quantitative trend,
+  abstract metaphor, teaching analogy, etc.), then invent a **single bespoke visual strategy**
+  matched to that classification.
+- **Never** reach for a habitual pattern because it is easy (generic grids, evenly spaced identical boxes,
+  boilerplate left-to-right pipeline diagrams, repeated card stacks). If two unrelated scripts produced
+  similar silhouettes, you chose wrong.
 
-## Visual language
-- Use tasteful emoji as icons where they clarify meaning (🎯 goals, 📋 checklist, ⚠️ caveat).
-- For linear lessons, put step numbers inside **small circles** (ellipse elements) paired with captions.
+## Context-driven visual strategies (examples — not presets)
+Pick **one** coherent strategy implied by the script; combine primitives creatively rather than naming a template:
+- **Processes / pipelines** → directional motion, branching, merges; emphasize sequence without cloning “Swimlane #3”.
+- **Comparisons / tensions** → contrast through asymmetry, split focal regions, mirrored tension — not twin rectangles only.
+- **Relationships / ecosystems** → clustered linkage, arcs between actors, weighted connectors — vary topology each time.
+- **Hierarchies** → layered elevation, nesting, stepped descent — avoid toy org-chart clichés unless content demands it.
+- **Timelines / progression** → spatial progression that fits the narrative arc (not always left→right ticks).
+- **Abstract concepts** → metaphorical staging (journey, balance scale, funnel, bridge, terrain) grounded in the wording.
 
-## Typography & boxes
-- Prefer fontFamily **2** (Helvetica / normal) for professional lessons unless user asks otherwise.
-- Title ~28–32px; section labels ~20–22px; body inside shapes ~14–18px.
-- **Center** label text visually inside rectangles and ellipses (`textAlign` is handled client-side,
-  but keep labels short (2–6 words per line) and stack with \\n instead of ultra-wide lines).
-- Never let text spill outside its frame: widen/tall the shape or split copy across multiple text elements.
-- Minimum box for text with a label: ~200×72; increase width for long Latin or Indic strings.
+## Adaptive spatial composition
+- Each diagram must feel **unique**: vary grouping density, asymmetric balance, radial vs linear emphasis,
+  clustered islands vs sparse hero focal areas — justified by meaning, not decoration.
+- Use grids **only** when tabular structure is intrinsic to the lesson; otherwise prefer intentional irregular rhythm.
 
-## Palette (cohesive educational look)
-- **Primary accent (orange stroke / warm fills)**: stroke `#f08c00`, light fill `#ffec99`.
-- **Secondary (neutral cards)**: fill `#e9ecef`, stroke `#868e96`.
-- **Tertiary / success highlights**: stroke `#2f9e44`, fill `#b2f2bb`.
-- Use at most three fill families per diagram + white/transparent background.
-- Canvas background: `#ffffff` or very light neutral.
+## Visual storytelling (still grounded in primitives)
+- Motion cues: arrows, tapered lines, curved connectors, emphasis strokes.
+- Where appropriate: lightweight graph motifs (axes hints, segmented curves, annotated anchors).
+- Emoji / icons only as **semantic anchors**, sparingly (🎯 ⚠️ ✅ 📈 🔗 …).
 
-## Geometry & layout
-- Snap to a 50px grid for `x` / `y` positions and spacing multiples of 50 between major blocks.
-- Vary layouts: **flowchart**, **timeline**, **hub-and-spoke**, **two-column contrast**, **matrix (2×2)** —
-  pick one that matches the script; avoid generic uniform grids unless the content is tabular.
-- Use `roughness: 0` for teaching slides; arrows solid for main flow, dashed only for optional/aside paths.
-- Bind arrows to shapes where possible (`start`/`end` ids) so the MCP server can compute geometry.
+## Typography & containment (strict — never compromise)
+- No clipped or overflowing text: enlarge shapes or split lines with `\\n`; short phrases inside shapes.
+- Keep labels readable and visually centered within shapes.
+- Prefer fontFamily **2** unless caller overrides (Studio).
 
-## Quality bar
-- Keep consistent vertical rhythm; align siblings to the same `x` or `y`.
-- Leave whitespace: do not cover more than ~60% of the canvas with filled shapes.
+## Locked palette (consistent branding)
+- **Primary accent**: orange stroke `#f08c00`, soft fill `#ffec99`.
+- **Secondary neutral**: fill `#e9ecef`, stroke `#868e96`.
+- **Tertiary / positive emphasis**: stroke `#2f9e44`, fill `#b2f2bb`.
+- Background `#ffffff` or very light neutral; cap saturated hues — harmony beats novelty colors.
+
+## Execution polish
+- `roughness: 0`; bind arrows/lines where MCP expects ids for geometry stability.
+- Maintain macro alignment within intentionally chosen structure (clean joins even when layout is asymmetric).
+- Leave intentional whitespace — avoid packing > ~60% of canvas with opaque fills.
+
+## Multi-pass redraw discipline (when instructions mention multiple iterations)
+- Later passes **must not** reuse the prior pass’s spatial archetype or connector topology if feedback asks for redesign.
+- Treat each full redraw as a **fresh reinterpretation** of the same script with a visibly different composition.
 """
 
 DIAGRAM_JSON_INSTRUCTIONS = """
 Return **only valid JSON** (no markdown fences) with this shape:
 {
-  "layout_style": "flowchart|timeline|radial|matrix|two_column|hierarchical",
+  "content_classification": "<what the script is about structurally — one short phrase>",
+  "visual_strategy": "<why this composition fits that classification — one sentence>",
+  "layout_style": "<your own concise label for THIS diagram only — not from a fixed enum>",
   "canvas_width": 1600,
   "canvas_height": 900,
   "background_color": "#ffffff",
   "elements": [ ... Excalidraw-style element objects ... ]
 }
 
-Each element must include: "id", "type" (rectangle|ellipse|diamond|text|arrow|line|image),
-numeric "x", "y", and when applicable "width", "height".
-For rectangles/ellipses/diamonds with captions, prefer a concise "label": {"text": "..."}.
-For standalone text rows, use type "text" with "text": "...".
+## Elements
+Each element needs `"id"`, `"type"` (`rectangle|ellipse|diamond|text|arrow|line|image`), numeric `x`, `y`,
+and `width`/`height` when applicable.
+- Combine rectangles sparingly with lines, arrows, ellipses, and standalone `text` for layered storytelling.
+- Prefer concise `label`: `{ "text": "..." }` on shapes; dense captions use separate `text` elements when needed.
 
-Arrows may use `"start": {"id": "..."}, "end": {"id": "..."}` in addition to `points`.
+Arrows may include `"start": {"id": "..."}, "end": {"id": "..."}` alongside `points`.
 
-Minimum **6** meaningful elements for a lesson scene (excluding pure decorations), at least **2** rectangles.
+## Density
+Aim for roughly **12–28** substantive elements (guides + connectors count). Quality and clarity beat filler shapes.
+
+## Forbidden shortcuts
+Do **not** emit boilerplate enums like repeating `"layout_style":"flowchart"` across unrelated scripts unless the
+classification truly warrants flow — vary `layout_style` strings to reflect the bespoke solution each time.
 """
 
-VISION_REVIEW_PROMPT = """You are reviewing a PNG export of an Excalidraw teaching diagram plus the element JSON.
+VISION_REVIEW_PROMPT = """You are reviewing a PNG export of an instructional Excalidraw diagram plus element JSON.
 
-Decide if the diagram is visually acceptable for learners. Focus on:
-- Text overflow outside frames
-- Misalignment (ragged columns, uneven spacing)
-- Illegibly small fonts
-- Clashing colors (too many hues)
-- Broken flow (orphan shapes, overlapping labels)
+Reject templated or repetitive-feeling output even when technically valid.
+
+Checklist:
+1. **Context fit** — Does spatial logic reflect the lesson content type (not a generic slide pattern)?
+2. **Anti-template** — Avoid approving obviously repetitive compositions (uniform card grids, vanilla pipelines with no twist).
+3. **Typography** — No overflow; readable hierarchy.
+4. **Alignment craft** — Intentional structure feels deliberate (even if asymmetric).
+5. **Palette** — Orange / gray / green families coherent; no rainbow noise.
 
 Respond with **only JSON**:
 {
@@ -80,9 +104,8 @@ Respond with **only JSON**:
   "notes": "short rationale"
 }
 
-If approved, use an empty corrections array. Patches must use the same property names as Excalidraw elements
-(width, height, x, y, fontSize, text, label, strokeColor, backgroundColor, points, etc.).
+If approved, use an empty corrections array. Patches must use valid Excalidraw element property names only.
 
-**Critical:** Each `"id"` in corrections MUST be copied **verbatim** from an `"id"` field in the Elements JSON you were given (same spelling and casing).
-Never invent semantic placeholders like `"step1"` / `"step2"` — those will fail the canvas API if they are not real ids in that JSON.
+**Critical:** Each `"id"` in corrections MUST match an `"id"` in the Elements JSON verbatim.
+Never invent placeholders like `"step1"` — canvas updates will fail.
 """

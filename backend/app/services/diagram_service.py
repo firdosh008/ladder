@@ -22,6 +22,29 @@ from app.services.llm import anthropic_client
 
 log = logging.getLogger(__name__)
 
+
+def _iteration_design_guidance(iteration_index_zero_based: int, max_iter: int) -> str:
+    """Bias each outer redraw toward context-first novelty — avoids cyclic layout presets."""
+    n = iteration_index_zero_based + 1
+    if max_iter <= 1:
+        return (
+            "Single canvas draft: classify the script deeply (process / comparison / hierarchy / "
+            "timeline / relationship network / quantitative arc / metaphorical teaching frame / mixed), "
+            "then invent one bespoke spatial composition — never a generic grid or cloned card pipeline "
+            "unless the lesson content is explicitly tabular."
+        )
+    if n == 1:
+        return (
+            f"Redraw pass {n}/{max_iter}: derive structure only from the script; forbid habitual templates "
+            "(uniform box rows, boilerplate swimlanes)."
+        )
+    return (
+        f"Redraw pass {n}/{max_iter}: prior composition failed QA — abandon its spatial archetype entirely "
+        "(new grouping logic, rhythm, asymmetry, connector topology). Re-classify the script if needed and "
+        "design a visibly different diagram while keeping palette + typography constraints."
+    )
+
+
 _SERVER_FIELDS = frozenset({"createdAt", "updatedAt", "version"})
 _EXCAL_ID_ALPHABET = string.ascii_lowercase + string.digits
 
@@ -177,7 +200,7 @@ class DiagramService:
             script.strip(),
         ]
         if layout_hint:
-            parts.append(f"\nPreferred layout style: {layout_hint}\n")
+            parts.append(f"\n## Iteration guidance (follow substance over habit)\n{layout_hint}\n")
         if brand_color:
             parts.append(
                 f"\nBrand accent hex ( weave into strokes / fills, not neon overload ): {brand_color}\n"
@@ -195,8 +218,8 @@ class DiagramService:
             max_tokens=8192,
             temperature=0.35,
             system=(
-                "You are an expert instructional diagram designer. "
-                "Output ONLY JSON describing Excalidraw elements."
+                "You are an expert instructional diagram designer who invents context-native visuals — "
+                "never canned layouts. Output ONLY JSON describing Excalidraw elements."
             ),
             messages=[{"role": "user", "content": "".join(parts)}],
         )
@@ -321,14 +344,6 @@ class DiagramService:
         self.last_output_tokens = 0
 
         feedback: list[str] = []
-        layouts_cycle = (
-            "flowchart_left_right",
-            "timeline_horizontal",
-            "radial_hub",
-            "two_column_contrast",
-            "matrix_2x2",
-            "hierarchical_top_down",
-        )
 
         png_bytes: bytes | None = None
         scene_dict: dict[str, Any] | None = None
@@ -338,7 +353,7 @@ class DiagramService:
 
         try:
             for iteration in range(max_iter):
-                layout_hint = layouts_cycle[iteration % len(layouts_cycle)]
+                layout_hint = _iteration_design_guidance(iteration, max_iter)
                 yield {
                     "type": "diagram_iteration",
                     "iteration": iteration + 1,

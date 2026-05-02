@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     EXCALIDRAW_HEADLESS_CONNECT_TIMEOUT_S: float = Field(default=180.0, ge=30.0, le=600.0)
 
     #: Model used for diagram drafting + vision QA (needs vision capability).
-    DIAGRAM_ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+    DIAGRAM_ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
     #: Max full redraw iterations (each clears canvas + new draft). Default 1 avoids triple redraws.
     DIAGRAM_MAX_ITERATIONS: int = Field(default=1, ge=1, le=8)
