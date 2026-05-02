@@ -238,23 +238,6 @@ function LeftPane({
           )}
         </CollapsibleSection>
 
-        {EXCALIDRAW_LIVE_URL ? (
-          <CollapsibleSection
-            id="studio-live-excalidraw"
-            title="Live Excalidraw canvas"
-            hint="MCP server · optional · same network as API"
-          >
-            <div className="rounded-lg border border-hairline overflow-hidden bg-black/20">
-              <iframe
-                title="Excalidraw MCP canvas"
-                src={EXCALIDRAW_LIVE_URL}
-                className="w-full h-[min(420px,50vh)] border-0"
-                sandbox="allow-scripts allow-same-origin allow-forms"
-              />
-            </div>
-          </CollapsibleSection>
-        ) : null}
-
         {/* Scroll-spy anchor for "Scene". Visible only as a one-line hint —
             the actual action row lives in the sticky footer below. */}
         <section id="studio-scene" className="scroll-mt-14 -mt-2">

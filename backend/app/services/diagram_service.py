@@ -19,6 +19,7 @@ from app.config import settings
 from app.models.db import SceneSkeleton
 from app.services.excalidraw_http import ExcalidrawCanvasClient
 from app.services.llm import anthropic_client
+from anthropic.types import Message
 
 log = logging.getLogger(__name__)
 
@@ -104,16 +105,85 @@ def _response_text(message: Message) -> str:
     return "".join(parts).strip()
 
 
+def _normalize_json_quotes(blob: str) -> str:
+    return (
+        blob.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+    )
+
+
+def _strip_trailing_commas(blob: str) -> str:
+    out = blob
+    prev = None
+    while prev != out:
+        prev = out
+        out = re.sub(r",(\s*[}\]])", r"\1", out)
+    return out
+
+
+def _balanced_json_object_slice(text: str) -> str | None:
+    """Outermost `{ ... }` respecting strings — avoids greedy ``rfind('}')`` on truncated tails."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    i = start
+    n = len(text)
+    in_str = False
+    esc = False
+    while i < n:
+        ch = text[i]
+        if esc:
+            esc = False
+            i += 1
+            continue
+        if in_str:
+            if ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            i += 1
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+        i += 1
+    return None
+
+
 def _extract_json_object(raw: str) -> dict[str, Any]:
+    """Parse model JSON with fences, brace-balancing, quote normalization, trailing-comma repair."""
     text = raw.strip()
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.I)
     if fence:
         text = fence.group(1).strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("Model did not return a JSON object")
-    return json.loads(text[start : end + 1])
+
+    blob = _balanced_json_object_slice(text)
+    if blob is None:
+        lo = text.find("{")
+        hi = text.rfind("}")
+        if lo == -1 or hi == -1 or hi <= lo:
+            raise ValueError("Model did not return a JSON object")
+        blob = text[lo : hi + 1]
+
+    blob = _strip_trailing_commas(_normalize_json_quotes(blob))
+    try:
+        return json.loads(blob)
+    except json.JSONDecodeError as e:
+        log.warning(
+            "JSON decode failed (snippet): %s…",
+            blob[:320].replace("\n", " "),
+        )
+        raise ValueError(f"Invalid JSON from model: {e}") from e
 
 
 def _clean_server_element(el: dict[str, Any]) -> dict[str, Any]:
@@ -213,18 +283,40 @@ class DiagramService:
             parts.append("\n## Fix these issues from the previous iteration\n")
             parts.extend(f"- {n}\n" for n in feedback_notes if n)
 
+        parts.append(
+            "\n\n### Output contract\n"
+            "Reply with **exactly one** JSON object and nothing else: no markdown fences, no prose before or after.\n"
+            "Use valid JSON only — double-quoted keys and strings, **no trailing commas**, escape internal quotes as \\\".\n"
+            "Root keys must include at minimum `\"elements\": [ ... ]` (array of Excalidraw element objects).\n"
+        )
+
+        user_content = "".join(parts)
+        system_prompt = (
+            "You are an expert instructional diagram designer who invents context-native visuals — "
+            "never canned layouts. "
+            "Your entire reply body must be one parseable JSON object (diagram draft)."
+        )
+
+        # Structured outputs cannot express arbitrary Excalidraw element shapes without additionalProperties:true,
+        # which Anthropic rejects; assistant-message prefill is not supported on several Sonnet 4.x models — keep a
+        # plain user→assistant turn plus tolerant parsing below.
         msg = await client.messages.create(
             model=settings.DIAGRAM_ANTHROPIC_MODEL,
             max_tokens=8192,
-            temperature=0.35,
-            system=(
-                "You are an expert instructional diagram designer who invents context-native visuals — "
-                "never canned layouts. Output ONLY JSON describing Excalidraw elements."
-            ),
-            messages=[{"role": "user", "content": "".join(parts)}],
+            temperature=0.28,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_content}],
+            stop_sequences=["```"],
         )
+
         self._add_usage(msg)
-        payload = _extract_json_object(_response_text(msg))
+        raw_text = _response_text(msg).strip()
+
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError:
+            payload = _extract_json_object(raw_text)
+
         if not isinstance(payload.get("elements"), list):
             raise ValueError("Draft JSON missing elements[]")
         return payload
