@@ -99,7 +99,14 @@ def _drain_until_close(ws) -> tuple[int | None, list[dict]]:
 
 
 def _fake_scene_run(scene_payload: dict):
-    async def _gen(_user_id: Any, _profile: Any, _idea: Any, _outline: Any, _script: Any):
+    async def _gen(
+        _user_id: Any,
+        _profile: Any,
+        _idea: Any,
+        _outline: Any,
+        _script: Any,
+        **_kw: Any,
+    ):
         yield {"type": "agent_start", "agent": "layout_planner"}
         yield {"type": "text_delta", "agent": "layout_planner", "content": "planning…"}
         yield {"type": "task_complete", "agent": "layout_planner", "preview": "ok"}

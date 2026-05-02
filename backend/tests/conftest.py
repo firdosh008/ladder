@@ -18,6 +18,7 @@ import pytest_asyncio
 os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
 os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service")
+os.environ["ENABLE_MCP_SCENE_DIAGRAM"] = "false"
 
 
 def _build_es256_keypair() -> tuple[dict, str]:

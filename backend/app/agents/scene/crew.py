@@ -152,6 +152,21 @@ async def run_scene_build(
     means the designer leaves fontFamily off (Excalidraw default).
     """
 
+    if settings.ENABLE_MCP_SCENE_DIAGRAM:
+        from app.agents.scene import mcp_diagram
+
+        async for ev in mcp_diagram.run_scene_mcp_diagram(
+            user_id,
+            profile,
+            idea,
+            outline,
+            script,
+            brand_color=brand_color,
+            font_family=font_family,
+        ):
+            yield ev
+        return
+
     async with log_usage(
         user_id=user_id,
         function_name="scene_build",

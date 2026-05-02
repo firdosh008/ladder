@@ -24,6 +24,9 @@ import { OutlineEditor } from "../components/studio/OutlineEditor";
 import { ChatPanel } from "../components/studio/ChatPanel";
 import { CollapsibleSection } from "../components/studio/CollapsibleSection";
 
+const EXCALIDRAW_LIVE_URL =
+  (import.meta.env.VITE_EXCALIDRAW_CANVAS_URL as string | undefined)?.trim() || "";
+
 export default function StudioPage() {
   const { id } = useParams();
   const { ideas, loading, updateIdea, patchLocal } = useIdeas();
@@ -61,6 +64,12 @@ function StudioBody({
 }) {
   const state = useStudioStream(idea.id, idea.target_duration_min ?? undefined);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [liveCanvasDuringRun, setLiveCanvasDuringRun] = useState(false);
+
+  const handleDiagramRunActive = useCallback((active: boolean) => {
+    setLiveCanvasDuringRun(active);
+    if (active) setPreviewOpen(true);
+  }, []);
 
   const onTitleChange = useCallback(
     async (next: string) => {
@@ -165,6 +174,7 @@ function StudioBody({
             idea={idea}
             state={state}
             onPreviewScene={() => setPreviewOpen(true)}
+            onDiagramRunActive={handleDiagramRunActive}
           />
         }
         right={<ChatPanel sessionId={state.sessionId} />}
@@ -174,6 +184,8 @@ function StudioBody({
         onOpenChange={setPreviewOpen}
         scene={state.scene}
         sessionId={state.sessionId}
+        liveCanvasDuringRun={liveCanvasDuringRun}
+        liveCanvasUrl={EXCALIDRAW_LIVE_URL || undefined}
       />
     </>
   );
@@ -183,10 +195,12 @@ function LeftPane({
   idea,
   state,
   onPreviewScene,
+  onDiagramRunActive,
 }: {
   idea: Idea;
   state: ReturnType<typeof useStudioStream>;
   onPreviewScene: () => void;
+  onDiagramRunActive?: (active: boolean) => void;
 }) {
   return (
     <section className="flex flex-col min-h-0 bg-night h-full">
@@ -224,6 +238,23 @@ function LeftPane({
           )}
         </CollapsibleSection>
 
+        {EXCALIDRAW_LIVE_URL ? (
+          <CollapsibleSection
+            id="studio-live-excalidraw"
+            title="Live Excalidraw canvas"
+            hint="MCP server · optional · same network as API"
+          >
+            <div className="rounded-lg border border-hairline overflow-hidden bg-black/20">
+              <iframe
+                title="Excalidraw MCP canvas"
+                src={EXCALIDRAW_LIVE_URL}
+                className="w-full h-[min(420px,50vh)] border-0"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+              />
+            </div>
+          </CollapsibleSection>
+        ) : null}
+
         {/* Scroll-spy anchor for "Scene". Visible only as a one-line hint —
             the actual action row lives in the sticky footer below. */}
         <section id="studio-scene" className="scroll-mt-14 -mt-2">
@@ -251,6 +282,7 @@ function LeftPane({
           onPreview={onPreviewScene}
           sceneAccentHex={state.session?.brand_color ?? null}
           onSceneReady={state.setScene}
+          onDiagramRunActive={onDiagramRunActive}
         />
       </div>
     </section>

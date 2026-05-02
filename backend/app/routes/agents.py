@@ -930,7 +930,8 @@ async def scene_stream(
         raise
     except Exception as e:
         await _safe_send_json(
-            websocket, {"type": "error", "message": f"crew failed: {e}"}
+            websocket,
+            {"type": "error", "message": f"Scene generation failed: {e}"},
         )
         if websocket.application_state == WebSocketState.CONNECTED:
             await websocket.close(code=_CLOSE_SERVER_ERROR)
@@ -941,7 +942,7 @@ async def scene_stream(
             websocket,
             {
                 "type": "error",
-                "message": "scene crew did not produce a skeleton",
+                "message": "Scene generation did not produce a skeleton",
             },
         )
         if websocket.application_state == WebSocketState.CONNECTED:

@@ -185,6 +185,19 @@ export type AgentEvent =
   | { type: "outline_ready"; outline: Outline }
   | { type: "extract_ready"; extracted: ExtractedVideo }
   | { type: "scene_ready"; scene: Scene }
+  | {
+      type: "diagram_draft";
+      phase: string;
+      iteration?: number;
+      element_count?: number;
+    }
+  | {
+      type: "diagram_iteration";
+      phase: string;
+      iteration?: number;
+      layout_hint?: string;
+    }
+  | { type: "diagram_complete"; iterations: number }
   | { type: "usage"; token_usage: TokenUsage }
   | {
       type: "persisted";

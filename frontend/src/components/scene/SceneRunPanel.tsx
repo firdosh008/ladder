@@ -138,13 +138,15 @@ type Props = {
   sceneAccentHex?: string | null;
   /** Lift `scene_ready` into studio state so Preview / modal see the canvas. */
   onSceneReady?: (scene: Scene) => void;
+  /** Signal scene websocket run started/finished — parent opens live MCP modal while active. */
+  onDiagramRunActive?: (active: boolean) => void;
 };
 
 /**
  * Bottom-of-left-pane action row.
  *
  * Pre-build:   [Approve and build scene →]
- * Post-build:  [Preview canvas] [Open in Excalidraw] [Regenerate scene] [Generate thumbnail]
+ * Post-build:  [Preview canvas] [Open in Excalidraw] [Regenerate scene] [Thumbnail preview]
  *
  * The inline canvas now lives behind the Preview button (rendered in a
  * modal by the parent so the cramped 65%-wide pane doesn't try to host
@@ -157,6 +159,7 @@ export function SceneRunPanel({
   onPreview,
   sceneAccentHex,
   onSceneReady,
+  onDiagramRunActive,
 }: Props) {
   const [scene, setScene] = useState<Scene | null>(initialScene);
   const [status, setStatus] = useState<Status>(initialScene ? "ready" : "idle");
@@ -170,6 +173,9 @@ export function SceneRunPanel({
   const [fontCommittedToScene, setFontCommittedToScene] = useState<number | null>(
     () => inferTypographyFontFromScene(initialScene),
   );
+  const [diagramProgress, setDiagramProgress] = useState<string | null>(null);
+  /** MCP / live-canvas stream emits diagram_* events, not layout_planner / element_designer. */
+  const [liveCanvasDiagramRun, setLiveCanvasDiagramRun] = useState(false);
   const [applyingFont, setApplyingFont] = useState(false);
 
   useEffect(() => {
@@ -181,14 +187,28 @@ export function SceneRunPanel({
   const startRun = useCallback(() => {
     if (!sessionId) return;
     let cancelled = false;
+    let signaledLiveModal = false;
+    const signalLiveCanvasModal = () => {
+      if (signaledLiveModal || !onDiagramRunActive) return;
+      signaledLiveModal = true;
+      onDiagramRunActive(true);
+    };
+
     setStatus("running");
     setError(null);
+    setDiagramProgress(null);
+    setLiveCanvasDiagramRun(false);
     setRuntime(initialRuntime());
 
     const handle = (ev: AgentEvent) => {
       if (cancelled) return;
       switch (ev.type) {
         case "agent_start": {
+          if (ev.agent === "diagram_agent") {
+            setLiveCanvasDiagramRun(true);
+            signalLiveCanvasModal();
+            break;
+          }
           const key = ev.agent as AgentKey;
           setRuntime((prev) => {
             const next = { ...prev };
@@ -220,13 +240,45 @@ export function SceneRunPanel({
         case "scene_ready":
           setScene(ev.scene);
           setFontCommittedToScene(inferTypographyFontFromScene(ev.scene));
+          setDiagramProgress(null);
           onSceneReady?.(ev.scene);
+          break;
+        case "diagram_draft":
+          setLiveCanvasDiagramRun(true);
+          signalLiveCanvasModal();
+          setDiagramProgress(
+            ev.phase === "drawn"
+              ? `Live canvas · drawn (${ev.element_count ?? "?"} elements)`
+              : ev.phase === "waiting_live_viewer"
+                ? "Live canvas · connecting headless viewer…"
+                : `Live canvas · ${ev.phase}`,
+          );
+          break;
+        case "diagram_iteration":
+          setLiveCanvasDiagramRun(true);
+          signalLiveCanvasModal();
+          setDiagramProgress(
+            [
+              "Live canvas ·",
+              ev.phase,
+              ev.iteration != null ? `(round ${ev.iteration})` : "",
+              ev.layout_hint ? `· ${ev.layout_hint.replace(/_/g, " ")}` : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
+          );
+          break;
+        case "diagram_complete":
+          setLiveCanvasDiagramRun(true);
+          signalLiveCanvasModal();
+          setDiagramProgress(`Live canvas · QA complete (${ev.iterations} iteration${ev.iterations === 1 ? "" : "s"})`);
           break;
         case "usage":
           setCost(ev.token_usage.cost_usd);
           break;
         case "error":
           setError(ev.message);
+          setDiagramProgress(null);
           break;
         default:
           break;
@@ -253,12 +305,11 @@ export function SceneRunPanel({
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
         setStatus("failed");
+      })
+      .finally(() => {
+        if (!cancelled) onDiagramRunActive?.(false);
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId, sceneAccentHex, fontFamily, onSceneReady]);
+  }, [sessionId, sceneAccentHex, fontFamily, onSceneReady, onDiagramRunActive]);
 
   const regenerateTypography = useCallback(async () => {
     if (!sessionId || !scene) return;
@@ -346,7 +397,8 @@ export function SceneRunPanel({
 
   const canStart = !!sessionId && outlineReady && status !== "running" && !applyingFont;
   const isRunning = status === "running";
-  const hidePreviewCluster = isRunning || applyingFont;
+  /** After scene_ready we have a drawable scene even if the WS is still draining usage events. */
+  const hidePreviewCluster = applyingFont || (isRunning && !scene);
 
   return (
     <div className="flex flex-col gap-2">
@@ -445,9 +497,9 @@ export function SceneRunPanel({
               <FooterIconBtn
                 icon={ImageIcon}
                 label="Thumbnail"
-                disabled
-                muted
-                title="Thumbnail generator ships in a follow-up pass"
+                onClick={onPreview}
+                disabled={hidePreviewCluster}
+                title="Preview the scene (same as Preview — full canvas in a modal)"
               />
             </div>
           </>
@@ -455,12 +507,17 @@ export function SceneRunPanel({
       </div>
 
       {/* Run progress + errors */}
+      {diagramProgress ? (
+        <p className="font-mono text-[11px] text-cinnabar/90 px-1 animate-pulse">
+          {diagramProgress}
+        </p>
+      ) : null}
       {applyingFont ? (
         <p className="font-mono text-[11px] text-mist px-1">Updating typography…</p>
-      ) : isRunning && scene ? (
+      ) : isRunning && scene && !liveCanvasDiagramRun ? (
         <p className="font-mono text-[11px] text-mist px-1">Rebuilding scene from outline…</p>
       ) : null}
-      {(status === "running" || status === "failed") && (
+      {(status === "running" || status === "failed") && !liveCanvasDiagramRun && (
         <div className="rounded-lg border border-hairline bg-surface p-3 space-y-2">
           {AGENT_ORDER.map((key) => {
             const r = runtime[key];
