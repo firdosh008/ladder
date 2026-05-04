@@ -22,20 +22,22 @@ import {
   type SceneSkeletonElement,
 } from "../../lib/agents";
 
-// Excalidraw 0.18 only exposes bundled fontFamily ints; labels follow the
-// product copy while mapping to the nearest renderer preset.
-const FONT_OPTIONS: { value: number | null; label: string }[] = [
-  { value: null, label: "Handmade" },
-  { value: 9, label: "Arial" }, // Liberation Sans — neutral sans
-  { value: 1, label: "Times Roman" }, // Virgil — closest bundled serif mood
-  { value: 2, label: "SF Pro" }, // Helvetica stack → SF on Apple
+// Excalidraw bundled fontFamily integers — each ID renders a distinct typeface:
+//   1 = Virgil      (hand-drawn / sketch)
+//   2 = Helvetica   (clean sans-serif; renders as SF Pro on macOS)
+//   3 = Cascadia    (monospace / code)
+//   9 = Liberation  (neutral Arial-style sans)
+// null omitted = designer default (usually Virgil/Excalifont)
+const FONT_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "Handmade" },   // Virgil — sketchy, hand-drawn
+  { value: 2, label: "SF Pro" },     // Helvetica → SF Pro on Apple
+  { value: 3, label: "Mono" },       // Cascadia Code — monospaced
+  { value: 9, label: "Arial" },      // Liberation Sans — neutral sans
 ];
 
 const FONT_STORAGE_KEY = "ladder:scene:font_family";
 
-const ALLOWED_FONT_IDS = new Set(
-  FONT_OPTIONS.map((o) => o.value).filter((v): v is number => typeof v === "number"),
-);
+const ALLOWED_FONT_IDS = new Set(FONT_OPTIONS.map((o) => o.value));
 
 function inferTypographyFontFromScene(scene: Scene | null): number | null {
   if (!scene?.elements?.length) return null;
@@ -47,7 +49,7 @@ function inferTypographyFontFromScene(scene: Scene | null): number | null {
   return null;
 }
 
-function applyFontFamilyToScene(scene: Scene, fontFamily: number | null): Scene {
+function applyFontFamilyToScene(scene: Scene, fontFamily: number): Scene {
   const elements = scene.elements.map((el: SceneSkeletonElement) => {
     const labelObj = el.label;
     const hasLabel =
@@ -62,38 +64,26 @@ function applyFontFamilyToScene(scene: Scene, fontFamily: number | null): Scene 
     const next: SceneSkeletonElement = { ...el };
 
     if (hasLabel && labelObj) {
-      const lbl = { ...labelObj };
-      if (fontFamily === null) {
-        delete lbl.fontFamily;
-      } else {
-        lbl.fontFamily = fontFamily;
-      }
-      next.label = lbl;
+      next.label = { ...labelObj, fontFamily };
     }
-
-    if (fontFamily === null) {
-      delete next.fontFamily;
-    } else {
-      next.fontFamily = fontFamily;
-    }
+    next.fontFamily = fontFamily;
     return next;
   });
   return { ...scene, elements };
 }
 
-function loadStoredFont(): number | null {
-  if (typeof window === "undefined") return null;
+function loadStoredFont(): number {
+  if (typeof window === "undefined") return FONT_OPTIONS[0].value;
   const raw = window.localStorage.getItem(FONT_STORAGE_KEY);
-  if (!raw) return null;
+  if (!raw) return FONT_OPTIONS[0].value;
   const n = Number(raw);
-  if (!Number.isFinite(n) || !ALLOWED_FONT_IDS.has(n)) return null;
+  if (!Number.isFinite(n) || !ALLOWED_FONT_IDS.has(n)) return FONT_OPTIONS[0].value;
   return n;
 }
 
-function storeFont(value: number | null): void {
+function storeFont(value: number): void {
   if (typeof window === "undefined") return;
-  if (value === null) window.localStorage.removeItem(FONT_STORAGE_KEY);
-  else window.localStorage.setItem(FONT_STORAGE_KEY, String(value));
+  window.localStorage.setItem(FONT_STORAGE_KEY, String(value));
 }
 
 type AgentKey = "layout_planner" | "element_designer";
@@ -169,7 +159,7 @@ export function SceneRunPanel({
   const [error, setError] = useState<string | null>(null);
   const [cost, setCost] = useState<number | null>(null);
   const [openingExcalidraw, setOpeningExcalidraw] = useState(false);
-  const [fontFamily, setFontFamily] = useState<number | null>(loadStoredFont);
+  const [fontFamily, setFontFamily] = useState<number>(loadStoredFont);
   const [fontCommittedToScene, setFontCommittedToScene] = useState<number | null>(
     () => inferTypographyFontFromScene(initialScene),
   );
@@ -348,7 +338,7 @@ export function SceneRunPanel({
 
   const fontPickerDiffersFromCanvas = (fontFamily ?? null) !== (fontCommittedToScene ?? null);
 
-  const onFontChange = useCallback((value: number | null) => {
+  const onFontChange = useCallback((value: number) => {
     setFontFamily(value);
     storeFont(value);
   }, []);
@@ -634,8 +624,8 @@ function FontPicker({
   onChange,
   disabled,
 }: {
-  value: number | null;
-  onChange: (v: number | null) => void;
+  value: number;
+  onChange: (v: number) => void;
   disabled?: boolean;
 }) {
   const active = FONT_OPTIONS.find((o) => o.value === value) ?? FONT_OPTIONS[0];
@@ -655,17 +645,16 @@ function FontPicker({
         {active.label}
       </span>
       <select
-        value={value === null ? "default" : String(value)}
+        value={String(value)}
         onChange={(e) => {
-          const raw = e.target.value;
-          onChange(raw === "default" ? null : Number(raw));
+          onChange(Number(e.target.value));
         }}
         disabled={disabled}
         aria-label="Scene font"
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
       >
         {FONT_OPTIONS.map((o) => (
-          <option key={String(o.value)} value={o.value === null ? "default" : String(o.value)}>
+          <option key={String(o.value)} value={String(o.value)}>
             {o.label}
           </option>
         ))}

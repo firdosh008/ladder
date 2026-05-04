@@ -19,13 +19,13 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     #: Image model for scene hero thumbnails (``images.generate``).
     #: Examples: ``dall-e-3``, ``gpt-image-1``, ``gpt-image-1.5``, ``gpt-image-2``.
-    OPENAI_IMAGE_MODEL: str = "dall-e-3"
+    OPENAI_IMAGE_MODEL: str = "gpt-image-2"
     #: ``hd`` / ``standard`` for ``dall-e-3``; ``high`` / ``medium`` / ``low`` /
     #: ``auto`` for GPT image models. Aliases: ``hd`` → ``high`` on GPT models.
-    OPENAI_IMAGE_QUALITY: str = "hd"
+    OPENAI_IMAGE_QUALITY: str = "high"
     #: Optional override, e.g. ``1024x1024``, ``1792x1024`` (dall-e-3), or a
     #: GPT image size. Empty string uses built-in defaults per model.
-    OPENAI_IMAGE_SIZE: str = ""
+    OPENAI_IMAGE_SIZE: str = "1536x1024"
     #: Append up to this many AI/remote thumbnails (see ``SCENE_IMAGE_PLACEMENT``).
     SCENE_AI_IMAGE_COUNT: int = Field(default=5, ge=1, le=12)
     #: When False, skip OpenAI image calls but remote URLs may still apply.
