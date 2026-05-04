@@ -4,17 +4,14 @@ import {
   Lightning,
   Warning,
   ArrowsClockwise,
-  ArrowSquareOut,
   Image as ImageIcon,
   Eye,
   Spinner,
   CheckCircle,
-  TextAa,
 } from "@phosphor-icons/react";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/cn";
 import {
-  publishScene,
   runSceneStream,
   saveSceneSkeleton,
   type AgentEvent,
@@ -79,11 +76,6 @@ function loadStoredFont(): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || !ALLOWED_FONT_IDS.has(n)) return FONT_OPTIONS[0].value;
   return n;
-}
-
-function storeFont(value: number): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(FONT_STORAGE_KEY, String(value));
 }
 
 type AgentKey = "layout_planner" | "element_designer";
@@ -158,8 +150,7 @@ export function SceneRunPanel({
   );
   const [error, setError] = useState<string | null>(null);
   const [cost, setCost] = useState<number | null>(null);
-  const [openingExcalidraw, setOpeningExcalidraw] = useState(false);
-  const [fontFamily, setFontFamily] = useState<number>(loadStoredFont);
+  const [fontFamily] = useState<number>(loadStoredFont);
   const [fontCommittedToScene, setFontCommittedToScene] = useState<number | null>(
     () => inferTypographyFontFromScene(initialScene),
   );
@@ -338,53 +329,6 @@ export function SceneRunPanel({
 
   const fontPickerDiffersFromCanvas = (fontFamily ?? null) !== (fontCommittedToScene ?? null);
 
-  const onFontChange = useCallback((value: number) => {
-    setFontFamily(value);
-    storeFont(value);
-  }, []);
-
-  const onOpenInExcalidraw = useCallback(async () => {
-    if (!scene || !sessionId) return;
-    setOpeningExcalidraw(true);
-    setError(null);
-    try {
-      // Inflate to the standard Excalidraw envelope server-side so the
-      // shareable URL points at a fully-formed file. The convert step
-      // happens inside SceneView in the modal — for the action button,
-      // we hand the skeleton through and the publish endpoint accepts
-      // either shape.
-      const { convertToExcalidrawElements } = await import(
-        "@excalidraw/excalidraw"
-      );
-      const elements = convertToExcalidrawElements(
-        scene.elements as unknown as Parameters<
-          typeof convertToExcalidrawElements
-        >[0],
-        { regenerateIds: false },
-      );
-      const envelope = {
-        type: "excalidraw" as const,
-        version: 2,
-        source: "https://excalidraw.com",
-        elements,
-        appState: {
-          viewBackgroundColor: scene.background_color,
-          gridSize: null,
-        },
-        files: (scene.files ?? {}) as Record<string, unknown>,
-      };
-      const { excalidraw_url } = await publishScene(
-        sessionId,
-        envelope as unknown as Record<string, unknown>,
-      );
-      window.open(excalidraw_url, "_blank", "noopener,noreferrer");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setOpeningExcalidraw(false);
-    }
-  }, [scene, sessionId]);
-
   const canStart = !!sessionId && outlineReady && status !== "running" && !applyingFont;
   const isRunning = status === "running";
   /** After scene_ready we have a drawable scene even if the WS is still draining usage events. */
@@ -414,7 +358,6 @@ export function SceneRunPanel({
                 </span>
               ) : null}
             </div>
-            <FontPicker value={fontFamily} onChange={onFontChange} disabled={hidePreviewCluster} />
             <Button
               size="sm"
               variant="primary"
@@ -447,11 +390,6 @@ export function SceneRunPanel({
               ) : null}
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <FontPicker
-                value={fontFamily}
-                onChange={onFontChange}
-                disabled={hidePreviewCluster}
-              />
               {!hidePreviewCluster ? (
                 <>
                   <FooterIconBtn
@@ -610,55 +548,5 @@ function FooterIconBtn({
       />
       <span>{label}</span>
     </button>
-  );
-}
-
-// ─── Font picker ──────────────────────────────────────────────────────────
-
-/**
- * Native <select> wrapped in a chip-style label. Excalidraw 0.18 only ships
- * bundled font integers — labels are founder-facing; see FONT_OPTIONS mapping.
- */
-function FontPicker({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  disabled?: boolean;
-}) {
-  const active = FONT_OPTIONS.find((o) => o.value === value) ?? FONT_OPTIONS[0];
-  return (
-    <label
-      className={cn(
-        "relative inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md",
-        "border border-hairline bg-white/[0.03] text-white/85",
-        "hover:bg-white/[0.07] hover:text-white hover:border-hairline-strong",
-        "transition-colors",
-        disabled ? "opacity-40 pointer-events-none" : "cursor-pointer",
-      )}
-      title={`Scene font · ${active.label}`}
-    >
-      <TextAa size={11} weight="bold" className="shrink-0" />
-      <span className="text-[12px] font-medium font-sans whitespace-nowrap">
-        {active.label}
-      </span>
-      <select
-        value={String(value)}
-        onChange={(e) => {
-          onChange(Number(e.target.value));
-        }}
-        disabled={disabled}
-        aria-label="Scene font"
-        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
-      >
-        {FONT_OPTIONS.map((o) => (
-          <option key={String(o.value)} value={String(o.value)}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </label>
   );
 }

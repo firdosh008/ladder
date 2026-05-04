@@ -98,7 +98,7 @@ export function OutlineEditor({ outline, sessionId, onSaved }: Props) {
       <div className="space-y-2.5">
         <div className="flex items-center justify-between gap-2">
           <p className="font-mono text-[10.5px] uppercase tracking-[0.2em] text-mist">
-            scene outline · {outline.items.length} beats
+            Outline · {outline.items.length} beats
           </p>
           <Button
             variant="ghost"

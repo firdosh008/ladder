@@ -275,6 +275,7 @@ function StudioBody({
         sessionId={state.sessionId}
         liveCanvasDuringRun={liveCanvasDuringRun}
         liveCanvasUrl={EXCALIDRAW_LIVE_URL || undefined}
+        onSceneChange={state.setScene}
       />
     </>
   );
@@ -311,7 +312,7 @@ function LeftPane({
 
         <CollapsibleSection
           id="studio-outline"
-          title="Scene outline"
+          title="Outline"
           hint={outlineHint(state)}
         >
           {state.outline ? (

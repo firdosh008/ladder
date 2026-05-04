@@ -1,10 +1,103 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useCallback, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "@phosphor-icons/react";
+import { X, TextAa } from "@phosphor-icons/react";
 import { cn } from "../../lib/cn";
-import type { Scene } from "../../lib/agents";
+import { saveSceneSkeleton, type Scene, type SceneSkeletonElement } from "../../lib/agents";
 
 const SceneView = lazy(() => import("./SceneView"));
+
+// ─── Font helpers ───────────────────────────────────────────────────────────
+
+const FONT_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "Handmade" },
+  { value: 2, label: "SF Pro" },
+  { value: 3, label: "Mono" },
+  { value: 9, label: "Arial" },
+];
+
+const FONT_STORAGE_KEY = "ladder:scene:font_family";
+const ALLOWED_FONT_IDS = new Set(FONT_OPTIONS.map((o) => o.value));
+
+function loadStoredFont(): number {
+  if (typeof window === "undefined") return FONT_OPTIONS[0].value;
+  const raw = window.localStorage.getItem(FONT_STORAGE_KEY);
+  if (!raw) return FONT_OPTIONS[0].value;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !ALLOWED_FONT_IDS.has(n)) return FONT_OPTIONS[0].value;
+  return n;
+}
+
+function storeFont(value: number): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(FONT_STORAGE_KEY, String(value));
+}
+
+function applyFontFamilyToScene(scene: Scene, fontFamily: number): Scene {
+  const elements = scene.elements.map((el: SceneSkeletonElement) => {
+    const labelObj = el.label;
+    const hasLabel =
+      labelObj != null &&
+      typeof labelObj === "object" &&
+      String(labelObj.text ?? "").trim().length > 0;
+    const hasTextField =
+      typeof el.text === "string" && el.text.trim().length > 0;
+    const isTextEl = el.type === "text";
+    if (!isTextEl && !hasLabel && !hasTextField) return el;
+    const next: SceneSkeletonElement = { ...el };
+    if (hasLabel && labelObj) {
+      next.label = { ...labelObj, fontFamily };
+    }
+    next.fontFamily = fontFamily;
+    return next;
+  });
+  return { ...scene, elements };
+}
+
+// ─── FontPicker ─────────────────────────────────────────────────────────────
+
+function FontPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+}) {
+  const active = FONT_OPTIONS.find((o) => o.value === value) ?? FONT_OPTIONS[0];
+  return (
+    <label
+      className={cn(
+        "relative inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md",
+        "border border-hairline bg-white/[0.03] text-white/85",
+        "hover:bg-white/[0.07] hover:text-white hover:border-hairline-strong",
+        "transition-colors",
+        disabled ? "opacity-40 pointer-events-none" : "cursor-pointer",
+      )}
+      title={`Scene font · ${active.label}`}
+    >
+      <TextAa size={11} weight="bold" className="shrink-0" />
+      <span className="text-[12px] font-medium font-sans whitespace-nowrap">
+        {active.label}
+      </span>
+      <select
+        value={String(value)}
+        onChange={(e) => {
+          onChange(Number(e.target.value));
+        }}
+        disabled={disabled}
+        aria-label="Scene font"
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+      >
+        {FONT_OPTIONS.map((o) => (
+          <option key={String(o.value)} value={String(o.value)}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 type Props = {
   open: boolean;
@@ -15,6 +108,8 @@ type Props = {
   liveCanvasUrl?: string;
   /** True while scene WS run is in progress — switches modal body to live iframe when URL is set. */
   liveCanvasDuringRun?: boolean;
+  /** Called when font changes are applied to the scene so the parent updates its state. */
+  onSceneChange?: (scene: Scene) => void;
 };
 
 /**
@@ -28,6 +123,7 @@ export function ScenePreviewModal({
   sessionId,
   liveCanvasUrl,
   liveCanvasDuringRun = false,
+  onSceneChange,
 }: Props) {
   const trimmedLiveUrl = liveCanvasUrl?.trim() ?? "";
   const showLive = !!trimmedLiveUrl && liveCanvasDuringRun && open;
@@ -36,6 +132,30 @@ export function ScenePreviewModal({
     !!scene &&
     !!sessionId &&
     (!liveCanvasDuringRun || !trimmedLiveUrl);
+
+  const [fontFamily, setFontFamily] = useState<number>(loadStoredFont);
+  const [applyingFont, setApplyingFont] = useState(false);
+  const [fontError, setFontError] = useState<string | null>(null);
+
+  const onFontChange = useCallback(
+    async (value: number) => {
+      setFontFamily(value);
+      storeFont(value);
+      if (!scene || !sessionId) return;
+      setApplyingFont(true);
+      setFontError(null);
+      try {
+        const next = applyFontFamilyToScene(structuredClone(scene), value);
+        await saveSceneSkeleton(sessionId, next);
+        onSceneChange?.(next);
+      } catch (err) {
+        setFontError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setApplyingFont(false);
+      }
+    },
+    [scene, sessionId, onSceneChange],
+  );
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -70,16 +190,28 @@ export function ScenePreviewModal({
                   Same view as the headless exporter — shapes appear as the backend draws them.
                 </p>
               ) : null}
+              {fontError ? (
+                <p className="font-mono text-[10px] text-cinnabar truncate">{fontError}</p>
+              ) : null}
             </div>
-            <Dialog.Close
-              aria-label="Close preview"
-              className={cn(
-                "inline-flex items-center justify-center h-8 w-8 rounded-md shrink-0",
-                "text-mist hover:text-white hover:bg-white/[0.04] transition-colors",
-              )}
-            >
-              <X size={14} weight="bold" />
-            </Dialog.Close>
+            <div className="flex items-center gap-2 shrink-0">
+              {showSceneSnapshot ? (
+                <FontPicker
+                  value={fontFamily}
+                  onChange={onFontChange}
+                  disabled={applyingFont}
+                />
+              ) : null}
+              <Dialog.Close
+                aria-label="Close preview"
+                className={cn(
+                  "inline-flex items-center justify-center h-8 w-8 rounded-md shrink-0",
+                  "text-mist hover:text-white hover:bg-white/[0.04] transition-colors",
+                )}
+              >
+                <X size={14} weight="bold" />
+              </Dialog.Close>
+            </div>
           </header>
           <div
             className={cn(

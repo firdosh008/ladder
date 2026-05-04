@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m py_compile app/routes/studio_sessions.py)"
+      "Bash(python -m py_compile app/routes/studio_sessions.py)",
+      "Bash(npx tsc *)"
     ]
   }
 }
