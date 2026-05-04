@@ -27,6 +27,49 @@ def _bill(input_tokens: int, output_tokens: int) -> float:
     )
 
 
+def _normalize_skeleton_dict_inplace(skeleton_dict: dict[str, Any]) -> int:
+    """Make MCP-drawn elements pass ``SceneSkeleton`` validation without changing visuals.
+
+    Excalidraw legitimately stores ``width``/``height`` as negative when an element
+    was drawn from the opposite corner — same visual when re-rendered with shifted
+    origin. The Pydantic model rejects negatives, so we canonicalize here.
+    Also clamps ``strokeWidth`` to the model's [0.5, 8] range.
+
+    Returns the number of elements that needed fixing (for logging).
+    """
+    elements = skeleton_dict.get("elements") or []
+    fixed = 0
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        touched = False
+
+        w = el.get("width")
+        if isinstance(w, (int, float)) and w < 0:
+            el["x"] = float(el.get("x", 0)) + float(w)
+            el["width"] = -float(w)
+            touched = True
+
+        h = el.get("height")
+        if isinstance(h, (int, float)) and h < 0:
+            el["y"] = float(el.get("y", 0)) + float(h)
+            el["height"] = -float(h)
+            touched = True
+
+        sw = el.get("strokeWidth")
+        if isinstance(sw, (int, float)):
+            if sw > 8:
+                el["strokeWidth"] = 8
+                touched = True
+            elif 0 < sw < 0.5:
+                el["strokeWidth"] = 0.5
+                touched = True
+
+        if touched:
+            fixed += 1
+    return fixed
+
+
 def compose_scene_brief(
     *,
     idea: IdeaSlice,
@@ -118,10 +161,23 @@ async def run_scene_mcp_diagram(
             }
             return
 
+        n_fixed = _normalize_skeleton_dict_inplace(skeleton_dict)
+        if n_fixed:
+            log.warning(
+                "[IMAGE-GEN] normalized %d element(s) before validation "
+                "(negative width/height flipped, strokeWidth clamped)",
+                n_fixed,
+            )
+
         try:
             sk = SceneSkeleton.model_validate(skeleton_dict)
         except Exception as e:
-            log.warning("SceneSkeleton coerce failed (%s) — returning raw dict", e)
+            log.warning(
+                "[IMAGE-GEN] SceneSkeleton validation FAILED — image gen WILL BE SKIPPED. "
+                "error=%s elements_in_dict=%d",
+                e,
+                len(skeleton_dict.get("elements") or []),
+            )
             yield {"type": "scene_ready", "scene": skeleton_dict}
             yield {
                 "type": "usage",
@@ -133,6 +189,7 @@ async def run_scene_mcp_diagram(
             }
             return
 
+        log.warning("[IMAGE-GEN] SceneSkeleton OK — calling enrich_scene_visuals")
         sk = await enrich_scene_visuals(sk, idea, outline, layout=None)
 
         yield {"type": "task_complete", "agent": "diagram_agent", "preview": ""}

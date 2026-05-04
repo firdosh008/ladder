@@ -199,6 +199,114 @@ def _max_slots_for_skeleton(skeleton: SceneSkeleton) -> int:
     return max(0, min(room, settings.SCENE_AI_IMAGE_COUNT))
 
 
+def _scatter_rects_in_canvas(
+    skeleton: SceneSkeleton,
+    n: int,
+    *,
+    img_side: float = 160.0,
+    pad: float = 18.0,
+    margin: float = 32.0,
+) -> list[tuple[float, float, float, float]]:
+    """Up to ``n`` non-overlapping image rects inside existing canvas bounds.
+
+    Builds occupied rects from current elements, scans a coarse grid of
+    candidate positions, returns those that don't collide. Used for the MCP
+    canvas path where there are no planner frames — images get tucked into
+    whatever empty space the diagram left behind.
+    """
+    cw = float(skeleton.canvas_width)
+    ch = float(skeleton.canvas_height)
+    step = img_side + 24.0
+
+    occupied: list[tuple[float, float, float, float]] = []
+    for el in skeleton.elements:
+        ex = float(el.x)
+        ey = float(el.y)
+        ew = float(el.width or 0)
+        eh = float(el.height or 0)
+        occupied.append((ex - pad, ey - pad, ex + ew + pad, ey + eh + pad))
+
+    def collides(rx0: float, ry0: float, rx1: float, ry1: float) -> bool:
+        for ox0, oy0, ox1, oy1 in occupied:
+            if rx0 < ox1 and rx1 > ox0 and ry0 < oy1 and ry1 > oy0:
+                return True
+        return False
+
+    out: list[tuple[float, float, float, float]] = []
+    y = margin
+    while y + img_side <= ch - margin and len(out) < n:
+        x = margin
+        while x + img_side <= cw - margin and len(out) < n:
+            if not collides(x, y, x + img_side, y + img_side):
+                out.append((x, y, img_side, img_side))
+                occupied.append(
+                    (x - pad, y - pad, x + img_side + pad, y + img_side + pad)
+                )
+            x += step
+        y += step
+    return out
+
+
+def _embed_scattered_in_canvas(
+    skeleton: SceneSkeleton,
+    data_urls: list[str],
+) -> SceneSkeleton:
+    """Place images into empty regions of the existing canvas; overflow → strip."""
+    rects = _scatter_rects_in_canvas(skeleton, len(data_urls))
+    if not rects:
+        return _embed_bottom_strip(skeleton, data_urls)
+
+    placed = data_urls[: len(rects)]
+    overflow = data_urls[len(rects) :]
+
+    ts = int(time.time() * 1000)
+    files = dict(skeleton.files or {})
+    new_elements = list(skeleton.elements)
+
+    for i, (data_url, rect) in enumerate(zip(placed, rects)):
+        x, y, img_w, img_h = rect
+        fid = f"ladder-hero-{i}-{ts}"
+        mime = _mime_from_data_url(data_url)
+        files[fid] = {
+            "mimeType": mime,
+            "id": fid,
+            "dataURL": data_url,
+            "created": ts,
+        }
+        new_elements.append(
+            SceneSkeletonElement(
+                id=f"hero-{i}-{ts}",
+                type="image",
+                x=x,
+                y=y,
+                width=img_w,
+                height=img_h,
+                fileId=fid,
+            )
+        )
+
+    note_tail = (
+        f" Embedded {len(placed)} diagram thumbnails (AI/remote) "
+        "scattered into empty canvas regions."
+    )
+    notes = (skeleton.notes or "") + note_tail
+    if len(notes) > 4000:
+        notes = notes[:4000]
+
+    sk = skeleton.model_copy(
+        update={"elements": new_elements, "files": files, "notes": notes}
+    )
+    if overflow:
+        sk = _embed_bottom_strip(
+            sk,
+            overflow,
+            placement_note=" Additional hero thumbnails along bottom strip.",
+        )
+    else:
+        sk = sort_elements_paint_order(sk)
+    return sk
+
+
 def _frame_anchor_image_rect(frame: SceneFrame, cols: int) -> tuple[float, float, float, float]:
     """Size like one column in an N-column row (e.g. 3 text cells + 1 diagram cell).
 
@@ -305,7 +413,7 @@ def _embed_visual_images(
 
     frames = list(layout.frames) if layout and layout.frames else []
     if not frames:
-        return _embed_bottom_strip(skeleton, data_urls)
+        return _embed_scattered_in_canvas(skeleton, data_urls)
 
     ts = int(time.time() * 1000)
     files = dict(skeleton.files or {})
@@ -369,18 +477,43 @@ async def enrich_scene_visuals(
     layout: SceneLayout | None = None,
 ) -> SceneSkeleton:
     """Attach up to ``SCENE_AI_IMAGE_COUNT`` images without rerunning layout."""
+    log.warning(
+        "[IMAGE-GEN] enter: elements=%d layout=%s key_set=%s gen_enabled=%s slots_cfg=%d",
+        len(skeleton.elements),
+        "present" if layout else "None",
+        bool(settings.OPENAI_API_KEY),
+        settings.SCENE_IMAGE_GEN_ENABLED,
+        settings.SCENE_AI_IMAGE_COUNT,
+    )
     max_slots = _max_slots_for_skeleton(skeleton)
     if max_slots <= 0:
+        log.warning("[IMAGE-GEN] skip: max_slots=0 (canvas full or count=0)")
         return skeleton
 
     prompts = _build_prompts(idea, outline, max_slots)
     data_urls: list[str] = []
 
     if settings.OPENAI_API_KEY and settings.SCENE_IMAGE_GEN_ENABLED:
+        log.warning(
+            "[IMAGE-GEN] calling OpenAI: model=%s n=%d",
+            settings.OPENAI_IMAGE_MODEL or "dall-e-3",
+            max_slots,
+        )
         try:
             data_urls.extend(await _openai_generate_png_urls(prompts))
+            log.warning("[IMAGE-GEN] openai returned %d images", len(data_urls))
         except Exception as e:
-            log.warning("OpenAI image generation failed (scene still usable): %s", e)
+            log.warning(
+                "[IMAGE-GEN] OpenAI image generation FAILED: %s: %s",
+                type(e).__name__,
+                e,
+            )
+    else:
+        log.warning(
+            "[IMAGE-GEN] openai skipped: key=%s enabled=%s",
+            bool(settings.OPENAI_API_KEY),
+            settings.SCENE_IMAGE_GEN_ENABLED,
+        )
 
     for url in _parse_remote_url_list():
         if len(data_urls) >= max_slots:
@@ -391,6 +524,12 @@ async def enrich_scene_visuals(
 
     data_urls = data_urls[:max_slots]
     if not data_urls:
+        log.warning("[IMAGE-GEN] no data urls produced — returning unenriched skeleton")
         return skeleton
 
+    log.warning(
+        "[IMAGE-GEN] embedding %d image(s) via %s",
+        len(data_urls),
+        "frame_anchor" if layout and layout.frames else "scatter_in_canvas",
+    )
     return _embed_visual_images(skeleton, layout, data_urls)
