@@ -233,8 +233,7 @@ function EmptyState() {
         Talk to the agent to surgically edit the script or excalidraw layout.
       </p>
       <p className="mt-3 text-[11.5px] text-white/55 leading-[1.55]">
-        Full context (script + outline + scene) is preloaded once the backend
-        crew is wired. This thread stays scoped to this idea.
+        This thread is scoped to this idea. The agent has full access to your script, outline, and scene.
       </p>
     </div>
   );
