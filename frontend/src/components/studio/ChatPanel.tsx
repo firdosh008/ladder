@@ -29,6 +29,14 @@ type Props = {
   sessionId: string | null;
   hasScene?: boolean;
   onRegenerateScene?: () => void;
+  onPatchScene?: (patch: any) => void;
+  onPatchScript?: (patch: any) => void;
+  onInsertScriptSection?: (patch: any) => void;
+  onRemoveScriptSection?: (patch: any) => void;
+  onPatchOutline?: (patch: any) => void;
+  onInsertOutlineItem?: (patch: any) => void;
+  onRemoveOutlineItem?: (patch: any) => void;
+  onCommit?: () => void;
 };
 
 /**
@@ -41,13 +49,14 @@ type Props = {
  * the conversation shape. Wiring to the real `sharpen_this` endpoint is
  * the next milestone.
  */
-export function ChatPanel({ sessionId, hasScene, onRegenerateScene }: Props) {
+export function ChatPanel({ sessionId, hasScene, onRegenerateScene, onPatchScene, onPatchScript, onInsertScriptSection, onRemoveScriptSection, onPatchOutline, onInsertOutlineItem, onRemoveOutlineItem, onCommit }: Props) {
   const [draft, setDraft] = useState("");
   const [pastedImage, setPastedImage] = useState<string | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [skill, setSkill] = useState<string | null>(null);
   const inferredMode = pastedImage ? "screenshot" : "text";
   const [isStreaming, setIsStreaming] = useState(false);
+  const dirtyRef = useRef(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
@@ -150,9 +159,93 @@ export function ChatPanel({ sessionId, hasScene, onRegenerateScene }: Props) {
               next[idx] = { ...next[idx], content: next[idx].content + (ev as any).content };
               return next;
             });
+          } else if (ev.type === "tool_call") {
+            const toolEv = ev as any;
+            if (toolEv.name === "patch_scene" && onPatchScene) {
+              dirtyRef.current = true;
+              onPatchScene(toolEv.arguments);
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === astId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                const prefix = next[idx].content ? "\n\n" : "";
+                next[idx] = { ...next[idx], content: next[idx].content + prefix + "✓ *Applied layout updates to scene*" };
+                return next;
+              });
+            } else if (toolEv.name === "patch_script" && onPatchScript) {
+              dirtyRef.current = true;
+              onPatchScript(toolEv.arguments);
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === astId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                const prefix = next[idx].content ? "\n\n" : "";
+                next[idx] = { ...next[idx], content: next[idx].content + prefix + "✓ *Applied updates to script*" };
+                return next;
+              });
+            } else if (toolEv.name === "insert_script_section" && onInsertScriptSection) {
+              dirtyRef.current = true;
+              onInsertScriptSection(toolEv.arguments);
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === astId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                const prefix = next[idx].content ? "\n\n" : "";
+                next[idx] = { ...next[idx], content: next[idx].content + prefix + "✓ *Inserted new script section*" };
+                return next;
+              });
+            } else if (toolEv.name === "remove_script_section" && onRemoveScriptSection) {
+              dirtyRef.current = true;
+              onRemoveScriptSection(toolEv.arguments);
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === astId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                const prefix = next[idx].content ? "\n\n" : "";
+                next[idx] = { ...next[idx], content: next[idx].content + prefix + "✓ *Removed script section*" };
+                return next;
+              });
+            } else if (toolEv.name === "patch_outline" && onPatchOutline) {
+              dirtyRef.current = true;
+              onPatchOutline(toolEv.arguments);
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === astId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                const prefix = next[idx].content ? "\n\n" : "";
+                next[idx] = { ...next[idx], content: next[idx].content + prefix + "✓ *Applied updates to outline*" };
+                return next;
+              });
+            } else if (toolEv.name === "insert_outline_item" && onInsertOutlineItem) {
+              dirtyRef.current = true;
+              onInsertOutlineItem(toolEv.arguments);
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === astId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                const prefix = next[idx].content ? "\n\n" : "";
+                next[idx] = { ...next[idx], content: next[idx].content + prefix + "✓ *Inserted new outline item*" };
+                return next;
+              });
+            } else if (toolEv.name === "remove_outline_item" && onRemoveOutlineItem) {
+              dirtyRef.current = true;
+              onRemoveOutlineItem(toolEv.arguments);
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === astId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                const prefix = next[idx].content ? "\n\n" : "";
+                next[idx] = { ...next[idx], content: next[idx].content + prefix + "✓ *Removed outline item*" };
+                return next;
+              });
+            }
           }
         },
       );
+      if (dirtyRef.current && onCommit) {
+        dirtyRef.current = false;
+        onCommit();
+      }
     } catch (err) {
       console.error("Chat stream error:", err);
       setMessages((prev) => {
@@ -166,6 +259,7 @@ export function ChatPanel({ sessionId, hasScene, onRegenerateScene }: Props) {
         return next;
       });
     } finally {
+      dirtyRef.current = false;
       setIsStreaming(false);
     }
   };

@@ -460,14 +460,14 @@ export function SceneRunPanel({
                     onClick={onPreview}
                     title="Preview the canvas"
                   />
-                  <FooterIconBtn
+                  {/* <FooterIconBtn
                     icon={openingExcalidraw ? Spinner : ArrowSquareOut}
                     label={openingExcalidraw ? "Uploading…" : "Open in Excalidraw"}
                     onClick={onOpenInExcalidraw}
                     disabled={openingExcalidraw}
                     spinning={openingExcalidraw}
                     title="Open scene in excalidraw.com"
-                  />
+                  /> */}
                 </>
               ) : null}
               <FooterIconBtn
@@ -486,10 +486,10 @@ export function SceneRunPanel({
               />
               <FooterIconBtn
                 icon={ImageIcon}
-                label="Thumbnail"
+                label="Generate Thumbnail"
                 onClick={onPreview}
                 disabled={hidePreviewCluster}
-                title="Preview the scene (same as Preview — full canvas in a modal)"
+                title="Generate Thumbnail of the scene"
               />
             </div>
           </>

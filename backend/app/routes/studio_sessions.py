@@ -96,6 +96,17 @@ class OutlineSaveResponse(BaseModel):
     version: int
 
 
+class ScriptSaveBody(BaseModel):
+    """Script payload — same shape as the streaming Script."""
+
+    script: dict[str, Any]
+
+
+class ScriptSaveResponse(BaseModel):
+    artifact_id: str
+    version: int
+
+
 class SceneSkeletonSaveBody(BaseModel):
     """Scene payload matching ``SceneSkeleton`` / frontend ``Scene`` type."""
 
@@ -238,6 +249,79 @@ def _outline_to_text(outline: dict[str, Any]) -> str:
             f"{it.get('number','?')}. {it.get('label','')} — {it.get('beat','')}"
         )
     return "\n".join(lines).strip()
+
+
+def _script_to_text(script: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for sec in script.get("sections") or []:
+        lines.append(
+            f"{sec.get('heading','')} ({sec.get('duration_min','?')} min): "
+            + "; ".join(sec.get("talking_points") or [])
+        )
+    return "\n".join(lines).strip()
+
+
+@router.post(
+    "/{session_id}/script",
+    response_model=ScriptSaveResponse,
+)
+async def save_script(
+    session_id: str,
+    body: ScriptSaveBody,
+    ctx: tuple = Depends(current_user),
+) -> ScriptSaveResponse:
+    """Persist an AI-patched script as a new versioned ``script`` artifact."""
+    user_id, token = ctx
+    client = await user_client(token)
+
+    sess_resp = (
+        await client.from_("studio_sessions")
+        .select("id")
+        .eq("id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    sess = sess_resp.data if sess_resp is not None else None
+    if not sess:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    script = body.script
+    sections = script.get("sections") if isinstance(script, dict) else None
+    if not isinstance(sections, list) or not sections:
+        raise HTTPException(status_code=400, detail="script.sections must be a non-empty list")
+
+    latest = (
+        await client.from_("artifacts")
+        .select("version")
+        .eq("session_id", session_id)
+        .eq("type", "script")
+        .order("version", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_version = int(latest.data[0]["version"]) + 1 if latest.data else 1
+
+    inserted = (
+        await client.from_("artifacts")
+        .insert(
+            {
+                "user_id": str(user_id),
+                "session_id": session_id,
+                "type": "script",
+                "version": next_version,
+                "content_text": _script_to_text(script),
+                "content_json": script,
+            }
+        )
+        .execute()
+    )
+    if not inserted.data:
+        raise HTTPException(status_code=500, detail="script insert returned no row")
+
+    return ScriptSaveResponse(
+        artifact_id=str(inserted.data[0]["id"]),
+        version=next_version,
+    )
 
 
 @router.post(

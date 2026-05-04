@@ -170,8 +170,9 @@ export type AgentEvent =
   | {
       type: "tool_call";
       agent?: string | null;
-      tool: string;
-      arguments?: string;
+      name?: string;
+      tool?: string;
+      arguments?: any;
     }
   | { type: "sources"; query: string; items: Source[] }
   | { type: "text_delta"; agent: string; content: string }
@@ -261,8 +262,8 @@ function consumeStream<T>(
       }
       try {
         onEvent(ev);
-      } catch {
-        /* UI callback errors should not kill the stream */
+      } catch (err) {
+        console.error("Agent event handler error:", err, ev);
       }
       if (ev.type === "complete") {
         settled = true;
@@ -475,6 +476,38 @@ export async function saveSceneSkeleton(
   return (await res.json()) as SaveSceneSkeletonResult;
 }
 
+// ─── saveScript ────────────────────────────────────────────────────────────
+
+export type SaveScriptResult = {
+  artifact_id: string;
+  version: number;
+};
+
+/**
+ * Persist an AI-patched script as a new versioned ``script`` artifact.
+ */
+export async function saveScript(
+  sessionId: string,
+  script: Script,
+): Promise<SaveScriptResult> {
+  const token = await authToken();
+  const res = await fetch(
+    `${API_URL}/studio-sessions/${encodeURIComponent(sessionId)}/script`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ script }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to save script (${res.status})`);
+  }
+  return (await res.json()) as SaveScriptResult;
+}
+
 // ─── runExtractStream ─────────────────────────────────────────────────────
 
 export type ExtractRunResult = {
@@ -498,6 +531,103 @@ export async function runExtractStream(
       source_url: source.source_url ?? null,
     },
   );
+}
+
+// ─── Scene & Script patching utilities ──────────────────────────────────────
+
+export type ScenePatch = {
+  upsert_elements: SceneSkeletonElement[];
+  remove_element_ids: string[];
+};
+
+/**
+ * Apply an AI-generated patch to a Scene, returning a new Scene object.
+ * - Elements whose IDs appear in `remove_element_ids` are dropped.
+ * - Elements in `upsert_elements` replace any existing element with the same id,
+ *   or are appended if no existing element matches.
+ */
+export function applyScenePatch(scene: Scene, patch: ScenePatch): Scene {
+  const removeIds = new Set(patch.remove_element_ids ?? []);
+  const upserts = patch.upsert_elements ?? [];
+
+  const upsertIdMap = new Map<string, SceneSkeletonElement>();
+  for (const el of upserts) {
+    if (el?.id) upsertIdMap.set(el.id, el);
+  }
+
+  const elements = scene.elements
+    .filter((el) => !removeIds.has(el.id) && !upsertIdMap.has(el.id))
+    .concat(upserts);
+
+  return { ...scene, elements };
+}
+
+export type ScriptPatch = {
+  section_index: number;
+  new_section: ScriptSection;
+};
+
+/**
+ * Replace a single script section at the given index.
+ */
+export function applyScriptPatch(script: Script, patch: ScriptPatch): Script {
+  const sections = [...script.sections];
+  if (patch.section_index >= 0 && patch.section_index < sections.length) {
+    sections[patch.section_index] = patch.new_section;
+  }
+  return { ...script, sections };
+}
+
+/**
+ * Insert a new script section at the given index, shifting later sections down.
+ */
+export function insertScriptSection(script: Script, index: number, section: ScriptSection): Script {
+  const sections = [...script.sections];
+  sections.splice(index, 0, section);
+  return { ...script, sections };
+}
+
+/**
+ * Remove a script section at the given index.
+ */
+export function removeScriptSection(script: Script, index: number): Script {
+  const sections = [...script.sections];
+  sections.splice(index, 1);
+  return { ...script, sections };
+}
+
+export type OutlinePatch = {
+  item_index: number;
+  new_item: OutlineItem;
+};
+
+/**
+ * Replace a single outline item at the given index.
+ */
+export function applyOutlinePatch(outline: Outline, patch: OutlinePatch): Outline {
+  const items = [...outline.items];
+  if (patch.item_index >= 0 && patch.item_index < items.length) {
+    items[patch.item_index] = patch.new_item;
+  }
+  return { ...outline, items };
+}
+
+/**
+ * Insert a new outline item at the given index, shifting later items down.
+ */
+export function insertOutlineItem(outline: Outline, index: number, item: OutlineItem): Outline {
+  const items = [...outline.items];
+  items.splice(index, 0, item);
+  return { ...outline, items };
+}
+
+/**
+ * Remove an outline item at the given index.
+ */
+export function removeOutlineItem(outline: Outline, index: number): Outline {
+  const items = [...outline.items];
+  items.splice(index, 1);
+  return { ...outline, items };
 }
 
 // ─── PATCH /studio-sessions/{session_id} ─────────────────────────────────

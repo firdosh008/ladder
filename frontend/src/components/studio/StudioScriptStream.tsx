@@ -90,6 +90,8 @@ export type StudioStreamState = {
   error: string | null;
   cost: number | null;
   hydratedFromDb: boolean;
+  /** Replace the local script (e.g. after an AI chat patch). */
+  setScript: (script: Script | null) => void;
   /** Replace the local outline (e.g. after a manual edit save). */
   setOutline: (outline: Outline) => void;
   /**
@@ -347,6 +349,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       error,
       cost,
       hydratedFromDb,
+      setScript,
       setOutline,
       setScene,
       patchSession,

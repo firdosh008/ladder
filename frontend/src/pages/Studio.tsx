@@ -5,7 +5,19 @@ import { Shell } from "../components/app/Shell";
 import { Badge } from "../components/ui/Badge";
 import { ResizableSplit } from "../components/ui/ResizableSplit";
 import { useIdeas, type Idea, type IdeaUpdate } from "../lib/useIdeas";
-import { patchStudioSession } from "../lib/agents";
+import {
+  patchStudioSession,
+  applyScenePatch,
+  applyScriptPatch,
+  insertScriptSection,
+  removeScriptSection,
+  applyOutlinePatch,
+  insertOutlineItem,
+  removeOutlineItem,
+  saveSceneSkeleton,
+  saveScript,
+  saveOutline,
+} from "../lib/agents";
 import { cn } from "../lib/cn";
 import {
   useStudioStream,
@@ -69,6 +81,83 @@ function StudioBody({
   const handleDiagramRunActive = useCallback((active: boolean) => {
     setLiveCanvasDuringRun(active);
     if (active) setPreviewOpen(true);
+  }, []);
+
+  // Chat patching plumbing — refs avoid stale closures in useCallback deps
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const dirtySceneRef = useRef(false);
+  const dirtyScriptRef = useRef(false);
+  const dirtyOutlineRef = useRef(false);
+
+  const onPatchScene = useCallback((patch: any) => {
+    const s = stateRef.current;
+    if (!s.scene || !s.sessionId) return;
+    dirtySceneRef.current = true;
+    s.setScene(applyScenePatch(s.scene, patch));
+  }, []);
+
+  const onPatchScript = useCallback((patch: any) => {
+    const s = stateRef.current;
+    if (!s.script || !s.sessionId) return;
+    dirtyScriptRef.current = true;
+    s.setScript(applyScriptPatch(s.script, patch));
+  }, []);
+
+  const onPatchOutline = useCallback((patch: any) => {
+    const s = stateRef.current;
+    if (!s.outline || !s.sessionId) return;
+    dirtyOutlineRef.current = true;
+    s.setOutline(applyOutlinePatch(s.outline, patch));
+  }, []);
+
+  const onInsertScriptSection = useCallback((args: any) => {
+    const s = stateRef.current;
+    if (!s.script || !s.sessionId) return;
+    dirtyScriptRef.current = true;
+    s.setScript(insertScriptSection(s.script, args.section_index, args.new_section));
+  }, []);
+
+  const onRemoveScriptSection = useCallback((args: any) => {
+    const s = stateRef.current;
+    if (!s.script || !s.sessionId) return;
+    dirtyScriptRef.current = true;
+    s.setScript(removeScriptSection(s.script, args.section_index));
+  }, []);
+
+  const onInsertOutlineItem = useCallback((args: any) => {
+    const s = stateRef.current;
+    if (!s.outline || !s.sessionId) return;
+    dirtyOutlineRef.current = true;
+    s.setOutline(insertOutlineItem(s.outline, args.item_index, args.new_item));
+  }, []);
+
+  const onRemoveOutlineItem = useCallback((args: any) => {
+    const s = stateRef.current;
+    if (!s.outline || !s.sessionId) return;
+    dirtyOutlineRef.current = true;
+    s.setOutline(removeOutlineItem(s.outline, args.item_index));
+  }, []);
+
+  const onCommit = useCallback(async () => {
+    const s = stateRef.current;
+    if (!s.sessionId) return;
+    try {
+      if (dirtySceneRef.current && s.scene) {
+        dirtySceneRef.current = false;
+        await saveSceneSkeleton(s.sessionId, s.scene);
+      }
+      if (dirtyScriptRef.current && s.script) {
+        dirtyScriptRef.current = false;
+        await saveScript(s.sessionId, s.script);
+      }
+      if (dirtyOutlineRef.current && s.outline) {
+        dirtyOutlineRef.current = false;
+        await saveOutline(s.sessionId, s.outline);
+      }
+    } catch (err) {
+      console.error("Failed to commit chat patches:", err);
+    }
   }, []);
 
   const onTitleChange = useCallback(
@@ -177,7 +266,7 @@ function StudioBody({
             onDiagramRunActive={handleDiagramRunActive}
           />
         }
-        right={<ChatPanel sessionId={state.sessionId} hasScene={!!state.scene} onRegenerateScene={() => alert("Regenerate scene (trigger build_scene)")} />}
+        right={<ChatPanel sessionId={state.sessionId} hasScene={!!state.scene} onRegenerateScene={() => {}} onPatchScene={onPatchScene} onPatchScript={onPatchScript} onInsertScriptSection={onInsertScriptSection} onRemoveScriptSection={onRemoveScriptSection} onPatchOutline={onPatchOutline} onInsertOutlineItem={onInsertOutlineItem} onRemoveOutlineItem={onRemoveOutlineItem} onCommit={onCommit} />}
       />
       <ScenePreviewModal
         open={previewOpen}

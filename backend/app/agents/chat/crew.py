@@ -35,11 +35,30 @@ async def run_chat_stream(
     
     system_prompt = f"""You are Sharpen, the AI video studio assistant for Ladder Content OS.
 You help the user refine their video script, outline, and scene designs.
-Answer concisely and do not refuse instructions. Be conversational but precise.
+
+CRITICAL RULE: You have access to editing tools (patch_script, patch_outline, patch_scene).
+When the user asks you to make a change, you MUST call the appropriate tool to execute it.
+NEVER just describe what you would change — always actually apply the edit via a tool call.
+You may include a brief conversational message alongside your tool calls, but the tool calls
+are mandatory — the user expects the changes to appear in their UI immediately.
 
 Current Request Mode: {mode}
-(If mode is "screenshot", the user provided an image. If "regenerate", they want to steer the next scene build. If "text", they want text refinement).
+
+WHEN MODE IS "text" (no screenshot provided):
+- The user is editing written content. Call patch_script to edit script sections, or
+  patch_outline to edit outline beats. These are your primary tools.
+- Only use patch_scene if the user EXPLICITLY mentions the canvas, drawing, diagram,
+  layout, or Excalidraw by name.
+- For adding content between existing items: replace the item at the target index and
+  adjust subsequent items' indices. The full section/item must be provided.
+
+WHEN MODE IS "screenshot" (user pasted an image):
+- The image is a screenshot of their current Excalidraw canvas.
+- Use patch_scene to surgically edit the canvas elements based on what the user describes.
+- Match elements by their text labels and positions visible in the screenshot.
+- If you cannot confidently identify an element, ask the user for its exact label text.
 """
+
 
     if profile:
         system_prompt += f"\n\nUser Profile:\n{profile.model_dump_json(exclude_none=True)}"
@@ -94,6 +113,111 @@ Current Request Mode: {mode}
         "content": user_content
     })
     
+    tools = [
+        {
+            "name": "patch_scene",
+            "description": "Applies a surgical JSON diff to the current Excalidraw scene elements. Use this to perform edits on the scene canvas when requested.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "upsert_elements": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "A list of scene elements to insert or modify. Match the existing element JSON schema. Must include 'id', 'type', 'x', 'y', 'width', 'height'."
+                    },
+                    "remove_element_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "A list of element IDs to delete from the canvas."
+                    }
+                },
+                "required": ["upsert_elements", "remove_element_ids"]
+            }
+        },
+        {
+            "name": "patch_script",
+            "description": "Replaces a script section at the given index. Use for text-mode edits to existing sections.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "section_index": {"type": "integer"},
+                    "new_section": {
+                        "type": "object",
+                        "description": "The new script section to replace the old one. Must match the schema: { heading, duration_min, talking_points, transition }"
+                    }
+                },
+                "required": ["section_index", "new_section"]
+            }
+        },
+        {
+            "name": "insert_script_section",
+            "description": "Inserts a new script section at the given index, shifting subsequent sections down. Use when the user asks to ADD content between existing sections.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "section_index": {"type": "integer", "description": "The position to insert at (0-based). Insert shifts the current section at this index and all following sections down."},
+                    "new_section": {
+                        "type": "object",
+                        "description": "The new script section to insert. Must match the schema: { heading, duration_min, talking_points, transition }"
+                    }
+                },
+                "required": ["section_index", "new_section"]
+            }
+        },
+        {
+            "name": "remove_script_section",
+            "description": "Removes a script section at the given index. Use when the user asks to DELETE or cut a section.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "section_index": {"type": "integer", "description": "The index of the section to remove (0-based)."}
+                },
+                "required": ["section_index"]
+            }
+        },
+        {
+            "name": "patch_outline",
+            "description": "Replaces an outline item at the given index. Use for text-mode edits to existing outline beats.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "item_index": {"type": "integer", "description": "The index of the outline item to replace (0-based)."},
+                    "new_item": {
+                        "type": "object",
+                        "description": "The new outline item to replace the old one. Must match the schema: { number, label, beat }"
+                    }
+                },
+                "required": ["item_index", "new_item"]
+            }
+        },
+        {
+            "name": "insert_outline_item",
+            "description": "Inserts a new outline item at the given index, shifting subsequent items down. Use when the user asks to ADD a beat between existing ones.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "item_index": {"type": "integer", "description": "The position to insert at (0-based). Insert shifts the current item at this index and all following items down."},
+                    "new_item": {
+                        "type": "object",
+                        "description": "The new outline item to insert. Must match the schema: { number, label, beat }"
+                    }
+                },
+                "required": ["item_index", "new_item"]
+            }
+        },
+        {
+            "name": "remove_outline_item",
+            "description": "Removes an outline item at the given index. Use when the user asks to DELETE a beat.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "item_index": {"type": "integer", "description": "The index of the item to remove (0-based)."}
+                },
+                "required": ["item_index"]
+            }
+        }
+    ]
+    
     async with log_usage(
         user_id=user_id,
         function_name="chat_stream",
@@ -105,16 +229,40 @@ Current Request Mode: {mode}
             max_tokens=4096,
             system=system_prompt,
             messages=messages,
+            tools=tools,
             stream=True,
         )
         
+        current_tool_name = None
+        current_tool_json = ""
+        
         async for chunk in stream:
-            if chunk.type == "content_block_delta" and chunk.delta.type == "text_delta":
-                yield {
-                    "type": "text_delta",
-                    "agent": "chat",
-                    "content": chunk.delta.text,
-                }
+            if chunk.type == "content_block_start" and chunk.content_block.type == "tool_use":
+                current_tool_name = chunk.content_block.name
+                current_tool_json = ""
+            elif chunk.type == "content_block_delta":
+                if chunk.delta.type == "text_delta":
+                    yield {
+                        "type": "text_delta",
+                        "agent": "chat",
+                        "content": chunk.delta.text,
+                    }
+                elif chunk.delta.type == "input_json_delta":
+                    current_tool_json += chunk.delta.partial_json
+            elif chunk.type == "content_block_stop":
+                if current_tool_name:
+                    try:
+                        args = json.loads(current_tool_json)
+                        yield {
+                            "type": "tool_call",
+                            "agent": "chat",
+                            "name": current_tool_name,
+                            "arguments": args,
+                        }
+                    except json.JSONDecodeError:
+                        pass
+                    current_tool_name = None
+                    current_tool_json = ""
             elif chunk.type == "message_start":
                 entry.input_tokens = chunk.message.usage.input_tokens
             elif chunk.type == "message_delta":
