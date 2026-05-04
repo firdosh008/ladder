@@ -126,6 +126,113 @@ def enforce_readable_colors(scene: SceneSkeleton) -> SceneSkeleton:
     return scene.model_copy(update={"elements": out})
 
 
+def enforce_font_family(
+    scene: SceneSkeleton, font_family: int | None
+) -> SceneSkeleton:
+    """Stamp the user-chosen ``fontFamily`` on every text element + bound
+    label. The LLM does not always honour the prompt instruction; this
+    deterministic pass guarantees the picker selection is what the founder
+    sees on the canvas. ``None`` is a no-op (Excalidraw default).
+
+    Geometry, content, colors are untouched — only the typography integer.
+    Label dicts inherit a ``fontFamily`` key so the bound caption picks the
+    same family when ``convertToExcalidrawElements`` inflates it.
+    """
+    if font_family is None:
+        return scene
+
+    out: list[SceneSkeletonElement] = []
+    for el in scene.elements:
+        has_text = isinstance(el.text, str) and el.text.strip() != ""
+        has_label = el.label is not None and (el.label.text or "").strip() != ""
+        if not has_text and not has_label and el.type != "text":
+            out.append(el)
+            continue
+
+        update: dict = {"fontFamily": font_family}
+        if has_label and el.label is not None:
+            update["label"] = SceneElementLabel(
+                text=el.label.text, fontFamily=font_family
+            )
+        out.append(el.model_copy(update=update))
+
+    return scene.model_copy(update={"elements": out})
+
+
+def enforce_brand_dominance(
+    scene: SceneSkeleton, brand_color: str | None
+) -> SceneSkeleton:
+    """Make the brand color the dominant fill on shape elements.
+
+    The LLM only paints title cards + a few accent strokes by default. To
+    reflect the user's brand on the board, walk shape elements (rectangles,
+    diamonds, ellipses) that have **no fill** and paint them solid brand
+    color — keeping every Nth shape (~30%) as wireframe-only so the canvas
+    does not become a wall of one swatch. Already-filled shapes (whether the
+    LLM picked brand or another color) are left alone.
+
+    Arrows, lines, plain text, and shapes with explicit non-empty fills are
+    untouched. Stroke colors fall through to ``enforce_readable_colors``
+    which flips bound-label strokes to white on dark fills.
+    """
+    if not brand_color:
+        return scene
+    rgb = _parse_hex(brand_color)
+    if rgb is None:
+        return scene
+    # Only treat the brand color as a "dominant fill" if it is dark enough
+    # for white labels to read on it. A pale brand swatch becomes an accent
+    # stroke instead (handled by the LLM prompt + readable-colors pass).
+    if _luma(rgb) >= 185:
+        return scene
+
+    out: list[SceneSkeletonElement] = []
+    paint_count = 0
+    skip_every = 3  # leave roughly every 3rd unfilled shape as wireframe
+    fill_idx = 0
+    for el in scene.elements:
+        if el.type not in ("rectangle", "diamond", "ellipse"):
+            out.append(el)
+            continue
+
+        bg = (el.backgroundColor or "").strip().lower()
+        already_filled = (
+            bg not in ("", "transparent", "#ffffff", "#fff", "white")
+            and el.fillStyle == "solid"
+        )
+        if already_filled:
+            out.append(el)
+            continue
+
+        # Wireframe rotation: keep ~1 in `skip_every` shapes unfilled for rhythm.
+        is_wireframe_slot = fill_idx % skip_every == (skip_every - 1)
+        fill_idx += 1
+        if is_wireframe_slot:
+            out.append(el)
+            continue
+
+        out.append(
+            el.model_copy(
+                update={
+                    "backgroundColor": brand_color,
+                    "fillStyle": "solid",
+                    # Stroke: a hint, but enforce_readable_colors will swap
+                    # to white if the fill is dark enough (it is — gated by
+                    # luma above).
+                    "strokeColor": brand_color,
+                }
+            )
+        )
+        paint_count += 1
+
+    if paint_count:
+        log.info(
+            "scene cleanup painted %d shape(s) with brand color %s",
+            paint_count, brand_color,
+        )
+    return scene.model_copy(update={"elements": out})
+
+
 def _chars_per_line_for_box(width_px: float, font_size: float) -> int:
     """Heuristic Latin char budget per line for Excalidraw-style boxed text."""
     fs = max(10.0, min(72.0, font_size))
@@ -187,7 +294,12 @@ def wrap_scene_text_elements(scene: SceneSkeleton) -> SceneSkeleton:
             if wrapped_l != lt:
                 out.append(
                     el.model_copy(
-                        update={"label": SceneElementLabel(text=wrapped_l)}
+                        update={
+                            "label": SceneElementLabel(
+                                text=wrapped_l,
+                                fontFamily=el.label.fontFamily,
+                            )
+                        }
                     )
                 )
                 continue

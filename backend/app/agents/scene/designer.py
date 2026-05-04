@@ -25,6 +25,8 @@ from anthropic import APIError, APIStatusError
 from pydantic import ValidationError
 
 from app.agents.scene.skeleton_scene_cleanup import (
+    enforce_brand_dominance,
+    enforce_font_family,
     enforce_readable_colors,
     repair_arrow_bindings,
     sync_canvas_from_layout,
@@ -133,7 +135,7 @@ Hard rules:
   • Every shape stays strictly inside its frame's bounding box (use the planner's x/y/width/height as a hard clamp). At least 24px internal padding.
   • Every element has a unique stable string id ('f1-box', 'arrow-1-2', etc).
   • Arrows reference start/end via {{id: '<element-id>'}}. Referenced ids MUST exist and MUST point only to rectangle, diamond, or ellipse elements — NEVER bind arrow endpoints to type:text (broken arrows / inverted geometry).
-  • Style: roughness=1, strokeWidth=2. Canvas is **white (#FFFFFF)** — standalone type:text MUST use strokeColor='#1F2937' (dark grey — readable body copy). Arrow and line shafts MUST use strokeColor='#1F2937'. Title/cta cards use fillStyle='solid' with backgroundColor='{brand_color}' and strokeColor='#FFFFFF' so bound labels stay readable on the fill (never leave captions implied-default). Wireframe rectangles/diamonds use strokeColor='#1F2937'. Use '{brand_color}' on at least one prominent stroke per frame as an accent line OUTSIDE of captions if helpful. Never use #FFFFFF / white / near-white strokeColor on unfilled shapes or on type:text — invisible on white.
+  • Style: roughness=1, strokeWidth=2. Canvas is **white (#FFFFFF)** — standalone type:text MUST use strokeColor='#1F2937' (dark grey — readable body copy). Arrow and line shafts MUST use strokeColor='#1F2937'. **Brand color '{brand_color}' is the DOMINANT fill on this board** — at least ~60-70% of rectangle/diamond/ellipse shapes (across title, flow, decision, table, architecture frames) MUST use fillStyle='solid' with backgroundColor='{brand_color}' and strokeColor='#FFFFFF' so bound labels render in white on the brand fill. Leave roughly 1 in 3 shapes per frame as wireframe (no fill) with strokeColor='#1F2937' for visual rhythm — do not paint every shape. Title/cta cards ALWAYS use the brand fill. Wireframe rectangles/diamonds use strokeColor='#1F2937'. Never use #FFFFFF / white / near-white strokeColor on unfilled shapes or on type:text — invisible on white.
   • Text elements use the `text` field (not `label`). Shape elements with bound captions use `label.text`.
   • Shape labels are SHORT titles (≤48 chars, single line — Excalidraw centers them in the shape). For multi-line content, paragraphs, or bullet lists, use a separate `type: "text"` element **below the title strip**: `x = rect.x + 12`, `y = rect.y + 40`, `width = rect.width - 24`, `height` filling the rest of the card — never center that body at the rectangle's midpoint (it overlaps the bound label). Never cram long copy into `label.text`.
   • **Body `type:text`:** give each block a **realistic `width`** (≥180px for paragraphs). Long sentences must either use explicit newline characters (`\\n`) between lines **or** rely on that width — the app reflows single-line blobs to ~12–56 chars per line. Set `height` generously when you expect multiple lines (≥ `line_count × fontSize × 1.25`).
@@ -282,12 +284,28 @@ def _validate_with_salvage(payload: Any) -> SceneSkeleton:
         return SceneSkeleton.model_validate(payload)
 
 
-def _finalize_skeleton(skeleton: SceneSkeleton, layout: SceneLayout) -> SceneSkeleton:
-    """Deterministic cleanup after the model (geometry, contrast, arrows)."""
+def _finalize_skeleton(
+    skeleton: SceneSkeleton,
+    layout: SceneLayout,
+    brand_color: str | None = None,
+    font_family: int | None = None,
+) -> SceneSkeleton:
+    """Deterministic cleanup after the model (geometry, brand, contrast, arrows).
+
+    Order matters:
+      1. canvas + text geometry (no color/font work)
+      2. ``enforce_brand_dominance`` paints unfilled shapes with the brand
+         color BEFORE contrast fix runs — that way ``enforce_readable_colors``
+         flips bound-label strokes to white on the freshly-painted dark fills.
+      3. ``enforce_font_family`` stamps the picker selection on every text
+         element + bound label so the user-chosen font is guaranteed.
+    """
     sk = sync_canvas_from_layout(skeleton, layout)
     sk = repack_rect_body_text_below_labels(sk, layout)
     sk = wrap_scene_text_elements(sk)
+    sk = enforce_brand_dominance(sk, brand_color)
     sk = enforce_readable_colors(sk)
+    sk = enforce_font_family(sk, font_family)
     sk = repair_arrow_bindings(sk)
     return sk
 
@@ -434,7 +452,12 @@ async def run_designer(
                     client, schema, user_prompt, system_prompt
                 )
                 payload = json.loads(_extract_text(response))
-                skeleton = _finalize_skeleton(_validate_with_salvage(payload), layout)
+                skeleton = _finalize_skeleton(
+                    _validate_with_salvage(payload),
+                    layout,
+                    brand_color=brand_color or _DEFAULT_BRAND_COLOR,
+                    font_family=font_family,
+                )
                 usage = response.usage
                 return (
                     skeleton,

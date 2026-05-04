@@ -165,9 +165,15 @@ class SceneElementLabel(BaseModel):
     visible/invisible-constraint mismatch (model produces fine output, we
     reject it). The designer prompt steers the model toward short captions;
     this cap is a sanity ceiling, not a UX guideline.
+
+    ``fontFamily`` mirrors the field on ``SceneSkeletonElement`` so the
+    bound caption rendered by ``convertToExcalidrawElements`` picks up the
+    user-chosen typeface (without it the inflated text falls back to the
+    Excalidraw default).
     """
 
     text: str = Field(min_length=1, max_length=2000)
+    fontFamily: int | None = Field(default=None, ge=1, le=99)
 
 
 class SceneElementBinding(BaseModel):
