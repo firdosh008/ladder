@@ -59,6 +59,7 @@ from app.agents.content_extract import run_content_extract
 from app.agents.research import run_research
 from app.agents.scene import run_scene_build
 from app.agents.studio import run_studio_script
+from app.agents.chat.crew import run_chat_stream
 from app.deps import user_client
 from app.middleware.ws_auth import WsAuthError, verify_ws_token
 from app.models.db import IdeaSlice, Outline, Script, UserProfileSlice
@@ -975,3 +976,129 @@ async def scene_stream(
     )
     if websocket.application_state == WebSocketState.CONNECTED:
         await websocket.close()
+
+
+# ─── /ws/agents/chat ───────────────────────────────────────────────────────
+
+
+@router.websocket("/ws/agents/chat")
+async def chat_stream(
+    websocket: WebSocket,
+    token: str | None = None,
+    session_id: str | None = None,
+) -> None:
+    await websocket.accept()
+    
+    try:
+        user_id, jwt = await verify_ws_token(token)
+    except WsAuthError as e:
+        await websocket.close(code=_CLOSE_UNAUTHORIZED, reason=str(e))
+        return
+
+    if not session_id:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="session_id required")
+        return
+
+    try:
+        first = await asyncio.wait_for(websocket.receive_text(), timeout=15.0)
+    except asyncio.TimeoutError:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="expected message within 15s")
+        return
+    except WebSocketDisconnect:
+        return
+        
+    try:
+        payload = json.loads(first)
+    except json.JSONDecodeError:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="invalid JSON")
+        return
+        
+    message = payload.get("message")
+    mode = payload.get("mode", "text")
+    image_base64 = payload.get("image_base64")
+    skill_id = payload.get("skill")
+    
+    if not message and not image_base64:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="message or image_base64 required")
+        return
+
+    try:
+        profile = await _load_profile(user_id, jwt)
+        session = await _load_session(jwt, session_id)
+        if not session:
+            await websocket.close(code=_CLOSE_BAD_REQUEST, reason="session not found")
+            return
+            
+        idea_id = session.get("idea_id")
+        idea = await _load_idea(str(idea_id), jwt) if idea_id else None
+        
+        script_art = await _load_latest_artifact(jwt, session_id, "script")
+        outline_art = await _load_latest_artifact(jwt, session_id, "outline")
+        scene_art = await _load_latest_artifact(jwt, session_id, "excalidraw")
+        
+        script = script_art["content_json"] if script_art else None
+        outline = outline_art["content_json"] if outline_art else None
+        scene = scene_art["content_json"] if scene_art else None
+
+        client = await user_client(jwt)
+
+        skill_content = None
+        if skill_id:
+            skill_resp = await client.from_("skill_files").select("file_summary").eq("filename", skill_id).eq("user_id", str(user_id)).execute()
+            if skill_resp.data:
+                row = dict(skill_resp.data[0]) if isinstance(skill_resp.data[0], dict) else {}
+                skill_content = str(row.get("file_summary")) if row.get("file_summary") else None
+
+        history_resp = await client.from_("chat_messages").select("role, content").eq("session_id", session_id).order("created_at", desc=False).execute()
+        history = [dict(h) for h in history_resp.data if isinstance(h, dict)] if history_resp.data else []
+
+        user_msg = {
+            "user_id": str(user_id),
+            "session_id": session_id,
+            "role": "user",
+            "content": message or "",
+            "has_image": bool(image_base64)
+        }
+        await client.from_("chat_messages").insert(user_msg).execute()
+
+    except Exception as e:
+        await _safe_send_json(websocket, {"type": "error", "message": f"context load failed: {e}"})
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    cost_usd = 0.0
+    full_response = ""
+    
+    try:
+        async for event in run_chat_stream(
+            user_id, profile, idea, session, script, outline, scene, history, message, mode, image_base64, skill_content
+        ):
+            t = event.get("type")
+            if t == "text_delta":
+                full_response += event.get("content", "")
+            elif t == "usage":
+                cost_usd = float((event.get("token_usage") or {}).get("cost_usd") or 0.0)
+            await _safe_send_json(websocket, event)
+            
+        ast_msg = {
+            "user_id": str(user_id),
+            "session_id": session_id,
+            "role": "assistant",
+            "content": full_response,
+        }
+        await client.from_("chat_messages").insert(ast_msg).execute()
+        
+    except WebSocketDisconnect:
+        return
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        await _safe_send_json(websocket, {"type": "error", "message": f"chat failed: {e}"})
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    await _safe_send_json(websocket, {"type": "complete", "cost_usd": cost_usd})
+    if websocket.application_state == WebSocketState.CONNECTED:
+        await websocket.close()
+

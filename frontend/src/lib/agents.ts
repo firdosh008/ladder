@@ -564,3 +564,57 @@ export async function fetchStudioByIdea(
   }
   return (await res.json()) as StudioHydration;
 }
+
+// ─── Chat ─────────────────────────────────────────────────────────────────
+
+export type ChatHistory = {
+  messages: Array<{
+    id: string;
+    role: "user" | "assistant";
+    content: string;
+    has_image: boolean;
+    image_storage_path?: string | null;
+    applied: boolean;
+    created_at: string;
+  }>;
+};
+
+export async function fetchChatHistory(sessionId: string): Promise<ChatHistory> {
+  const token = await authToken();
+  const res = await fetch(
+    `${API_URL}/studio-sessions/${encodeURIComponent(sessionId)}/chat`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load chat history (${res.status})`);
+  }
+  return (await res.json()) as ChatHistory;
+}
+
+export type ChatRunResult = {
+  cost_usd: number;
+};
+
+export async function runChatStream(
+  sessionId: string,
+  payload: {
+    message: string;
+    mode: string;
+    image_base64?: string | null;
+    skill?: string | null;
+  },
+  onEvent: (ev: AgentEvent) => void,
+): Promise<ChatRunResult> {
+  const token = await authToken();
+  const params = new URLSearchParams({ token, session_id: sessionId });
+  const url = `${wsBaseUrl()}/ws/agents/chat?${params.toString()}`;
+
+  return consumeStream(
+    url,
+    onEvent,
+    (ev) => ({ cost_usd: ev.cost_usd }),
+    payload,
+  );
+}

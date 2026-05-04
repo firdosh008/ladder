@@ -10,13 +10,13 @@ export function Shell({
   unconstrained?: boolean;
 }) {
   return (
-    <div className="flex min-h-[100dvh] w-full bg-night text-white">
+    <div className="flex h-[100dvh] w-full bg-night text-white overflow-hidden">
       <Sidebar />
-      <main className="flex-1 min-w-0 flex flex-col">
+      <main className="flex-1 min-w-0 flex flex-col min-h-0">
         {unconstrained ? (
           children
         ) : (
-          <div className="flex-1 min-w-0 overflow-x-hidden">{children}</div>
+          <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden">{children}</div>
         )}
       </main>
     </div>

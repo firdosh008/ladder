@@ -257,3 +257,18 @@ class SceneSkeleton(BaseModel):
     notes: str | None = Field(default=None, max_length=4000)
     #: Binary payloads for ``image`` elements — Excalidraw ``files`` map (fileId → metadata).
     files: dict[str, dict[str, str | int]] | None = Field(default=None)
+
+
+# ─── Chat ──────────────────────────────────────────────────────────────────
+
+
+class ChatMessage(BaseModel):
+    """A single chat message in a studio session."""
+
+    id: str | None = None
+    role: Literal["user", "assistant"]
+    content: str
+    has_image: bool = False
+    image_storage_path: str | None = None
+    applied: bool = False
+    created_at: str | None = None

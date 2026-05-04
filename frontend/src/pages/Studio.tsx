@@ -177,7 +177,7 @@ function StudioBody({
             onDiagramRunActive={handleDiagramRunActive}
           />
         }
-        right={<ChatPanel sessionId={state.sessionId} />}
+        right={<ChatPanel sessionId={state.sessionId} hasScene={!!state.scene} onRegenerateScene={() => alert("Regenerate scene (trigger build_scene)")} />}
       />
       <ScenePreviewModal
         open={previewOpen}

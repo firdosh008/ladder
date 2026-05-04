@@ -505,3 +505,32 @@ async def publish_scene(
         storage_path=storage_path,
         excalidraw_url=excalidraw_url,
     )
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[dict[str, Any]]
+
+
+@router.get(
+    "/{session_id}/chat",
+    response_model=ChatHistoryResponse,
+)
+async def get_chat_history(
+    session_id: str, ctx: tuple = Depends(current_user)
+) -> ChatHistoryResponse:
+    """Return the full chat history for a session."""
+    _user_id, token = ctx
+    client = await user_client(token)
+
+    try:
+        resp = (
+            await client.from_("chat_messages")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
+
+    return ChatHistoryResponse(messages=resp.data or [])

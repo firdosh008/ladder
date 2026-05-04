@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as Tabs from "@radix-ui/react-tabs";
+
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   PaperPlaneTilt,
   Sparkle,
-  Image as ImageIcon,
   ArrowsClockwise,
   Plus,
   CaretDown,
@@ -13,34 +12,9 @@ import {
 } from "@phosphor-icons/react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
+import { fetchChatHistory, runChatStream } from "../../lib/agents";
 
 type Mode = "text" | "screenshot" | "regenerate";
-
-const MODES: {
-  key: Mode;
-  label: string;
-  hint: string;
-  icon: React.ElementType;
-}[] = [
-  {
-    key: "text",
-    label: "Refine text",
-    hint: "Sharpen a section, beat, or transition.",
-    icon: Sparkle,
-  },
-  {
-    key: "screenshot",
-    label: "Screenshot to edit",
-    hint: "Paste a screenshot — describe the change.",
-    icon: ImageIcon,
-  },
-  {
-    key: "regenerate",
-    label: "Regenerate scene",
-    hint: "Steer the next scene build with a note.",
-    icon: ArrowsClockwise,
-  },
-];
 
 type LocalMessage = {
   id: string;
@@ -53,6 +27,8 @@ type LocalMessage = {
 
 type Props = {
   sessionId: string | null;
+  hasScene?: boolean;
+  onRegenerateScene?: () => void;
 };
 
 /**
@@ -65,12 +41,13 @@ type Props = {
  * the conversation shape. Wiring to the real `sharpen_this` endpoint is
  * the next milestone.
  */
-export function ChatPanel({ sessionId }: Props) {
-  const [mode, setMode] = useState<Mode>("text");
+export function ChatPanel({ sessionId, hasScene, onRegenerateScene }: Props) {
   const [draft, setDraft] = useState("");
   const [pastedImage, setPastedImage] = useState<string | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [skill, setSkill] = useState<string | null>(null);
+  const inferredMode = pastedImage ? "screenshot" : "text";
+  const [isStreaming, setIsStreaming] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
@@ -89,39 +66,108 @@ export function ChatPanel({ sessionId }: Props) {
     const file = item.getAsFile();
     if (!file) return;
     e.preventDefault();
-    const url = URL.createObjectURL(file);
-    setPastedImage(url);
-    if (mode !== "screenshot") setMode("screenshot");
-  }, [mode]);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      if (ev.target?.result) {
+        setPastedImage(ev.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+  }, []);
 
-  const send = () => {
+  useEffect(() => {
+    if (!sessionId) {
+      setMessages([]);
+      return;
+    }
+    let active = true;
+    fetchChatHistory(sessionId)
+      .then((data) => {
+        if (!active) return;
+        const mapped: LocalMessage[] = data.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          mode: "text",
+          imageUrl: m.has_image ? "(image preserved in db)" : null,
+          createdAt: new Date(m.created_at).getTime(),
+        }));
+        setMessages(mapped);
+      })
+      .catch((err) => console.error("Failed to fetch chat history:", err));
+    return () => {
+      active = false;
+    };
+  }, [sessionId]);
+
+  const send = async () => {
     const trimmed = draft.trim();
     if (!trimmed && !pastedImage) return;
+    if (!sessionId) return;
+    if (isStreaming) return;
+
     const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const userMsg: LocalMessage = {
       id,
       role: "user",
       content: trimmed,
-      mode,
+      mode: inferredMode,
       imageUrl: pastedImage,
       createdAt: Date.now(),
     };
-    const stub: LocalMessage = {
-      id: `${id}-r`,
+    
+    const astId = `${id}-r`;
+    const astMsg: LocalMessage = {
+      id: astId,
       role: "assistant",
-      content:
-        mode === "text"
-          ? "(stub) text refinement crew will land here once /sharpen ships."
-          : mode === "screenshot"
-            ? "(stub) screenshot-to-edit will diff the canvas against your note."
-            : "(stub) the next scene build will pick up this steer.",
-      mode,
+      content: "",
+      mode: inferredMode,
       createdAt: Date.now() + 1,
     };
-    setMessages((prev) => [...prev, userMsg, stub]);
+    
+    setMessages((prev) => [...prev, userMsg, astMsg]);
     setDraft("");
+    const imgBase64 = pastedImage;
     setPastedImage(null);
+    setIsStreaming(true);
     composerRef.current?.focus();
+
+    try {
+      await runChatStream(
+        sessionId,
+        {
+          message: trimmed,
+          mode: inferredMode,
+          image_base64: imgBase64,
+          skill,
+        },
+        (ev) => {
+          if (ev.type === "text_delta") {
+            setMessages((prev) => {
+              const idx = prev.findIndex((m) => m.id === astId);
+              if (idx === -1) return prev;
+              const next = [...prev];
+              next[idx] = { ...next[idx], content: next[idx].content + (ev as any).content };
+              return next;
+            });
+          }
+        },
+      );
+    } catch (err) {
+      console.error("Chat stream error:", err);
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === astId);
+        if (idx === -1) return prev;
+        const next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          content: next[idx].content + `\n\n[Error: ${String(err)}]`,
+        };
+        return next;
+      });
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -149,71 +195,43 @@ export function ChatPanel({ sessionId }: Props) {
         </span>
       </div>
 
-      <Tabs.Root
-        value={mode}
-        onValueChange={(v) => setMode(v as Mode)}
-        className="flex flex-col min-h-0 flex-1"
+      <div
+        ref={threadRef}
+        className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3"
       >
-        <Tabs.List className="flex items-stretch border-b border-hairline shrink-0 px-2">
-          {MODES.map((m) => (
-            <Tabs.Trigger
-              key={m.key}
-              value={m.key}
-              className={cn(
-                "group inline-flex items-center gap-1.5 px-2.5 py-2",
-                "text-[12px] text-mist hover:text-white/85 transition-colors",
-                "data-[state=active]:text-white",
-                "relative",
-              )}
-            >
-              <m.icon size={11} weight="bold" />
-              {m.label}
-              <span
-                className={cn(
-                  "absolute left-2 right-2 -bottom-px h-px bg-cinnabar opacity-0",
-                  "group-data-[state=active]:opacity-100 transition-opacity",
-                )}
-              />
-            </Tabs.Trigger>
-          ))}
-        </Tabs.List>
+        {messages.length === 0 ? (
+          <EmptyState />
+        ) : (
+          messages.map((m) => <MessageRow key={m.id} message={m} />)
+        )}
+      </div>
 
-        <div
-          ref={threadRef}
-          className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3"
-        >
-          {messages.length === 0 ? (
-            <EmptyState mode={mode} />
-          ) : (
-            messages.map((m) => <MessageRow key={m.id} message={m} />)
-          )}
-        </div>
-
-        <Composer
-          mode={mode}
-          draft={draft}
-          onDraftChange={setDraft}
-          onSend={send}
-          onPaste={onPaste}
-          onKeyDown={onKeyDown}
-          pastedImage={pastedImage}
-          onClearImage={() => setPastedImage(null)}
-          skill={skill}
-          onSelectSkill={setSkill}
-          composerRef={composerRef}
-        />
-      </Tabs.Root>
+      <Composer
+        hasScene={hasScene}
+        onRegenerateScene={onRegenerateScene}
+        draft={draft}
+        onDraftChange={setDraft}
+        onSend={send}
+        onPaste={onPaste}
+        onKeyDown={onKeyDown}
+        pastedImage={pastedImage}
+        onClearImage={() => setPastedImage(null)}
+        skill={skill}
+        onSelectSkill={setSkill}
+        composerRef={composerRef}
+      />
     </aside>
   );
 }
 
-function EmptyState({ mode }: { mode: Mode }) {
-  const m = MODES.find((x) => x.key === mode)!;
+function EmptyState() {
   return (
     <div className="rounded-lg border border-hairline bg-surface p-5">
-      <m.icon size={16} weight="bold" className="text-mist mb-2" />
-      <p className="text-[13.5px] text-white mb-1">{m.label}</p>
-      <p className="text-[12px] text-mist font-mono leading-[1.6]">{m.hint}</p>
+      <Sparkle size={16} weight="bold" className="text-mist mb-2" />
+      <p className="text-[13.5px] text-white mb-1">Refine & Steer</p>
+      <p className="text-[12px] text-mist font-mono leading-[1.6]">
+        Talk to the agent to surgically edit the script or excalidraw layout.
+      </p>
       <p className="mt-3 text-[11.5px] text-white/55 leading-[1.55]">
         Full context (script + outline + scene) is preloaded once the backend
         crew is wired. This thread stays scoped to this idea.
@@ -248,7 +266,8 @@ function MessageRow({ message }: { message: LocalMessage }) {
 }
 
 function Composer({
-  mode,
+  hasScene,
+  onRegenerateScene,
   draft,
   onDraftChange,
   onSend,
@@ -260,7 +279,8 @@ function Composer({
   onSelectSkill,
   composerRef,
 }: {
-  mode: Mode;
+  hasScene?: boolean;
+  onRegenerateScene?: () => void;
   draft: string;
   onDraftChange: (v: string) => void;
   onSend: () => void;
@@ -272,54 +292,62 @@ function Composer({
   onSelectSkill: (v: string | null) => void;
   composerRef: React.MutableRefObject<HTMLTextAreaElement | null>;
 }) {
-  const placeholder =
-    mode === "screenshot"
-      ? "Paste a screenshot, then describe the change…"
-      : mode === "regenerate"
-        ? "How should the next scene differ from this one?"
-        : "Refine a section, beat, or transition…";
+  const placeholder = hasScene
+    ? "Paste a screenshot to edit the scene, or type a message."
+    : "Refine a section, beat, or transition…";
 
   return (
-    <div className="border-t border-hairline shrink-0 px-3 py-2.5 space-y-2">
-      {pastedImage ? (
-        <div className="relative inline-block">
-          <img
-            src={pastedImage}
-            alt="pasted screenshot"
-            className="max-h-32 rounded border border-cinnabar/30"
-          />
-          <button
-            type="button"
-            onClick={onClearImage}
-            className={cn(
-              "absolute top-1 right-1 inline-flex items-center justify-center",
-              "h-5 w-5 rounded-full bg-night/80 border border-hairline text-mist",
-              "hover:text-white",
-            )}
-            title="Remove screenshot"
-          >
-            <Plus size={10} weight="bold" className="rotate-45" />
-          </button>
-        </div>
-      ) : null}
-      <textarea
-        ref={composerRef}
-        value={draft}
-        onChange={(e) => onDraftChange(e.target.value)}
-        onPaste={onPaste}
-        onKeyDown={onKeyDown}
-        rows={3}
-        placeholder={placeholder}
-        className={cn(
-          "w-full resize-none rounded-md border border-hairline bg-surface",
-          "px-3 py-2 text-[13px] text-white outline-none",
-          "focus:border-cinnabar/40 focus:ring-1 focus:ring-cinnabar/40",
-          "placeholder:text-mist",
-        )}
-      />
+    <div className="border-t border-hairline shrink-0 px-3 py-2.5 flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <SkillDropdown skill={skill} onSelect={onSelectSkill} />
-        <span className="flex-1" />
+        {hasScene ? (
+          <Button size="sm" variant="secondary" onClick={onRegenerateScene}>
+            <ArrowsClockwise size={11} weight="bold" />
+            Regenerate scene
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="relative">
+        {pastedImage ? (
+          <div className="relative inline-block mb-2">
+            <img
+              src={pastedImage}
+              alt="pasted screenshot"
+              className="max-h-32 rounded border border-cinnabar/30"
+            />
+            <button
+              type="button"
+              onClick={onClearImage}
+              className={cn(
+                "absolute top-1 right-1 inline-flex items-center justify-center",
+                "h-5 w-5 rounded-full bg-night/80 border border-hairline text-mist",
+                "hover:text-white",
+              )}
+              title="Remove screenshot"
+            >
+              <Plus size={10} weight="bold" className="rotate-45" />
+            </button>
+          </div>
+        ) : null}
+        <textarea
+          ref={composerRef}
+          value={draft}
+          onChange={(e) => onDraftChange(e.target.value)}
+          onPaste={onPaste}
+          onKeyDown={onKeyDown}
+          rows={3}
+          placeholder={placeholder}
+          className={cn(
+            "w-full resize-none rounded-md border border-hairline bg-surface",
+            "px-3 py-2 text-[13px] text-white outline-none",
+            "focus:border-cinnabar/40 focus:ring-1 focus:ring-cinnabar/40",
+            "placeholder:text-mist",
+          )}
+        />
+      </div>
+
+      <div className="flex items-center justify-end gap-2">
         <span className="font-mono text-[10px] text-mist">
           {navigator.platform.toLowerCase().includes("mac") ? "⌘" : "Ctrl"}+↵
         </span>
