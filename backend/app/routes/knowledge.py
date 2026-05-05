@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from app.deps import user_client
 from app.middleware.auth import current_user
-from app.services.embeddings import generate_embedding
+from app.services.embeddings import chunk_and_embed
 
 router = APIRouter(tags=["knowledge"])
 
@@ -176,26 +176,45 @@ async def list_knowledge(
 async def create_knowledge(
     payload: KnowledgeCreate, ctx: tuple = Depends(current_user)
 ) -> KnowledgeNodeResponse:
-    """Create a manual knowledge node. Generates embedding via OpenAI."""
+    """Create manual knowledge node(s). Chunks long content and inserts one row per chunk."""
     user_id, token = ctx
     client = await user_client(token)
 
-    embedding = await generate_embedding(payload.content_chunk)
+    pairs = await chunk_and_embed(payload.content_chunk)
+    if not pairs:
+        # No embeddings generated (e.g. missing API key) — insert a single
+        # unembedded row so the content is still saved.
+        try:
+            result = await client.from_("knowledge_nodes").insert({
+                "user_id": str(user_id),
+                "source_type": "manual",
+                "content_chunk": payload.content_chunk,
+                "topic_tags": payload.topic_tags or [],
+                "title": payload.title,
+            }).execute()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
+        if not result.data:
+            raise HTTPException(status_code=400, detail="Insert returned no row")
+        return KnowledgeNodeResponse(**result.data[0])
 
-    row = {
-        "user_id": str(user_id),
-        "source_type": "manual",
-        "content_chunk": payload.content_chunk,
-        "topic_tags": payload.topic_tags or [],
-        "title": payload.title,
-        "embedding": embedding,
-    }
-    # Remove None embedding so pgvector doesn't reject null
-    if embedding is None:
-        del row["embedding"]
+    rows = []
+    for i, (chunk_text, embedding) in enumerate(pairs):
+        chunk_title = payload.title
+        if chunk_title and len(pairs) > 1:
+            chunk_title = f"{chunk_title} (part {i + 1}/{len(pairs)})"
+        rows.append({
+            "user_id": str(user_id),
+            "source_type": "manual",
+            "source_id": None,
+            "content_chunk": chunk_text,
+            "topic_tags": payload.topic_tags or [],
+            "title": chunk_title,
+            "embedding": embedding,
+        })
 
     try:
-        result = await client.from_("knowledge_nodes").insert(row).execute()
+        result = await client.from_("knowledge_nodes").insert(rows).execute()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
 

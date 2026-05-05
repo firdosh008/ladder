@@ -420,6 +420,55 @@ async def _persist_scene_skeleton(
     return str(inserted.data[0]["id"])
 
 
+async def _seed_knowledge_node(
+    user_id: UUID,
+    jwt: str,
+    source_type: str,
+    source_id: str,
+    title: str,
+    content_chunk: str,
+    topic_tags: list[str] | None = None,
+) -> None:
+    """Insert knowledge_nodes row(s) — chunks long content, one row per chunk."""
+    try:
+        from app.services.embeddings import chunk_and_embed
+
+        client = await user_client(jwt)
+        tags = topic_tags or []
+
+        pairs = await chunk_and_embed(content_chunk)
+        if not pairs:
+            # No embeddings generated — insert a single unembedded row.
+            await client.from_("knowledge_nodes").insert({
+                "user_id": str(user_id),
+                "source_type": source_type,
+                "source_id": source_id,
+                "title": title[:500],
+                "content_chunk": content_chunk[:2000],
+                "topic_tags": tags,
+            }).execute()
+            return
+
+        rows: list[dict[str, Any]] = []
+        for i, (chunk_text, embedding) in enumerate(pairs):
+            chunk_title = title[:500]
+            if len(pairs) > 1:
+                chunk_title = f"{title[:480]} (part {i + 1}/{len(pairs)})"
+            rows.append({
+                "user_id": str(user_id),
+                "source_type": source_type,
+                "source_id": source_id,
+                "title": chunk_title,
+                "content_chunk": chunk_text,
+                "topic_tags": tags,
+                "embedding": embedding,
+            })
+
+        await client.from_("knowledge_nodes").insert(rows).execute()
+    except Exception:
+        pass  # non-critical — feed just won't show this entry
+
+
 async def _safe_send_json(ws: WebSocket, payload: dict[str, Any]) -> bool:
     if ws.application_state != WebSocketState.CONNECTED:
         return False
@@ -607,6 +656,15 @@ async def studio_stream(
             await websocket.close(code=_CLOSE_SERVER_ERROR)
         return
 
+    # Seed the knowledge graph so the auto-accumulated feed shows this script.
+    await _seed_knowledge_node(
+        user_id, jwt,
+        source_type="script",
+        source_id=session_id,
+        title=idea.title,
+        content_chunk=_script_to_text(last_script),
+    )
+
     await _safe_send_json(
         websocket,
         {
@@ -741,6 +799,33 @@ async def extract_stream(
             session_id,
             extracted["script"],
             extracted["outline"],
+        )
+
+        # Seed the knowledge graph: the extracted idea itself, the source
+        # content that was processed, and the generated script.
+        idea_content = extracted["title"]
+        if extracted.get("rationale"):
+            idea_content = f"{extracted['title']}\n{extracted['rationale']}"
+        await _seed_knowledge_node(
+            user_id, jwt,
+            source_type="idea",
+            source_id=new_idea_id,
+            title=extracted["title"],
+            content_chunk=idea_content,
+        )
+        await _seed_knowledge_node(
+            user_id, jwt,
+            source_type="extract",
+            source_id=session_id,
+            title=extracted["title"],
+            content_chunk=source_content[:2000],
+        )
+        await _seed_knowledge_node(
+            user_id, jwt,
+            source_type="script",
+            source_id=session_id,
+            title=extracted["title"],
+            content_chunk=_script_to_text(extracted["script"]),
         )
     except Exception as e:
         await _safe_send_json(

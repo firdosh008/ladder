@@ -136,21 +136,40 @@ async def create_idea(
             except Exception:
                 pass  # tag upsert is non-critical; don't fail the idea create
 
-        # ── Seed a knowledge_nodes row (no embedding yet) so topic territory
-        #     counts this idea's tags right away. The embedding pipeline can
-        #     backfill the embedding column later.
+        # ── Seed knowledge_nodes row(s) so topic territory
+        #     counts this idea's tags right away.
         content = payload.title
         if payload.rationale:
             content = f"{payload.title}\n{payload.rationale}"
         try:
-            await client.from_("knowledge_nodes").insert({
-                "user_id": str(user_id),
-                "source_type": "idea",
-                "source_id": idea["id"],
-                "content_chunk": content[:2000],
-                "topic_tags": tag_list,
-                "title": payload.title,
-            }).execute()
+            from app.services.embeddings import chunk_and_embed
+
+            pairs = await chunk_and_embed(content)
+            if pairs:
+                rows = []
+                for i, (chunk_text, emb) in enumerate(pairs):
+                    chunk_title = payload.title
+                    if len(pairs) > 1:
+                        chunk_title = f"{payload.title} (part {i + 1}/{len(pairs)})"
+                    rows.append({
+                        "user_id": str(user_id),
+                        "source_type": "idea",
+                        "source_id": idea["id"],
+                        "content_chunk": chunk_text,
+                        "topic_tags": tag_list,
+                        "title": chunk_title,
+                        "embedding": emb,
+                    })
+                await client.from_("knowledge_nodes").insert(rows).execute()
+            else:
+                await client.from_("knowledge_nodes").insert({
+                    "user_id": str(user_id),
+                    "source_type": "idea",
+                    "source_id": idea["id"],
+                    "content_chunk": content[:2000],
+                    "topic_tags": tag_list,
+                    "title": payload.title,
+                }).execute()
         except Exception:
             pass  # non-critical; topic territory just won't show this row
 
