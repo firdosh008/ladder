@@ -56,7 +56,13 @@ class Settings(BaseSettings):
     EXA_API_KEY: str | None = None
     SCRAPECREATORS_API_KEY: str | None = None
 
-    ANTHROPIC_MODEL: str = "claude-haiku-4-5"
+    #: Model used by CrewAI agents (script_writer, outline_planner, etc.).
+    #: Aliased to LADDER_ANTHROPIC_MODEL so a system-wide ANTHROPIC_MODEL
+    #: (e.g. set by Claude Code's DeepSeek bridge) doesn't leak into the app.
+    ANTHROPIC_MODEL: str = Field(
+        default="claude-haiku-4-5",
+        validation_alias="LADDER_ANTHROPIC_MODEL",
+    )
 
     #: Claude structured outputs compile JSON Schema to a grammar; large schemas
     #: (e.g. full ``SceneSkeleton``) routinely hit 400 "Schema is too complex"
@@ -96,7 +102,11 @@ class Settings(BaseSettings):
     EXCALIDRAW_HEADLESS_CONNECT_TIMEOUT_S: float = Field(default=180.0, ge=30.0, le=600.0)
 
     #: Model used for diagram drafting + vision QA (needs vision capability).
-    DIAGRAM_ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+    #: Aliased to LADDER_DIAGRAM_ANTHROPIC_MODEL (same collision-avoidance rationale).
+    DIAGRAM_ANTHROPIC_MODEL: str = Field(
+        default="claude-sonnet-4-6",
+        validation_alias="LADDER_DIAGRAM_ANTHROPIC_MODEL",
+    )
 
     #: Max full redraw iterations (each clears canvas + new draft). Default 1 avoids triple redraws.
     DIAGRAM_MAX_ITERATIONS: int = Field(default=1, ge=1, le=8)

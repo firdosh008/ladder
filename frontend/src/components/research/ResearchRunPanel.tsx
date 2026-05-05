@@ -702,6 +702,11 @@ function buildIdeaPayload(
   ) {
     payload.target_duration_min = research.durationMin;
   }
+  // Carry tags from the research agent so Library > What I Know >
+  // Topic Territory populates immediately (covered / thin / open gaps).
+  if (draft.suggested_tags && draft.suggested_tags.length > 0) {
+    payload.tags = draft.suggested_tags;
+  }
   // Persist the snapshot on the row itself so /studio/:id can render the
   // same source previews after a reload, on a different device, or when
   // sessionStorage gets nuked.

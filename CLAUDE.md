@@ -15,20 +15,34 @@ npm run typecheck    # tsc --noEmit only (no build)
 
 No test runner is configured for the frontend.
 
+**Frontend env** — set `VITE_API_URL` in `frontend/.env` (defaults to `http://localhost:8000`).
+
 ### Backend (FastAPI + Python 3.11+)
 
 ```bash
 cd backend
-# Run dev server (needs .env with SUPABASE_URL, SUPABASE_ANON_KEY, etc.)
+# Run dev server — copy .env.example to .env and fill in required keys
 uvicorn app.main:app --reload --port 8000
 
-# Tests (pytest with asyncio auto-mode)
+# Tests (pytest with asyncio auto-mode; conftest.py sets mock env vars)
 pytest
+pytest tests/test_research_crew.py -v       # single file, verbose
+pytest -k "test_studio"                     # keyword filter
 
 # Lint/format
 ruff check .
 ruff format --check .
 mypy app/
+```
+
+**Required env vars** (`backend/.env`): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`.
+
+**Optional provider keys**: `OPENAI_API_KEY` (scene hero images + thumbnails), `GOOGLE_API_KEY`, `EXA_API_KEY`, `SCRAPECREATORS_API_KEY`.
+
+**One-time vendor setup** (for MCP Excalidraw canvas + headless PNG export):
+```bash
+cd backend/vendor/mcp_excalidraw && npm install && npm run build
+cd backend/excalidraw_headless && npm install && npx playwright install chromium
 ```
 
 ### Supabase
@@ -63,18 +77,23 @@ Ladder Content OS is an AI-powered video content studio. A founder researches a 
 - `anthropic_client()` — raw `AsyncAnthropic` SDK. Used for structured outputs (grammar-constrained JSON via `output_format`) needed for large nested schemas like `SceneSkeleton`, and for vision-capable calls.
 
 **WebSocket streaming** — all agent runs are WS-based:
-- `/ws/agents/research` — Research crew: searches + formulates idea drafts (NOT auto-persisted)
-- `/ws/agents/studio` — Studio crew: script_writer → outline_planner; on completion persists script + outline artifacts and a studio_sessions row
-- `/ws/agents/extract` — Content extract crew: pasted source → full idea + script + outline (all auto-persisted)
-- `/ws/agents/scene` — Scene crew: layout_planner → element_designer → Excalidraw skeleton artifact
-- `/ws/agents/chat` — Chat: conversational refinement with `patch_scene` / `patch_script` tool use
+
+| Endpoint | Crew | Persists? |
+|---|---|---|
+| `/ws/agents/research` | Research: web search + idea drafts | No (frontend POSTs accepted drafts to `/ideas`) |
+| `/ws/agents/studio` | Studio: script_writer → outline_planner | Yes — upserts studio_sessions row + script/outline artifacts |
+| `/ws/agents/extract` | Content extract: pasted source → full idea + script + outline | Yes — creates idea + session + all artifacts in one transaction |
+| `/ws/agents/scene` | Scene: layout_planner → element_designer → Excalidraw skeleton | Yes — writes versioned `excalidraw` artifact |
+| `/ws/agents/chat` | Chat: conversational refinement, `patch_scene`/`patch_script` tool use | Chat messages persisted; patches create new artifact versions |
+| `/ws/agents/thumbnail` | Thumbnail: DALL-E / GPT Image prompt → N variants via OpenAI Images API | Yes — writes PNG artifacts to Storage |
 
 All streams share an AgentEvent protocol (see `backend/app/routes/agents.py` docstring or `frontend/src/lib/agents.ts` `AgentEvent` type).
 
 **Agent crew structure** (in `backend/app/agents/`):
-- Each crew = `agents.py` (CrewAI Agent definitions) + `tasks.py` (CrewAI Task definitions) + `crew.py` (orchestrator that wires them into a Crew and yields streaming events)
-- Crews run sequentially (`Process.sequential`) with `stream=True`
-- Research and Scene crews use tools (`backend/app/agents/research/tools.py`); Studio crew does not
+- Standard crews = `agents.py` (CrewAI Agent definitions) + `tasks.py` (CrewAI Task definitions) + `crew.py` (orchestrator). Crews run sequentially (`Process.sequential`) with `stream=True`.
+- Research and Scene crews use tools (`backend/app/agents/research/tools.py`); Studio crew does not.
+- **Chat crew** is a single file (`crew.py`) — no CrewAI. Uses `anthropic_client()` directly with tool use (patch_scene, patch_script). Supports vision mode when `image_base64` is passed.
+- **Thumbnail crew** is a single file (`crew.py`) — no CrewAI. Uses `AsyncAnthropic` to analyze a reference thumbnail, then `AsyncOpenAI` to generate N image variants. Does NOT use `output_pydantic` or CrewAI tasks.
 
 **Data model** (see `backend/app/models/db.py`):
 - Structured outputs (`Script`, `Outline`, `SceneSkeleton`, `ExtractedVideo`, `ResearchIdeas`) are Pydantic models used as `output_pydantic` on CrewAI tasks

@@ -94,6 +94,45 @@ async def me(ctx: tuple = Depends(current_user)) -> MeResponse:
     )
 
 
+class ProfileUpdate(BaseModel):
+    """Partial profile fields for inline edit (Library > What I Know)."""
+
+    display_name: str | None = None
+    positioning: str | None = None
+    audience: str | None = None
+    voice: str | None = None
+    creators_followed: list[str] | None = None
+    things_to_avoid: str | None = None
+
+
+@router.patch("/profile", response_model=OnboardResponse)
+async def update_profile(
+    payload: ProfileUpdate, ctx: tuple = Depends(current_user)
+) -> OnboardResponse:
+    """Partially update the caller's user_profiles row. Saves-on-blur for Library."""
+    user_id, token = ctx
+    client = await user_client(token)
+
+    patch = payload.model_dump(exclude_none=True)
+    if not patch:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    try:
+        result = (
+            await client.from_("user_profiles")
+            .update(patch)
+            .eq("user_id", str(user_id))
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    return OnboardResponse(profile=result.data[0])
+
+
 @router.post("/onboard", response_model=OnboardResponse)
 async def onboard(
     payload: OnboardPayload, ctx: tuple = Depends(current_user)

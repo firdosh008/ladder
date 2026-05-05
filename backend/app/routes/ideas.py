@@ -31,6 +31,10 @@ class IdeaCreate(BaseModel):
     # rich preview cards across tabs / devices / reloads. Shape is owned by
     # the frontend; backend just persists it as JSONB.
     research_snapshot: dict[str, Any] | None = None
+    # Tags from the research agent's suggested_tags. Upserted into the tags
+    # table and used as topic_tags on the knowledge_nodes row so Library >
+    # What I Know > Topic Territory has data immediately.
+    tags: list[str] | None = None
 
 
 class IdeaUpdate(BaseModel):
@@ -90,6 +94,7 @@ async def create_idea(
     client = await user_client(token)
 
     row = payload.model_dump(exclude_none=True)
+    tag_list: list[str] = row.pop("tags", None) or []
     row["user_id"] = str(user_id)
 
     if "position" not in row:
@@ -115,7 +120,41 @@ async def create_idea(
     if not result.data:
         raise HTTPException(status_code=400, detail="Insert returned no row")
 
-    return IdeaResponse(idea=result.data[0])
+    idea = result.data[0]
+
+    # ── Upsert tags so Library > What I Know > Topic Territory has data ──
+    if tag_list:
+        for tag in tag_list:
+            tag_name = tag.strip().lower()
+            if not tag_name:
+                continue
+            try:
+                await client.from_("tags").upsert(
+                    {"user_id": str(user_id), "name": tag_name},
+                    on_conflict="user_id,name",
+                ).execute()
+            except Exception:
+                pass  # tag upsert is non-critical; don't fail the idea create
+
+        # ── Seed a knowledge_nodes row (no embedding yet) so topic territory
+        #     counts this idea's tags right away. The embedding pipeline can
+        #     backfill the embedding column later.
+        content = payload.title
+        if payload.rationale:
+            content = f"{payload.title}\n{payload.rationale}"
+        try:
+            await client.from_("knowledge_nodes").insert({
+                "user_id": str(user_id),
+                "source_type": "idea",
+                "source_id": idea["id"],
+                "content_chunk": content[:2000],
+                "topic_tags": tag_list,
+                "title": payload.title,
+            }).execute()
+        except Exception:
+            pass  # non-critical; topic territory just won't show this row
+
+    return IdeaResponse(idea=idea)
 
 
 @router.patch("/{idea_id}", response_model=IdeaResponse)
