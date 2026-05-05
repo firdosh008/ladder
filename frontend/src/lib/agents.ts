@@ -165,6 +165,14 @@ export type TokenUsage = {
   cost_usd: number;
 };
 
+export type ThumbnailVariant = {
+  artifact_id: string;
+  file_url: string;
+  storage_path: string;
+  width: number;
+  height: number;
+};
+
 export type AgentEvent =
   | { type: "agent_start"; agent: string }
   | {
@@ -187,6 +195,10 @@ export type AgentEvent =
   | { type: "extract_ready"; extracted: ExtractedVideo }
   | { type: "scene_ready"; scene: Scene }
   | {
+      type: "thumbnail_ready";
+      variants: ThumbnailVariant[];
+    }
+  | {
       type: "diagram_draft";
       phase: string;
       iteration?: number;
@@ -207,6 +219,7 @@ export type AgentEvent =
       script_artifact_id?: string;
       outline_artifact_id?: string;
       scene_artifact_id?: string;
+      thumbnail_artifact_ids?: string[];
     }
   | { type: "complete"; count?: number; cost_usd: number }
   | { type: "error"; message: string };
@@ -747,4 +760,98 @@ export async function runChatStream(
     (ev) => ({ cost_usd: ev.cost_usd }),
     payload,
   );
+}
+
+// ─── runThumbnailStream ─────────────────────────────────────────────────────
+
+export type ThumbnailRunResult = {
+  cost_usd: number;
+  variants: ThumbnailVariant[];
+};
+
+export async function runThumbnailStream(
+  sessionId: string,
+  referenceUrl: string | null | undefined,
+  onEvent: (ev: AgentEvent) => void,
+): Promise<ThumbnailRunResult> {
+  const token = await authToken();
+  const params = new URLSearchParams({ token, session_id: sessionId });
+  if (referenceUrl?.trim()) {
+    params.set("reference_url", referenceUrl.trim());
+  }
+  const url = `${wsBaseUrl()}/ws/agents/thumbnail?${params.toString()}`;
+
+  let variants: ThumbnailVariant[] = [];
+
+  return consumeStream(
+    url,
+    (ev) => {
+      if (ev.type === "thumbnail_ready") {
+        variants = ev.variants;
+      }
+      onEvent(ev);
+    },
+    (ev) => ({ cost_usd: ev.cost_usd, variants }),
+  );
+}
+
+// ─── selectThumbnail ────────────────────────────────────────────────────────
+
+export type SelectThumbnailResult = {
+  thumbnail_selected_id: string | null;
+};
+
+export async function selectThumbnail(
+  sessionId: string,
+  artifactId: string,
+): Promise<SelectThumbnailResult> {
+  const token = await authToken();
+  const res = await fetch(
+    `${API_URL}/studio-sessions/${encodeURIComponent(sessionId)}/thumbnail/select`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ artifact_id: artifactId }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to select thumbnail (${res.status})`);
+  }
+  return (await res.json()) as SelectThumbnailResult;
+}
+
+// ─── refineThumbnail ────────────────────────────────────────────────────────
+
+export type RefineThumbnailResult = {
+  artifact_id: string;
+  file_url: string;
+  storage_path: string;
+  width: number;
+  height: number;
+};
+
+export async function refineThumbnail(
+  sessionId: string,
+  artifactId: string,
+  instruction: string,
+): Promise<RefineThumbnailResult> {
+  const token = await authToken();
+  const res = await fetch(
+    `${API_URL}/studio-sessions/${encodeURIComponent(sessionId)}/thumbnail/refine`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ artifact_id: artifactId, instruction }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to refine thumbnail (${res.status})`);
+  }
+  return (await res.json()) as RefineThumbnailResult;
 }

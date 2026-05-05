@@ -33,7 +33,7 @@ import json
 import re
 from typing import Any
 from urllib.parse import quote
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4  # noqa: F811 (re-imported in refine)
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -618,3 +618,209 @@ async def get_chat_history(
         raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
 
     return ChatHistoryResponse(messages=resp.data or [])
+
+
+# ─── Thumbnail: select + refine ──────────────────────────────────────────────
+
+
+class ThumbnailSelectBody(BaseModel):
+    """Select which thumbnail variant is the session's primary thumbnail."""
+
+    artifact_id: UUID
+
+
+class ThumbnailSelectResponse(BaseModel):
+    thumbnail_selected_id: str | None
+
+
+@router.post(
+    "/{session_id}/thumbnail/select",
+    response_model=ThumbnailSelectResponse,
+)
+async def select_thumbnail(
+    session_id: str,
+    body: ThumbnailSelectBody,
+    ctx: tuple = Depends(current_user),
+) -> ThumbnailSelectResponse:
+    """Set ``thumbnail_selected_id`` on the session row."""
+    _user_id, token = ctx
+    client = await user_client(token)
+
+    try:
+        resp = (
+            await client.from_("studio_sessions")
+            .update({"thumbnail_selected_id": str(body.artifact_id)})
+            .eq("id", session_id)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
+
+    if not resp.data:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    row = resp.data[0]
+    tsid = row.get("thumbnail_selected_id")
+    return ThumbnailSelectResponse(
+        thumbnail_selected_id=str(tsid) if tsid else None,
+    )
+
+
+class ThumbnailRefineBody(BaseModel):
+    """Refine a thumbnail variant — re-generates with new instruction."""
+
+    artifact_id: UUID
+    instruction: str = Field(min_length=1, max_length=500)
+
+
+class ThumbnailRefineResponse(BaseModel):
+    artifact_id: str
+    file_url: str
+    storage_path: str
+    width: int
+    height: int
+
+
+@router.post(
+    "/{session_id}/thumbnail/refine",
+    response_model=ThumbnailRefineResponse,
+)
+async def refine_thumbnail(
+    session_id: str,
+    body: ThumbnailRefineBody,
+    ctx: tuple = Depends(current_user),
+) -> ThumbnailRefineResponse:
+    """Refine an existing thumbnail with a new instruction.
+
+    Fetches the existing artifact, extracts its prompt context, appends the
+    refinement instruction, and generates a single new variant.
+    """
+    user_id, token = ctx
+    client = await user_client(token)
+
+    # Verify session exists
+    sess_resp = (
+        await client.from_("studio_sessions")
+        .select("id")
+        .eq("id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    if not sess_resp.data:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    # Load the existing thumbnail artifact
+    art_resp = (
+        await client.from_("artifacts")
+        .select("id, type, content_json, file_url, storage_path")
+        .eq("id", str(body.artifact_id))
+        .eq("type", "thumbnail")
+        .maybe_single()
+        .execute()
+    )
+    if not art_resp.data:
+        raise HTTPException(status_code=404, detail="thumbnail artifact not found")
+
+    artifact = art_resp.data
+    content_json = artifact.get("content_json") or {}
+
+    # Build refinement prompt with safety constraints
+    refinement_prompt = (
+        f"Refine this YouTube thumbnail design based on the following instruction: "
+        f"{body.instruction}. "
+        f"Keep the same general subject and layout but apply the requested changes. "
+        f"Clean graphic-design style with bold typography and abstract geometric elements. "
+        f"High contrast, saturated colors, educational tech aesthetic. "
+        f"IMPORTANT: NO human faces, NO people, NO photorealistic humans, "
+        f"NO celebrities. Use ONLY abstract art, typography, icons, and shapes."
+    )[:3900]
+
+    # Check config
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+
+    from app.agents.thumbnail.crew import _generate_one_image, _resolve_image_model
+
+    data_url = await _generate_one_image(refinement_prompt)
+    if not data_url:
+        raise HTTPException(
+            status_code=500,
+            detail="Image generation failed. The prompt may have been blocked by safety filters. Try a different instruction.",
+        )
+
+    # Decode and upload
+    import base64
+    from uuid import uuid4
+
+    try:
+        header, b64_data = data_url.split(",", 1)
+        img_bytes = base64.b64decode(b64_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Bad image data: {e}") from e
+
+    from app.deps import service_client as _service_client
+
+    sb_admin = await _service_client()
+    storage_path = f"{user_id}/{session_id}/thumbnails/{uuid4().hex}.png"
+
+    try:
+        await sb_admin.storage.from_("excalidraw_scenes").upload(
+            path=storage_path,
+            file=img_bytes,
+            file_options={
+                "content-type": "image/png",
+                "cache-control": "public, max-age=31536000",
+            },
+        )
+        public_url = await sb_admin.storage.from_("excalidraw_scenes").get_public_url(
+            storage_path
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}") from e
+
+    # Persist as new artifact
+    latest = (
+        await client.from_("artifacts")
+        .select("version")
+        .eq("session_id", session_id)
+        .eq("type", "thumbnail")
+        .order("version", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_version = int(latest.data[0]["version"]) + 1 if latest.data else 1
+
+    inserted = (
+        await client.from_("artifacts")
+        .insert(
+            {
+                "user_id": str(user_id),
+                "session_id": session_id,
+                "type": "thumbnail",
+                "version": next_version,
+                "content_text": f"Refined thumbnail — {body.instruction[:100]}",
+                "content_json": {
+                    "width": 1792,
+                    "height": 1024,
+                    "refined_from_artifact_id": str(body.artifact_id),
+                    "refinement_instruction": body.instruction,
+                    "prompt_version": (
+                        content_json.get("prompt_version") or 1
+                    ) + 1,
+                },
+                "file_url": public_url,
+                "storage_path": storage_path,
+            }
+        )
+        .execute()
+    )
+    if not inserted.data:
+        raise HTTPException(status_code=500, detail="artifact insert returned no row")
+
+    return ThumbnailRefineResponse(
+        artifact_id=str(inserted.data[0]["id"]),
+        file_url=public_url,
+        storage_path=storage_path,
+        width=1792,
+        height=1024,
+    )

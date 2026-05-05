@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     #: + Pydantic path. Flip on via env to try grammar-constrained sampling.
     SCENE_DESIGNER_STRUCTURED_OUTPUTS: bool = False
 
+    #: Override image model for thumbnail generation. Empty string falls back to
+    #: ``OPENAI_IMAGE_MODEL``. Set to a different model (e.g. ``dall-e-3``) to
+    #: use a separate model just for thumbnails.
+    THUMBNAIL_IMAGE_MODEL: str = ""
+    #: Number of thumbnail variants to generate per run (1-6).
+    THUMBNAIL_IMAGE_COUNT: int = Field(default=3, ge=1, le=6)
+
     #: When True, ``/ws/agents/scene`` renders diagrams via the local MCP canvas
     #: (HTTP API + iterative vision loop) instead of the CrewAI planner +
     #: structured-output designer path.

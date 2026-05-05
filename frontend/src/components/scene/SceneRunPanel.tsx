@@ -17,6 +17,7 @@ import {
   type AgentEvent,
   type Scene,
   type SceneSkeletonElement,
+  type ThumbnailVariant,
 } from "../../lib/agents";
 
 // Excalidraw bundled fontFamily integers — each ID renders a distinct typeface:
@@ -114,6 +115,8 @@ type Props = {
   sessionId: string | null;
   initialScene: Scene | null;
   outlineReady: boolean;
+  /** Whether the script artifact exists — gates thumbnail generation. */
+  scriptReady: boolean;
   /** Open the scene preview modal in the parent. */
   onPreview: () => void;
   /** Same accent as the Studio brand pill; passed through to the scene WS. */
@@ -122,6 +125,12 @@ type Props = {
   onSceneReady?: (scene: Scene) => void;
   /** Signal scene websocket run started/finished — parent opens live MCP modal while active. */
   onDiagramRunActive?: (active: boolean) => void;
+  /** Open the thumbnail modal (handles generate / preview / regenerate). */
+  onThumbnailOpen?: () => void;
+  /** Currently persisted thumbnail variants (if any). */
+  thumbnailVariants?: ThumbnailVariant[];
+  /** Whether thumbnails are being generated right now. */
+  thumbnailGenerating?: boolean;
 };
 
 /**
@@ -138,10 +147,14 @@ export function SceneRunPanel({
   sessionId,
   initialScene,
   outlineReady,
+  scriptReady,
   onPreview,
   sceneAccentHex,
   onSceneReady,
   onDiagramRunActive,
+  onThumbnailOpen,
+  thumbnailVariants,
+  thumbnailGenerating,
 }: Props) {
   const [scene, setScene] = useState<Scene | null>(initialScene);
   const [status, setStatus] = useState<Status>(initialScene ? "ready" : "idle");
@@ -422,17 +435,67 @@ export function SceneRunPanel({
                     : "Rebuild the full scene from the outline using the current font"
                 }
               />
-              <FooterIconBtn
-                icon={ImageIcon}
-                label="Generate Thumbnail"
-                onClick={onPreview}
-                disabled={hidePreviewCluster}
-                title="Generate Thumbnail of the scene"
-              />
             </div>
           </>
         )}
       </div>
+
+      {/* ─── Thumbnail row ──────────────────────────────────────────── */}
+      {scene ? (
+        <div className="flex items-center gap-3 min-h-[28px]">
+          {!thumbnailVariants?.length ? (
+            <>
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+        <ImageIcon size={13} weight="bold" className="text-cinnabar" />
+                <span className="text-[12.5px] text-white/70 truncate">
+                  Generate Thumbnail
+                </span>
+              </div>
+              {scriptReady ? (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={onThumbnailOpen}
+                  disabled={thumbnailGenerating}
+                  className="shrink-0"
+                >
+                  {thumbnailGenerating ? (
+                    <Spinner size={11} weight="bold" className="animate-spin" />
+                  ) : (
+                    <Lightning size={11} weight="bold" />
+                  )}
+                  {thumbnailGenerating ? "Generating…" : "Generate"}
+                </Button>
+              ) : (
+                <span className="text-[11.5px] text-mist/60 shrink-0 italic">
+                  waiting on script…
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5 min-w-0 mr-auto">
+                <CheckCircle size={11} weight="fill" className="text-cinnabar shrink-0" />
+                <span className="text-[12.5px] text-white/90 truncate">Thumbnail</span>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <FooterIconBtn
+                  icon={Eye}
+                  label="Preview"
+                  onClick={onThumbnailOpen}
+                  title="Preview thumbnail variants"
+                />
+                <FooterIconBtn
+                  icon={ArrowsClockwise}
+                  label="Regenerate"
+                  onClick={onThumbnailOpen}
+                  title="Regenerate thumbnail variants"
+                />
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
 
       {/* Run progress + errors */}
       {diagramProgress ? (

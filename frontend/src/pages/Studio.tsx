@@ -17,6 +17,7 @@ import {
   saveSceneSkeleton,
   saveScript,
   saveOutline,
+  type ThumbnailVariant,
 } from "../lib/agents";
 import { cn } from "../lib/cn";
 import {
@@ -26,6 +27,7 @@ import {
 } from "../components/studio/StudioScriptStream";
 import { SceneRunPanel } from "../components/scene/SceneRunPanel";
 import { ScenePreviewModal } from "../components/scene/ScenePreviewModal";
+import { ThumbnailPreviewModal } from "../components/scene/ThumbnailPreviewModal";
 import { StudioResearchPanel } from "../components/research/StudioResearchPanel";
 import { StudioHeader } from "../components/studio/StudioHeader";
 import {
@@ -77,6 +79,9 @@ function StudioBody({
   const state = useStudioStream(idea.id, idea.target_duration_min ?? undefined);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [liveCanvasDuringRun, setLiveCanvasDuringRun] = useState(false);
+  const [thumbnailVariants, setThumbnailVariants] = useState<ThumbnailVariant[]>([]);
+  const [thumbnailGenerating, setThumbnailGenerating] = useState(false);
+  const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false);
 
   const handleDiagramRunActive = useCallback((active: boolean) => {
     setLiveCanvasDuringRun(active);
@@ -264,6 +269,9 @@ function StudioBody({
             state={state}
             onPreviewScene={() => setPreviewOpen(true)}
             onDiagramRunActive={handleDiagramRunActive}
+            thumbnailVariants={thumbnailVariants}
+            thumbnailGenerating={thumbnailGenerating}
+            onThumbnailOpen={() => setThumbnailModalOpen(true)}
           />
         }
         right={<ChatPanel sessionId={state.sessionId} hasScene={!!state.scene} onRegenerateScene={() => {}} onPatchScene={onPatchScene} onPatchScript={onPatchScript} onInsertScriptSection={onInsertScriptSection} onRemoveScriptSection={onRemoveScriptSection} onPatchOutline={onPatchOutline} onInsertOutlineItem={onInsertOutlineItem} onRemoveOutlineItem={onRemoveOutlineItem} onCommit={onCommit} />}
@@ -277,6 +285,19 @@ function StudioBody({
         liveCanvasUrl={EXCALIDRAW_LIVE_URL || undefined}
         onSceneChange={state.setScene}
       />
+      {state.sessionId ? (
+        <ThumbnailPreviewModal
+          open={thumbnailModalOpen}
+          onOpenChange={setThumbnailModalOpen}
+          sessionId={state.sessionId}
+          variants={thumbnailVariants}
+          onVariantsGenerated={setThumbnailVariants}
+          onGeneratingChange={setThumbnailGenerating}
+          onSelected={(artifactId) => {
+            state.patchSession({ thumbnail_selected_id: artifactId });
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -286,11 +307,17 @@ function LeftPane({
   state,
   onPreviewScene,
   onDiagramRunActive,
+  thumbnailVariants,
+  thumbnailGenerating,
+  onThumbnailOpen,
 }: {
   idea: Idea;
   state: ReturnType<typeof useStudioStream>;
   onPreviewScene: () => void;
   onDiagramRunActive?: (active: boolean) => void;
+  thumbnailVariants: ThumbnailVariant[];
+  thumbnailGenerating: boolean;
+  onThumbnailOpen: () => void;
 }) {
   return (
     <section className="flex flex-col min-h-0 bg-night h-full">
@@ -352,10 +379,14 @@ function LeftPane({
           sessionId={state.sessionId}
           initialScene={state.scene}
           outlineReady={!!state.outline}
+          scriptReady={!!state.script}
           onPreview={onPreviewScene}
           sceneAccentHex={state.session?.brand_color ?? null}
           onSceneReady={state.setScene}
           onDiagramRunActive={onDiagramRunActive}
+          thumbnailVariants={thumbnailVariants}
+          thumbnailGenerating={thumbnailGenerating}
+          onThumbnailOpen={onThumbnailOpen}
         />
       </div>
     </section>

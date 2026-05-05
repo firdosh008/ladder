@@ -46,11 +46,12 @@ Common event protocol:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, WebSocket
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
@@ -60,7 +61,8 @@ from app.agents.research import run_research
 from app.agents.scene import run_scene_build
 from app.agents.studio import run_studio_script
 from app.agents.chat.crew import run_chat_stream
-from app.deps import user_client
+from app.agents.thumbnail import run_thumbnail
+from app.deps import user_client, service_client
 from app.middleware.ws_auth import WsAuthError, verify_ws_token
 from app.models.db import IdeaSlice, Outline, Script, UserProfileSlice
 
@@ -1099,6 +1101,240 @@ async def chat_stream(
         return
 
     await _safe_send_json(websocket, {"type": "complete", "cost_usd": cost_usd})
+    if websocket.application_state == WebSocketState.CONNECTED:
+        await websocket.close()
+
+
+# ─── /ws/agents/thumbnail ────────────────────────────────────────────────────
+
+_THUMBNAIL_BUCKET = "excalidraw_scenes"
+
+
+@router.websocket("/ws/agents/thumbnail")
+async def thumbnail_stream(
+    websocket: WebSocket,
+    token: str | None = None,
+    session_id: str | None = None,
+    reference_url: str | None = None,
+) -> None:
+    """Stream thumbnail generation for a studio session.
+
+    Requires the session to have both a script and an excalidraw artifact.
+    Generates ``THUMBNAIL_IMAGE_COUNT`` (default 3) variants via the OpenAI
+    image model, uploads each to Storage, persists artifact rows, and emits
+    a ``thumbnail_ready`` event with variant metadata.
+    """
+    await websocket.accept()
+
+    try:
+        user_id, jwt = await verify_ws_token(token)
+    except WsAuthError as e:
+        await websocket.close(code=_CLOSE_UNAUTHORIZED, reason=str(e))
+        return
+
+    if not session_id:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="session_id required")
+        return
+
+    # Load session + artifacts
+    try:
+        session = await _load_session(jwt, session_id)
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"session load failed: {e}"}
+        )
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    if session is None:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="session not found")
+        return
+
+    idea_id = session.get("idea_id")
+    if not idea_id:
+        await websocket.close(
+            code=_CLOSE_BAD_REQUEST, reason="session has no idea_id"
+        )
+        return
+
+    try:
+        script_row = await _load_latest_artifact(jwt, session_id, "script")
+        scene_row = await _load_latest_artifact(jwt, session_id, "excalidraw")
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"artifact load failed: {e}"}
+        )
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    if script_row is None or scene_row is None:
+        await websocket.close(
+            code=_CLOSE_BAD_REQUEST,
+            reason="session must have both script and excalidraw artifacts",
+        )
+        return
+
+    try:
+        idea = await _load_idea(idea_id, jwt)
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"idea load failed: {e}"}
+        )
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    if idea is None:
+        await websocket.close(code=_CLOSE_BAD_REQUEST, reason="idea not found")
+        return
+
+    try:
+        profile = await _load_profile(user_id, jwt)
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"profile load failed: {e}"}
+        )
+        await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    # Resolve brand color
+    try:
+        brand_color = await _resolve_scene_brand_color(jwt, session)
+    except Exception:
+        brand_color = None
+
+    script = Script(**(script_row["content_json"] or {}))
+
+    generated_variants: list[dict[str, Any]] = []
+
+    try:
+        async for event in run_thumbnail(
+            str(user_id),
+            session_id,
+            idea,
+            script,
+            brand_color,
+            reference_url,
+        ):
+            t = event.get("type")
+            if t == "thumbnail_ready":
+                # Upload each variant to Storage + persist as artifact
+                sb_admin = await service_client()
+                sb_user = await user_client(jwt)
+                variants = event.get("variants") or []
+                persisted_variants: list[dict[str, Any]] = []
+
+                for v in variants:
+                    data_url = v.get("data_url", "")
+                    if not data_url or "," not in data_url:
+                        continue
+                    try:
+                        header, b64_data = data_url.split(",", 1)
+                        img_bytes = base64.b64decode(b64_data)
+                    except Exception:
+                        continue
+
+                    storage_path = (
+                        f"{user_id}/{session_id}/thumbnails/{uuid4().hex}.png"
+                    )
+                    try:
+                        await sb_admin.storage.from_(_THUMBNAIL_BUCKET).upload(
+                            path=storage_path,
+                            file=img_bytes,
+                            file_options={
+                                "content-type": "image/png",
+                                "cache-control": "public, max-age=31536000",
+                            },
+                        )
+                        public_url = await sb_admin.storage.from_(
+                            _THUMBNAIL_BUCKET
+                        ).get_public_url(storage_path)
+                    except Exception as e:
+                        log.warning(
+                            "[THUMBNAIL] storage upload failed: %s", e
+                        )
+                        continue
+
+                    # Persist artifact row
+                    try:
+                        version = await _next_artifact_version(
+                            jwt, session_id, "thumbnail"
+                        )
+                        inserted = (
+                            await sb_user.from_("artifacts")
+                            .insert(
+                                {
+                                    "user_id": str(user_id),
+                                    "session_id": session_id,
+                                    "type": "thumbnail",
+                                    "version": version,
+                                    "content_text": f"Thumbnail variant {v.get('index', '?')} — {storage_path}",
+                                    "content_json": {
+                                        "width": v.get("width"),
+                                        "height": v.get("height"),
+                                        "variant_index": v.get("index"),
+                                        "prompt_version": 1,
+                                    },
+                                    "file_url": public_url,
+                                    "storage_path": storage_path,
+                                }
+                            )
+                            .execute()
+                        )
+                        if inserted.data:
+                            artifact_id = str(inserted.data[0]["id"])
+                            persisted_variants.append(
+                                {
+                                    "artifact_id": artifact_id,
+                                    "file_url": public_url,
+                                    "storage_path": storage_path,
+                                    "width": v.get("width"),
+                                    "height": v.get("height"),
+                                    "variant_index": v.get("index"),
+                                }
+                            )
+                    except Exception as e:
+                        log.warning(
+                            "[THUMBNAIL] artifact persist failed: %s", e
+                        )
+                        continue
+
+                generated_variants = persisted_variants
+                await _safe_send_json(
+                    websocket,
+                    {
+                        "type": "thumbnail_ready",
+                        "variants": persisted_variants,
+                    },
+                )
+            else:
+                await _safe_send_json(websocket, event)
+
+    except WebSocketDisconnect:
+        return
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        await _safe_send_json(
+            websocket, {"type": "error", "message": f"Thumbnail generation failed: {e}"}
+        )
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=_CLOSE_SERVER_ERROR)
+        return
+
+    await _safe_send_json(
+        websocket,
+        {
+            "type": "persisted",
+            "session_id": session_id,
+            "thumbnail_artifact_ids": [
+                v["artifact_id"] for v in generated_variants
+            ],
+        },
+    )
+    await _safe_send_json(
+        websocket,
+        {"type": "complete", "cost_usd": 0.0},
+    )
     if websocket.application_state == WebSocketState.CONNECTED:
         await websocket.close()
 
