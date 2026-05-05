@@ -187,5 +187,15 @@ export function useInsights() {
     );
   }, []);
 
-  return { insights, loading, error, refresh: fetch, markRead };
+  const generate = useCallback(async (): Promise<Insight[]> => {
+    const r = await api.post<{ insights: Insight[]; generated: number }>(
+      "/insights/generate",
+    );
+    if (r.insights.length > 0) {
+      setInsights((prev) => [...r.insights, ...prev]);
+    }
+    return r.insights;
+  }, []);
+
+  return { insights, loading, error, refresh: fetch, markRead, generate };
 }

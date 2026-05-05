@@ -571,3 +571,192 @@ async def mark_insight_read(
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Insight not found")
+
+
+class GenerateInsightsResponse(BaseModel):
+    insights: list[InsightResponse]
+    generated: int
+
+
+@router.post("/insights/generate", response_model=GenerateInsightsResponse)
+async def generate_insights(
+    ctx: tuple = Depends(current_user),
+) -> GenerateInsightsResponse:
+    """Synthesize insights from the user's profile, recent ideas, and tags.
+
+    Uses the Anthropic client to produce 2-4 curated research signals relevant
+    to the user's positioning. Idempotent — skips generation if insights were
+    generated in the last 24 hours.
+    """
+    user_id, token = ctx
+    client = await user_client(token)
+
+    # ── Guard: skip if insights were generated in the last 24 hours ──
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        recent = (
+            await client.from_("insights")
+            .select("id", count="exact")
+            .gte("created_at", since)
+            .execute()
+        )
+        if getattr(recent, "count", 0) and (recent.count or 0) > 0:
+            return GenerateInsightsResponse(insights=[], generated=0)
+    except Exception:
+        pass
+
+    # ── Gather context ──
+    try:
+        profile_result = (
+            await client.from_("user_profiles")
+            .select("positioning, audience, voice")
+            .eq("user_id", str(user_id))
+            .maybe_single()
+            .execute()
+        )
+        profile = profile_result.data if profile_result else None
+    except Exception:
+        profile = None
+
+    positioning = (profile or {}).get("positioning", "") or ""
+    audience = (profile or {}).get("audience", "") or ""
+
+    # Recent ideas (last 30 days)
+    idea_titles: list[str] = []
+    idea_tags: set[str] = set()
+    try:
+        ideas_result = (
+            await client.from_("ideas")
+            .select("title, idea_type")
+            .gte("created_at", (datetime.now(timezone.utc) - timedelta(days=30)).isoformat())
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        for row in ideas_result.data or []:
+            idea_titles.append(row.get("title", ""))
+    except Exception:
+        pass
+
+    # Tags from knowledge_nodes
+    try:
+        kn = (
+            await client.from_("knowledge_nodes")
+            .select("topic_tags")
+            .is_("deleted_at", "null")
+            .limit(50)
+            .execute()
+        )
+        for row in kn.data or []:
+            for tag in row.get("topic_tags") or []:
+                if tag.strip():
+                    idea_tags.add(tag.strip().lower())
+    except Exception:
+        pass
+
+    # ── Build prompt ──
+    context_parts: list[str] = []
+    if positioning:
+        context_parts.append(f"The user's positioning: {positioning}")
+    if audience:
+        context_parts.append(f"Their target audience: {audience}")
+    if idea_titles:
+        context_parts.append(
+            "Recent video ideas: " + "; ".join(idea_titles[:10])
+        )
+    if idea_tags:
+        context_parts.append(
+            "Recurring topic tags: " + ", ".join(sorted(idea_tags)[:15])
+        )
+
+    context_block = "\n".join(context_parts) if context_parts else (
+        "A new user with no profile or ideas yet."
+    )
+
+    system = (
+        "You are a research signal analyst for a video content platform. "
+        "Based on the user's profile, recent ideas, and topic tags, identify "
+        "2-4 synthesized insights that represent emerging trends, content gaps, "
+        "or audience signals relevant to their positioning.\n\n"
+        "Each insight should be SPECIFIC — reference real patterns, not generic "
+        "advice. Format your output as a JSON array of objects with keys: "
+        "title (a provocative headline string, max 120 chars), "
+        "body (1-2 sentences explaining the signal, max 400 chars), "
+        "signal_type (one of: trend_shift, positioning_gap, audience_signal), "
+        "source_ref (optional string — a specific source or reference if applicable).\n\n"
+        "Output ONLY the JSON array, no other text."
+    )
+
+    from app.services.llm import anthropic_client
+
+    llm = anthropic_client()
+    try:
+        resp = await llm.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1024,
+            system=system,
+            messages=[
+                {"role": "user", "content": context_block},
+            ],
+        )
+        raw = (resp.content[0].text if resp.content else "").strip()
+    except Exception as e:
+        raise HTTPException(
+            status_code=502, detail=f"LLM call failed: {e}"
+        ) from e
+
+    # ── Parse the JSON response ──
+    import json as _json
+
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+    try:
+        parsed = _json.loads(raw)
+    except _json.JSONDecodeError:
+        raise HTTPException(
+            status_code=502, detail="LLM returned unparseable output"
+        )
+
+    if not isinstance(parsed, list):
+        raise HTTPException(
+            status_code=502, detail="LLM output was not a list"
+        )
+
+    # ── Insert insights ──
+    inserted: list[InsightResponse] = []
+    for item in parsed[:4]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title", "") or "").strip()
+        if not title:
+            continue
+        try:
+            result = (
+                await client.from_("insights")
+                .insert({
+                    "user_id": str(user_id),
+                    "title": title[:200],
+                    "body": str(item.get("body", "") or "")[:600],
+                    "signal_type": str(item.get("signal_type", "") or "")[:40],
+                    "source_ref": str(item.get("source_ref", "") or "")[:300],
+                })
+                .execute()
+            )
+            if result.data:
+                row = result.data[0]
+                inserted.append(InsightResponse(
+                    id=row["id"],
+                    title=row.get("title", ""),
+                    body=row.get("body"),
+                    signal_type=row.get("signal_type"),
+                    source_ref=row.get("source_ref"),
+                    read=False,
+                    created_at=row.get("created_at"),
+                ))
+        except Exception:
+            continue
+
+    return GenerateInsightsResponse(insights=inserted, generated=len(inserted))

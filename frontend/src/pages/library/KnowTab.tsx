@@ -1,6 +1,6 @@
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight } from "@phosphor-icons/react";
+import { ArrowRight, X, Plus } from "@phosphor-icons/react";
 import { cn } from "../../lib/cn";
 import { useAuth, type Profile } from "../../lib/auth";
 import { api } from "../../lib/api";
@@ -169,32 +169,10 @@ export default function KnowTab() {
                 onSaved={refreshProfile}
               />
             ))}
-            <li className="px-5 py-3.5 grid grid-cols-[180px_1fr] gap-4 items-start">
-              <div>
-                <div className="text-[13px] text-white">
-                  Creators you sound closest to
-                </div>
-                <div className="font-mono text-[11px] text-mist mt-0.5">
-                  Seeds the voice profile.
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {creators.length === 0 ? (
-                  <span className="text-[13px] text-mist italic">
-                    not yet set — edit in settings
-                  </span>
-                ) : (
-                  creators.map((c) => (
-                    <span
-                      key={c}
-                      className="font-mono text-[11px] text-white/85 border border-hairline rounded px-2 py-0.5"
-                    >
-                      {c}
-                    </span>
-                  ))
-                )}
-              </div>
-            </li>
+            <CreatorsEditor
+              creators={creators}
+              onSaved={refreshProfile}
+            />
           </ul>
         )}
       </div>
@@ -314,6 +292,175 @@ function InlineEditField({
             )}
           >
             {value || "click to set"}
+          </button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function CreatorsEditor({
+  creators,
+  onSaved,
+}: {
+  creators: string[];
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState<string[]>(creators);
+  const [input, setInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const startEdit = useCallback(() => {
+    setLocal([...creators]);
+    setEditing(true);
+    setError(null);
+  }, [creators]);
+
+  const save = useCallback(
+    async (updated: string[]) => {
+      setSaving(true);
+      setError(null);
+      try {
+        await api.patch("/auth/profile", {
+          creators_followed: updated,
+        });
+        onSaved();
+      } catch (e: any) {
+        setError(e?.message ?? "Failed to save");
+        setLocal([...creators]);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [creators, onSaved],
+  );
+
+  function addCreator() {
+    const name = input.trim();
+    if (!name || local.includes(name)) return;
+    const updated = [...local, name];
+    setLocal(updated);
+    setInput("");
+    save(updated);
+    inputRef.current?.focus();
+  }
+
+  function removeCreator(name: string) {
+    const updated = local.filter((c) => c !== name);
+    setLocal(updated);
+    save(updated);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addCreator();
+    }
+    if (e.key === "Escape") {
+      setLocal([...creators]);
+      setEditing(false);
+      setError(null);
+    }
+  }
+
+  return (
+    <li className="px-5 py-3.5 grid grid-cols-[180px_1fr] gap-4 items-start">
+      <div>
+        <div className="text-[13px] text-white">
+          Creators you sound closest to
+        </div>
+        <div className="font-mono text-[11px] text-mist mt-0.5">
+          Seeds the voice profile.
+        </div>
+      </div>
+      <div>
+        {editing ? (
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5">
+              {local.length === 0 && (
+                <span className="text-[13px] text-mist italic">
+                  no creators yet
+                </span>
+              )}
+              {local.map((c) => (
+                <span
+                  key={c}
+                  className="inline-flex items-center gap-1 font-mono text-[11px] text-white/85 border border-hairline rounded px-2 py-0.5"
+                >
+                  {c}
+                  <button
+                    onClick={() => removeCreator(c)}
+                    disabled={saving}
+                    className="text-mist hover:text-white disabled:opacity-40"
+                  >
+                    <X size={10} weight="bold" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Add a creator name…"
+                className="flex-1 bg-white/[0.06] border border-hairline rounded-md px-3 h-8 text-[13px] text-white placeholder:text-mist focus:outline-none focus:border-white/20"
+                disabled={saving}
+              />
+              <button
+                onClick={addCreator}
+                disabled={!input.trim() || saving}
+                className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md bg-white/[0.06] border border-hairline text-[12px] text-white hover:bg-white/[0.1] transition-colors disabled:opacity-40"
+              >
+                <Plus size={12} weight="bold" />
+                Add
+              </button>
+            </div>
+            {error && (
+              <p className="text-[11.5px] text-sienna">{error}</p>
+            )}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setLocal([...creators]);
+                  setEditing(false);
+                  setError(null);
+                }}
+                className="text-[12px] text-mist hover:text-white transition-colors"
+              >
+                Done
+              </button>
+              <span className="font-mono text-[10.5px] text-mist">
+                {saving ? "saving…" : "Add or remove to save immediately"}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={startEdit}
+            className="text-left w-full rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 hover:bg-white/[0.04] transition-colors"
+          >
+            {creators.length === 0 ? (
+              <span className="text-[13px] text-mist italic">
+                click to set
+              </span>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {creators.map((c) => (
+                  <span
+                    key={c}
+                    className="font-mono text-[11px] text-white/85 border border-hairline rounded px-2 py-0.5"
+                  >
+                    {c}
+                  </span>
+                ))}
+              </div>
+            )}
           </button>
         )}
       </div>
