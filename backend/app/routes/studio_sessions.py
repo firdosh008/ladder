@@ -52,6 +52,7 @@ class StudioSessionByIdea(BaseModel):
     script: dict | None
     outline: dict | None
     scene: dict | None
+    thumbnails: list[dict] | None = None
 
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -157,7 +158,7 @@ async def get_session_by_idea(
 
     if not sess_resp.data:
         return StudioSessionByIdea(
-            session=None, script=None, outline=None, scene=None
+            session=None, script=None, outline=None, scene=None, thumbnails=None
         )
 
     session = sess_resp.data[0]
@@ -168,7 +169,7 @@ async def get_session_by_idea(
             await client.from_("artifacts")
             .select("*")
             .eq("session_id", session_id)
-            .in_("type", ["script", "outline", "excalidraw"])
+            .in_("type", ["script", "outline", "excalidraw", "thumbnail"])
             .order("version", desc=True)
             .execute()
         )
@@ -178,6 +179,7 @@ async def get_session_by_idea(
     script: dict | None = None
     outline: dict | None = None
     scene: dict | None = None
+    thumbnails: list[dict] = []
     for a in artifacts_resp.data or []:
         kind = a["type"]
         if kind == "script" and script is None:
@@ -186,11 +188,20 @@ async def get_session_by_idea(
             outline = a
         elif kind == "excalidraw" and scene is None:
             scene = a
-        if script and outline and scene:
+        elif kind == "thumbnail":
+            # Collect all thumbnail artifacts for this session (up to 6).
+            # They come ordered by version DESC so the latest run is first.
+            if len(thumbnails) < 6:
+                thumbnails.append(a)
+        if script and outline and scene and len(thumbnails) >= 6:
             break
 
     return StudioSessionByIdea(
-        session=session, script=script, outline=outline, scene=scene
+        session=session,
+        script=script,
+        outline=outline,
+        scene=scene,
+        thumbnails=thumbnails if thumbnails else None,
     )
 
 

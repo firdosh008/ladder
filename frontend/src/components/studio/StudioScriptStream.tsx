@@ -17,6 +17,7 @@ import {
   type Outline,
   type Scene,
   type Script,
+  type ThumbnailVariant,
 } from "../../lib/agents";
 
 /**
@@ -90,6 +91,8 @@ export type StudioStreamState = {
   error: string | null;
   cost: number | null;
   hydratedFromDb: boolean;
+  /** Thumbnail variants hydrated from DB or generated during this session. */
+  thumbnails: ThumbnailVariant[];
   /** Replace the local script (e.g. after an AI chat patch). */
   setScript: (script: Script | null) => void;
   /** Replace the local outline (e.g. after a manual edit save). */
@@ -134,6 +137,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
   const [error, setError] = useState<string | null>(null);
   const [cost, setCost] = useState<number | null>(null);
   const [hydratedFromDb, setHydratedFromDb] = useState(false);
+  const [thumbnails, setThumbnails] = useState<ThumbnailVariant[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
   // Set synchronously by `regenerate()` so the very next effect cycle
   // skips the GET-and-hydrate path and opens a fresh WS instead. Reset
@@ -286,9 +290,22 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
           (res.scene?.content_json as Scene | undefined) ?? null;
         const sessionRow = (res.session as StudioSessionRow | null) ?? null;
         const existingSessionId = sessionRow?.id ?? null;
+
+        // Hydrate thumbnail variants from DB artifacts
+        const hydratedThumbnails: ThumbnailVariant[] = (res.thumbnails || [])
+          .map((t) => ({
+            artifact_id: t.id,
+            file_url: (t.file_url as string) || "",
+            storage_path: (t.storage_path as string) || "",
+            width: (t.content_json as any)?.width || 1792,
+            height: (t.content_json as any)?.height || 1024,
+          }))
+          .filter((t) => t.file_url);
+
         if (existingSessionId) setSessionId(existingSessionId);
         if (sessionRow) setSession(sessionRow);
         if (existingScene) setScene(existingScene);
+        if (hydratedThumbnails.length > 0) setThumbnails(hydratedThumbnails);
         if (existingScript && existingOutline) {
           setScript(existingScript);
           setOutline(existingOutline);
@@ -349,6 +366,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       error,
       cost,
       hydratedFromDb,
+      thumbnails,
       setScript,
       setOutline,
       setScene,
@@ -367,6 +385,7 @@ export function useStudioStream(ideaId: string, duration?: number): StudioStream
       error,
       cost,
       hydratedFromDb,
+      thumbnails,
       patchSession,
       regenerate,
       rerun,

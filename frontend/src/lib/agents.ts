@@ -685,11 +685,20 @@ export async function patchStudioSession(
 
 // ─── Hydration: GET /studio-sessions/by-idea/{idea_id} ───────────────────
 
+export type HydratedThumbnail = {
+  id: string;
+  file_url: string | null;
+  storage_path: string | null;
+  content_json: Record<string, unknown> | null;
+  version: number;
+};
+
 export type StudioHydration = {
   session: Record<string, unknown> | null;
   script: { id: string; content_json: Script; version: number } | null;
   outline: { id: string; content_json: Outline; version: number } | null;
   scene: { id: string; content_json: Scene; version: number } | null;
+  thumbnails: HydratedThumbnail[] | null;
 };
 
 export async function fetchStudioByIdea(

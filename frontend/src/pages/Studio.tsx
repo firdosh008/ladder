@@ -83,6 +83,30 @@ function StudioBody({
   const [thumbnailGenerating, setThumbnailGenerating] = useState(false);
   const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false);
 
+  // Reset + hydrate thumbnail variants when idea changes or first load.
+  // Only set the ref AFTER thumbnails are actually hydrated — otherwise the
+  // ref gets set prematurely while state.thumbnails is still [] (hydration
+  // hasn't resolved yet), and the next render skips hydration entirely.
+  const thumbnailsHydratedRef = useRef<string | null>(null);
+  useEffect(() => {
+    // New idea — full reset
+    if (thumbnailsHydratedRef.current !== idea.id) {
+      setThumbnailVariants([]);
+      setThumbnailModalOpen(false);
+      thumbnailsHydratedRef.current = null;
+    }
+    // Not hydrated from DB yet — wait
+    if (!state.hydratedFromDb) return;
+    // Already hydrated this idea
+    if (thumbnailsHydratedRef.current === idea.id) return;
+    // DB has thumbnails → hydrate
+    if (state.thumbnails.length > 0) {
+      setThumbnailVariants(state.thumbnails);
+    }
+    // Mark as done regardless (empty or populated)
+    thumbnailsHydratedRef.current = idea.id;
+  }, [idea.id, state.hydratedFromDb, state.thumbnails]);
+
   const handleDiagramRunActive = useCallback((active: boolean) => {
     setLiveCanvasDuringRun(active);
     if (active) setPreviewOpen(true);
