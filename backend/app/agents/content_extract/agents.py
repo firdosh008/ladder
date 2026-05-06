@@ -31,9 +31,13 @@ def _profile_context(profile: UserProfileSlice) -> str:
     return "\n".join(parts)
 
 
-def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
+def build_agents(
+    profile: UserProfileSlice,
+    knowledge_context: str | None = None,
+) -> dict[str, Agent]:
     llm = anthropic_llm(temperature=0.5)
     profile_ctx = _profile_context(profile)
+    kg_block = f"\n\n{knowledge_context}" if knowledge_context else ""
 
     analyzer = Agent(
         role="Source analyzer",
@@ -47,7 +51,13 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
             "spot the video idea hiding inside them. You don't summarise "
             "the source — you imagine the video the founder would record "
             "if this source was their starting point.\n\n"
+            "KNOWLEDGE-AWARE: the founder's existing knowledge is listed "
+            "below. When the source overlaps with content they've already "
+            "covered, angle the title and beats toward the fresh take this "
+            "source offers. When the source fills a visible gap in their "
+            "knowledge, lean into that gap — it's the most valuable angle.\n\n"
             "Founder context:\n" + profile_ctx
+            + kg_block
         ),
         llm=llm,
         allow_delegation=False,
@@ -69,7 +79,13 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
             "the pasted source OR a clear inference from it. You write "
             "talking points (NOT verbatim narration), in the founder's "
             "voice, and you end every section with a transition.\n\n"
+            "KNOWLEDGE-AWARE: the founder's existing knowledge is listed "
+            "below. When the source revisits territory the founder has "
+            "already scripted, bridge to it — reference or build on that "
+            "prior work. When the source opens new territory, foreground "
+            "that freshness in the opening section.\n\n"
             "Founder context:\n" + profile_ctx
+            + kg_block
         ),
         llm=llm,
         allow_delegation=False,

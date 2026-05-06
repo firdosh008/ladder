@@ -178,6 +178,12 @@ export function ContentExtractPanel({ setup, onStartOver, onIdeasChanged }: Prop
           }
           break;
         }
+        case "knowledge_context":
+          push({
+            kind: "info",
+            label: `Pulled ${ev.count} relevant pieces from your knowledge graph`,
+          });
+          break;
         case "usage":
           setCost(ev.token_usage.cost_usd);
           break;

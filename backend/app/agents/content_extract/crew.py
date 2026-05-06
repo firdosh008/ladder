@@ -20,6 +20,7 @@ from crewai import Crew, Process
 
 from app.agents.content_extract.agents import build_agents
 from app.agents.content_extract.tasks import build_tasks
+from app.agents.research.knowledge_graph import retrieve_knowledge_context
 from app.config import settings
 from app.models.db import ExtractedVideo, UserProfileSlice
 from app.services.usage import log_usage
@@ -48,9 +49,9 @@ async def run_content_extract(
     """Run the content_extract crew and stream wire events.
 
     Terminal events:
-      analysis_ready  — ContentAnalysis (after analyze task)
-      extract_ready   — ExtractedVideo (after extract task)
-      usage           — token + cost summary
+      knowledge_context — pre-retrieval result (count of own knowledge chunks)
+      extract_ready     — ExtractedVideo (after extract task)
+      usage             — token + cost summary
     """
 
     async with log_usage(
@@ -59,8 +60,16 @@ async def run_content_extract(
         model=settings.ANTHROPIC_MODEL,
         provider="anthropic",
     ) as entry:
-        agents = build_agents(profile)
-        tasks = build_tasks(source_content, agents)
+        knowledge_context, kg_count = await retrieve_knowledge_context(
+            user_id, source_content[:200]
+        )
+        yield {
+            "type": "knowledge_context",
+            "count": kg_count,
+        }
+
+        agents = build_agents(profile, knowledge_context=knowledge_context)
+        tasks = build_tasks(source_content, agents, knowledge_context=knowledge_context)
 
         crew = Crew(
             agents=[agents["analyzer"], agents["extractor"]],

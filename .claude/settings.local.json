@@ -12,7 +12,12 @@
       "mcp__playwright__browser_snapshot",
       "mcp__playwright__browser_navigate",
       "mcp__playwright__browser_console_messages",
-      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -UseBasicParsing -TimeoutSec 2; Write-Output \"$\\($r.StatusCode\\): $\\($r.Content\\)\" } catch { Write-Output \"Backend not reachable: $_\" })"
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -UseBasicParsing -TimeoutSec 2; Write-Output \"$\\($r.StatusCode\\): $\\($r.Content\\)\" } catch { Write-Output \"Backend not reachable: $_\" })",
+      "Bash(where python3 *)",
+      "Bash(where python *)",
+      "Bash(python3 -m pytest tests/test_extract_crew.py -v)",
+      "Bash(\"D:/Development/Zero/ladder/ladder/backend/.venv/Scripts/python.exe\" -m pytest tests/test_extract_crew.py -v)",
+      "Bash(\"D:/Development/Zero/ladder/ladder/backend/.venv/Scripts/python.exe\" -m pytest tests/test_research_crew.py -v)"
     ]
   },
   "enableAllProjectMcpServers": true,

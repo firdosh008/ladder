@@ -7,7 +7,13 @@ from crewai import Agent, Task
 from app.models.db import ContentAnalysis, ExtractedVideo
 
 
-def build_tasks(source_content: str, agents: dict[str, Agent]) -> list[Task]:
+def build_tasks(
+    source_content: str,
+    agents: dict[str, Agent],
+    knowledge_context: str | None = None,
+) -> list[Task]:
+    kg_block = f"\n\n{knowledge_context}" if knowledge_context else ""
+
     analyze_task = Task(
         description=(
             "Read the pasted source below and produce a ContentAnalysis "
@@ -24,11 +30,17 @@ def build_tasks(source_content: str, agents: dict[str, Agent]) -> list[Task]:
             "  - key_beats: 4-8 bullets — the SPECIFIC arguments / moments "
             "the script must hit. Each 8-25 words. NO summarising — pick "
             "the moves.\n\n"
+            "CROSS-REFERENCE: the founder's existing knowledge is listed "
+            "below. Angle the title and beats so they complement (not "
+            "duplicate) what the founder already knows. If the source "
+            "overlaps with existing content, find the fresh angle. If it "
+            "fills a gap, lean into that gap.\n\n"
             "Return strict JSON, no markdown fences.\n\n"
             "PASTED SOURCE\n"
             "=============\n"
             f"{source_content}\n"
             "=============\n"
+            + kg_block
         ),
         expected_output=(
             "JSON object with keys: title, rationale, idea_type, "
@@ -53,6 +65,11 @@ def build_tasks(source_content: str, agents: dict[str, Agent]) -> list[Task]:
             "  - outline: 3-10 numbered OutlineItems mirroring the script. "
             "Each item has number, label (3-6 words, punchy), beat (1-2 "
             "sentences, 25-60 words).\n\n"
+            "KNOWLEDGE-AWARE: the founder's existing knowledge is listed "
+            "below. When the source revisits territory the founder has "
+            "already scripted, bridge to that prior work in the transitions. "
+            "When the source opens new territory, make the opening section "
+            "signal that freshness clearly.\n\n"
             "Constraints:\n"
             "  • Don't invent stats or quotes the source doesn't have.\n"
             "  • Don't open with 'In this video...'. Lead with the most "
@@ -60,6 +77,7 @@ def build_tasks(source_content: str, agents: dict[str, Agent]) -> list[Task]:
             "  • Avoid 'Ultimate', avoid hype. Keep founder voice.\n\n"
             "Return strict JSON matching the ExtractedVideo schema. NO "
             "markdown fences."
+            + kg_block
         ),
         expected_output=(
             "JSON object with keys: title, rationale, idea_type, "
