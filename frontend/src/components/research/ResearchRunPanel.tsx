@@ -313,6 +313,12 @@ export function ResearchRunPanel({ setup, onStartOver, onIdeasChanged }: Props) 
           });
           break;
         }
+        case "knowledge_context":
+          push({
+            kind: "info",
+            label: `Pulled ${ev.count} relevant pieces from your knowledge graph`,
+          });
+          break;
         case "ideas_ready":
           finalDrafts = ev.ideas;
           setDrafts(ev.ideas);

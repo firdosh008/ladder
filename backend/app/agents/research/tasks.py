@@ -14,6 +14,7 @@ def build_tasks(
     topic: str,
     agents: dict[str, Agent],
     target_duration_min: int = 10,
+    knowledge_context: str | None = None,
 ) -> list[Task]:
     """Build the 3-task research pipeline.
 
@@ -22,12 +23,18 @@ def build_tasks(
     rationale, scope, and `why_now` line up with the depth that runtime
     can support — a 5-min hot take has very different shape than a 30-min
     deep-dive even on the same trigger signal.
+
+    `knowledge_context` is a pre-retrieved block of the founder's own
+    knowledge_nodes relevant to the topic. When provided it is appended to
+    the scorer and formulator task descriptions so they can cross-reference
+    external signals against the founder's existing content.
     """
 
     today = datetime.now(tz=timezone.utc)
     year = today.year
     today_str = today.strftime("%B %Y")
     duration_brief = _duration_brief(target_duration_min)
+    kg_block = f"\n\n{knowledge_context}" if knowledge_context else ""
 
     search_task = Task(
         description=(
@@ -106,7 +113,14 @@ def build_tasks(
             "column when this applies.\n\n"
             "Group-reason briefly: identify the 2-3 distinct narrative "
             "threads that emerge from the highest-scoring signals, "
-            "because the next agent will build ideas along those threads."
+            "because the next agent will build ideas along those threads.\n\n"
+            "CROSS-REFERENCE AGAINST FOUNDER KNOWLEDGE: the founder's "
+            "existing knowledge (below) is their accumulated notes, scripts, "
+            "and ideas. When a signal matches knowledge the founder already "
+            "has, note the overlap in your reasoning. When it fills a clear "
+            "gap — territory the founder hasn't explored yet — bump the "
+            "score by +5. Gaps are more valuable than reinforcement."
+            + kg_block
         ),
         expected_output=(
             "Markdown table with columns: signal_title | url | score | "
@@ -151,7 +165,14 @@ def build_tasks(
             "hyphenated), useful for the user's knowledge graph.\n\n"
             "Return strict JSON that matches the IdeaDraft schema. Ideas "
             "must be a list of 4-6 objects. Do NOT wrap in markdown fences. "
-            "Do NOT include a `body` field."
+            "Do NOT include a `body` field.\n\n"
+            "AVOID DUPLICATION: the founder's existing knowledge is listed "
+            "below. Do NOT draft ideas that rehash what they've already "
+            "covered. Prefer angles that extend thin areas or open new "
+            "territory. If an idea builds directly on the founder's own "
+            "content, mention the connection in the rationale. If it fills "
+            "a visible gap, note that too."
+            + kg_block
         ),
         expected_output=(
             f"JSON object with key `ideas`, a list of 4-6 drafts sized for "

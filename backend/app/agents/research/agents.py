@@ -59,10 +59,21 @@ def _profile_context(profile: UserProfileSlice) -> str:
     return "\n".join(parts)
 
 
-def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
+def _knowledge_block(knowledge_context: str | None) -> str:
+    """Format the knowledge graph context for agent backstories."""
+    if not knowledge_context:
+        return ""
+    return "\n\n" + knowledge_context
+
+
+def build_agents(
+    profile: UserProfileSlice,
+    knowledge_context: str | None = None,
+) -> dict[str, Agent]:
     llm = anthropic_llm(temperature=0.4)
     context = _profile_context(profile)
     today = _today_context()
+    kg_block = _knowledge_block(knowledge_context)
 
     search_agent = Agent(
         role="Trend researcher",
@@ -143,7 +154,14 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
             "recycled LinkedIn takes. Heavily prefer signals that are from "
             "the current calendar year — older signals must clear a higher "
             "bar.\n\n"
+            "CROSS-REFERENCE RULE: cross-reference each signal against the "
+            "founder's existing knowledge (provided below). When a signal "
+            "corroborates something the founder already knows, note the "
+            "overlap in your reasoning. When it fills a clear gap in their "
+            "knowledge, bump the score +5 — gaps are more valuable than "
+            "reinforcement.\n\n"
             "Context:\n" + context
+            + kg_block
         ),
         llm=llm,
         allow_delegation=False,
@@ -164,7 +182,14 @@ def build_agents(profile: UserProfileSlice) -> dict[str, Agent]:
             "a founder-operator would actually record. Every idea sounds "
             "like it came from THEIR voice, targets THEIR audience, and "
             "respects what they've said to avoid.\n\n"
+            "KNOWLEDGE-AWARE RULE: the founder's existing knowledge is "
+            "listed below. Avoid drafting ideas that duplicate what they've "
+            "already covered. Prefer angles that extend thin areas or open "
+            "new territory. When an idea builds directly on the founder's "
+            "own content, mention that connection in the rationale. When it "
+            "fills a visible gap, note that too.\n\n"
             "Context:\n" + context
+            + kg_block
         ),
         llm=llm,
         allow_delegation=False,

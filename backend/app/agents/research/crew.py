@@ -23,6 +23,7 @@ from uuid import UUID
 from crewai import Crew, Process
 
 from app.agents.research.agents import build_agents
+from app.agents.research.knowledge_graph import retrieve_knowledge_context
 from app.agents.research.streaming import (
     SourceRef,
     sources_emitter_var,
@@ -66,12 +67,13 @@ async def run_research(
     and "why now" beats.
 
     Event types emitted:
-      agent_start    — each new agent_role the stream reports
-      tool_call      — the LLM has emitted a TOOL_CALL chunk (with arguments)
-      sources        — ExaSearchTool pushed its results back via ContextVar
-      text_delta     — the LLM is streaming output tokens (truncated per chunk)
-      task_complete  — the streaming chunks moved to the next task index
-      ideas_ready    — terminal event carrying the parsed ResearchIdeas
+      knowledge_context — pre-retrieval result (count of your own knowledge chunks)
+      agent_start       — each new agent_role the stream reports
+      tool_call         — the LLM has emitted a TOOL_CALL chunk (with arguments)
+      sources           — ExaSearchTool pushed its results back via ContextVar
+      text_delta        — the LLM is streaming output tokens (truncated per chunk)
+      task_complete     — the streaming chunks moved to the next task index
+      ideas_ready       — terminal event carrying the parsed ResearchIdeas
     """
 
     async with log_usage(
@@ -99,8 +101,19 @@ async def run_research(
         token = sources_emitter_var.set(emit_sources)
 
         try:
-            agents = build_agents(profile)
-            tasks = build_tasks(topic, agents, target_duration_min)
+            knowledge_context, kg_count = await retrieve_knowledge_context(
+                user_id, topic
+            )
+            yield {
+                "type": "knowledge_context",
+                "count": kg_count,
+            }
+
+            agents = build_agents(profile, knowledge_context=knowledge_context)
+            tasks = build_tasks(
+                topic, agents, target_duration_min,
+                knowledge_context=knowledge_context,
+            )
 
             crew = Crew(
                 agents=[

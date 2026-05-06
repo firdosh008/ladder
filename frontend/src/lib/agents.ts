@@ -221,6 +221,7 @@ export type AgentEvent =
       scene_artifact_id?: string;
       thumbnail_artifact_ids?: string[];
     }
+  | { type: "knowledge_context"; count: number }
   | { type: "complete"; count?: number; cost_usd: number }
   | { type: "error"; message: string };
 
