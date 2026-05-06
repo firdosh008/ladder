@@ -19,7 +19,8 @@ from app.services.embeddings import generate_embedding
 
 log = logging.getLogger(__name__)
 
-_MATCH_COUNT = 8
+_MATCH_COUNT = 12
+_MIN_SIMILARITY = 0.5
 
 
 async def retrieve_knowledge_context(
@@ -57,6 +58,11 @@ async def retrieve_knowledge_context(
         return None, 0
 
     rows = result.data or []
+    rows = [
+        r for r in rows
+        if isinstance(r.get("similarity"), (int, float))
+        and r["similarity"] >= _MIN_SIMILARITY
+    ]
     if not rows:
         return None, 0
 
