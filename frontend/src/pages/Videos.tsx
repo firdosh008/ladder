@@ -1,33 +1,42 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, X, Warning } from "@phosphor-icons/react";
+import { Plus, MagnifyingGlass, Warning, X } from "@phosphor-icons/react";
 import { Shell, PageHeader, PageContainer } from "../components/app/Shell";
 import { Button } from "../components/ui/Button";
-import { useIdeas, type Idea } from "../lib/useIdeas";
+import { api, ApiError } from "../lib/api";
+import { useVideosKanban } from "../lib/useVideosKanban";
+import { useWeeklySuggestion } from "../lib/useWeeklySuggestion";
 import {
-  KanbanBoard,
-  KANBAN_COLUMNS,
-  POSITION_STEP,
-  type KanbanCard,
-  type KanbanStatus,
-  type KanbanMoveEvent,
-} from "../components/kanban";
-import { CardDetailSheet } from "../components/kanban/CardDetailSheet";
-import { Toolbar } from "../components/kanban/Toolbar";
+  WeeklySuggestionBlock,
+  ChannelSummaryStrip,
+  MyKanbanBoard,
+  PerformanceDetailPanel,
+  ContextMenu,
+} from "../components/videos";
+import type { KanbanData, PublishedEntry, WeeklySuggestion } from "../types/videos";
+import type { ContextMenuItem } from "../components/videos";
 
-const VALID_STATUSES: KanbanStatus[] = ["new", "scripting", "scene", "ready", "published"];
-
-function isKanbanStatus(s: string): s is KanbanStatus {
-  return (VALID_STATUSES as string[]).includes(s);
+function filterBySearch(data: KanbanData, query: string): KanbanData {
+  if (!query.trim()) return data;
+  const q = query.toLowerCase();
+  return {
+    ...data,
+    ideas: data.ideas.filter(
+      (i) =>
+        i.title.toLowerCase().includes(q) ||
+        (i.rationale ?? "").toLowerCase().includes(q),
+    ),
+    in_progress: data.in_progress.filter((s) =>
+      s.title.toLowerCase().includes(q),
+    ),
+    ready: data.ready.filter((r) =>
+      r.title.toLowerCase().includes(q),
+    ),
+    published: data.published.filter((p) =>
+      p.title.toLowerCase().includes(q),
+    ),
+  };
 }
-
-const EMPTY_COPY: Partial<Record<KanbanStatus, string>> = {
-  new: "No ideas yet. Tap + to capture one.",
-  scripting: "Drag an idea here to start scripting.",
-  scene: "Scripts move here once the outline lands.",
-  ready: "Scenes move here once approved.",
-  published: "Published videos sync here.",
-};
 
 function ErrorBanner({
   message,
@@ -36,17 +45,10 @@ function ErrorBanner({
   message: string;
   onDismiss: () => void;
 }) {
-  const missingPosition =
-    message.includes("ideas.position") ||
-    message.includes("'position' column");
-  const friendly = missingPosition
-    ? "The 'position' migration hasn't been applied to Supabase yet. Run the SQL in supabase/migrations/20260424000001_idea_position.sql (paste into the Supabase SQL editor), then hard-refresh."
-    : message;
-
   return (
     <div className="mb-3 flex items-start gap-2.5 rounded-lg border border-cinnabar/30 bg-cinnabar/[0.05] px-3.5 py-2.5 text-[12.5px] text-cinnabar">
       <Warning size={13} weight="bold" className="mt-0.5 shrink-0" />
-      <span className="flex-1 leading-[1.5]">{friendly}</span>
+      <span className="flex-1 leading-[1.5]">{message}</span>
       <button
         type="button"
         onClick={onDismiss}
@@ -59,38 +61,59 @@ function ErrorBanner({
   );
 }
 
-function formatAge(iso: string): string {
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const secs = Math.max(0, Math.floor((now - then) / 1000));
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
-  return `${Math.floor(days / 7)}w`;
+function LoadingSkeleton() {
+  return (
+    <div className="flex gap-4 overflow-x-auto pb-4 -mx-2 px-2">
+      {["Ideas", "In Progress", "Ready to Record", "Published"].map((title) => (
+        <div key={title} className="min-w-[300px] w-[300px] shrink-0">
+          <div className="flex items-center px-1 pb-2.5">
+            <div className="inline-flex items-center gap-2 rounded-md px-2 py-1 bg-white/[0.04] border border-hairline">
+              <span className="h-1.5 w-1.5 rounded-full bg-hairline" />
+              <span className="text-[12.5px] font-semibold text-white/90">
+                {title}
+              </span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-transparent bg-white/[0.015] p-2 space-y-2 animate-pulse">
+            {[1, 2].map((i) => (
+              <div
+                key={i}
+                className="h-[100px] rounded-lg bg-white/[0.03]"
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function VideosPage() {
   const navigate = useNavigate();
   const {
-    ideas,
-    loading,
-    error,
-    createIdea,
-    updateIdea,
-    deleteIdea,
-    patchLocal,
-    refresh,
-  } = useIdeas();
+    data: kanbanData,
+    loading: kanbanLoading,
+    error: kanbanError,
+    refresh: refreshKanban,
+  } = useVideosKanban();
+  const {
+    suggestion,
+    loading: suggestionLoading,
+    save: saveSuggestion,
+    dismiss: dismissSuggestion,
+    refresh: refreshSuggestion,
+  } = useWeeklySuggestion();
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<KanbanStatus | "all">("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [selectedVideo, setSelectedVideo] = useState<PublishedEntry | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{
+    items: ContextMenuItem[];
+    x: number;
+    y: number;
+  } | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
+
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Keyboard: `/` focuses search.
@@ -110,106 +133,86 @@ export default function VideosPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const visibleColumns = useMemo(
-    () =>
-      statusFilter === "all"
-        ? KANBAN_COLUMNS
-        : KANBAN_COLUMNS.filter((c) => c.id === statusFilter),
-    [statusFilter],
+  const filteredData = useMemo(
+    () => (kanbanData ? filterBySearch(kanbanData, search) : null),
+    [kanbanData, search],
   );
 
-  const cards = useMemo<KanbanCard[]>(() => {
-    const q = search.trim().toLowerCase();
-    return ideas
-      .filter((idea) => isKanbanStatus(idea.status))
-      .filter((idea) => {
-        if (!q) return true;
-        return (
-          idea.title.toLowerCase().includes(q) ||
-          (idea.body ?? "").toLowerCase().includes(q)
-        );
-      })
-      .map<KanbanCard>((idea) => ({
-        id: idea.id,
-        columnId: idea.status as KanbanStatus,
-        position: idea.position ?? 1e12,
-        title: idea.title,
-        score: idea.opportunity_score,
-        subtitle: idea.source_type,
-        meta: formatAge(idea.created_at),
-      }));
-  }, [ideas, search]);
+  const handleContextMenu = useCallback(
+    (items: ContextMenuItem[], x: number, y: number) => {
+      setContextMenu({ items, x, y });
+    },
+    [],
+  );
 
-  const totalCount = ideas.length;
+  // ── Mutations ──────────────────────────────────────────────────
 
-  async function onAdd(columnId: KanbanStatus, title: string) {
+  async function handleAddIdea(title: string) {
     setBannerError(null);
-    const sameColumn = ideas.filter((i) => i.status === columnId);
-    const maxPos = sameColumn.reduce(
-      (m, i) => (i.position != null && i.position > m ? i.position : m),
-      0,
-    );
     try {
-      await createIdea({
+      await api.post("/ideas", {
         title,
-        status: columnId,
-        position: maxPos + POSITION_STEP,
+        status: "new",
+        source_type: "manual",
       });
     } catch (e) {
-      setBannerError(e instanceof Error ? e.message : "Failed to add idea");
-      throw e; // let AddCardInline display the error inline too
+      const msg = e instanceof ApiError ? e.message : "Failed to add idea";
+      setBannerError(msg);
+      throw e;
+    } finally {
+      await refreshKanban();
     }
   }
 
-  async function onMove(e: KanbanMoveEvent) {
-    setBannerError(null);
-    // Optimistic update so UI feels instant.
-    patchLocal(e.cardId, {
-      status: e.toColumnId,
-      position: e.newPosition,
-    });
-    try {
-      await updateIdea(e.cardId, {
-        status: e.toColumnId,
-        position: e.newPosition,
-      });
-    } catch (err) {
-      setBannerError(err instanceof Error ? err.message : "Failed to move card");
-      await refresh();
-    }
-  }
-
-  function onCardClick(cardId: string) {
-    setSelectedId(cardId);
-    setSheetOpen(true);
-  }
-
-  const selectedIdea: Idea | null = useMemo(
-    () => (selectedId ? ideas.find((i) => i.id === selectedId) ?? null : null),
-    [ideas, selectedId],
-  );
-
-  async function onSheetSave(id: string, patch: Partial<Idea>) {
-    await updateIdea(id, patch);
-  }
-
-  async function onSheetDelete(id: string) {
-    await deleteIdea(id);
-    setSelectedId(null);
-  }
-
-  async function onBoardCardDelete(id: string) {
+  async function handleMoveIdea(cardId: string, newPosition: number) {
     setBannerError(null);
     try {
-      await deleteIdea(id);
-      if (selectedId === id) {
-        setSelectedId(null);
-        setSheetOpen(false);
-      }
+      await api.patch(`/ideas/${cardId}`, { position: newPosition });
     } catch (e) {
-      setBannerError(e instanceof Error ? e.message : "Failed to delete card");
+      setBannerError(e instanceof ApiError ? e.message : "Failed to move idea");
+    } finally {
+      await refreshKanban();
     }
   }
+
+  async function handleArchiveIdea(id: string) {
+    setBannerError(null);
+    try {
+      await api.patch(`/ideas/${id}`, { archived: true } as any);
+    } catch (e) {
+      setBannerError(e instanceof ApiError ? e.message : "Failed to archive idea");
+    }
+    await refreshKanban();
+  }
+
+  async function handleArchiveSession(sessionId: string) {
+    setBannerError(null);
+    try {
+      await api.patch(`/studio-sessions/${sessionId}`, { archived: true } as any);
+    } catch (e) {
+      setBannerError(
+        e instanceof ApiError ? e.message : "Failed to archive session",
+      );
+    }
+    await refreshKanban();
+  }
+
+  function handleOpenPublishedDetail(entry: PublishedEntry) {
+    setSelectedVideo(entry);
+    setPanelOpen(true);
+  }
+
+  async function handleSaveSuggestion(ideas: WeeklySuggestion["ideas"]) {
+    return saveSuggestion(ideas);
+  }
+
+  // ── Render ──────────────────────────────────────────────────────
+
+  const totalCount =
+    (kanbanData?.ideas.length ?? 0) +
+    (kanbanData?.in_progress.length ?? 0) +
+    (kanbanData?.ready.length ?? 0) +
+    (kanbanData?.published.length ?? 0);
 
   return (
     <Shell>
@@ -217,7 +220,7 @@ export default function VideosPage() {
         <PageHeader
           eyebrow="§ /videos · pipeline"
           title="My videos"
-          description="Everything in flight — from idea to published. Drag cards across columns to advance them."
+          description="Everything in flight — from idea to published."
           right={
             <Button onClick={() => navigate("/make")}>
               <Plus size={13} weight="bold" />
@@ -226,47 +229,83 @@ export default function VideosPage() {
           }
         />
 
-        <Toolbar
-          ref={searchRef}
-          search={search}
-          onSearchChange={setSearch}
-          statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
-          columns={KANBAN_COLUMNS}
-          totalCount={totalCount}
+        {/* Weekly suggestion block */}
+        <WeeklySuggestionBlock
+          suggestion={suggestion}
+          loading={suggestionLoading}
+          onSave={handleSaveSuggestion}
+          onDismiss={dismissSuggestion}
+          onRefresh={refreshSuggestion}
         />
 
-        {error || bannerError ? (
+        {/* Channel summary strip */}
+        <ChannelSummaryStrip summary={kanbanData?.channel_summary ?? null} />
+
+        {/* Search bar */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-[10.5px] text-mist uppercase tracking-[0.15em]">
+              All {totalCount}
+            </span>
+          </div>
+          <label className="relative flex items-center">
+            <MagnifyingGlass
+              size={13}
+              weight="bold"
+              className="absolute left-2.5 text-mist pointer-events-none"
+            />
+            <input
+              ref={searchRef}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search all columns…  (press /)"
+              className="h-8 w-[260px] pl-7 pr-3 rounded-md bg-surface-input text-[12.5px] text-white placeholder:text-mist border border-transparent focus:border-cinnabar focus:outline-none transition-colors duration-150"
+            />
+          </label>
+        </div>
+
+        {/* Error */}
+        {kanbanError || bannerError ? (
           <ErrorBanner
-            message={error || bannerError || ""}
+            message={kanbanError || bannerError || ""}
             onDismiss={() => setBannerError(null)}
           />
         ) : null}
 
-        {loading ? (
-          <p className="py-10 text-center text-[12px] text-mist font-mono">
-            loading…
-          </p>
+        {/* Kanban or loading */}
+        {kanbanLoading || !filteredData ? (
+          <LoadingSkeleton />
         ) : (
-          <KanbanBoard
-            columns={visibleColumns}
-            cards={cards}
-            onMove={onMove}
-            onAdd={onAdd}
-            onCardClick={onCardClick}
-            onCardDelete={onBoardCardDelete}
-            emptyCopyByColumn={EMPTY_COPY}
+          <MyKanbanBoard
+            kanbanData={filteredData}
+            onAddIdea={handleAddIdea}
+            onMoveIdea={handleMoveIdea}
+            onArchiveIdea={handleArchiveIdea}
+            onArchiveSession={handleArchiveSession}
+            onOpenPublishedDetail={handleOpenPublishedDetail}
+            onContextMenu={handleContextMenu}
           />
         )}
       </PageContainer>
 
-      <CardDetailSheet
-        idea={selectedIdea}
-        open={sheetOpen && !!selectedIdea}
-        onClose={() => setSheetOpen(false)}
-        onSave={onSheetSave}
-        onDelete={onSheetDelete}
+      {/* Performance detail panel */}
+      <PerformanceDetailPanel
+        video={selectedVideo}
+        open={panelOpen}
+        onClose={() => {
+          setPanelOpen(false);
+          setSelectedVideo(null);
+        }}
       />
+
+      {/* Context menu */}
+      {contextMenu ? (
+        <ContextMenu
+          items={contextMenu.items}
+          position={{ x: contextMenu.x, y: contextMenu.y }}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
     </Shell>
   );
 }

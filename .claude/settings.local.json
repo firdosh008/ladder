@@ -10,5 +10,9 @@
       "Bash(curl -s \"http://localhost:5173/src/index.css\")",
       "Bash(curl -s \"http://localhost:5173/\")"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "playwright"
+  ],
+  "enableAllProjectMcpServers": true
 }

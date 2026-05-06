@@ -11,6 +11,7 @@ from app.routes.admin import router as admin_router
 from app.routes.brands import router as brands_router
 from app.routes.diagram import router as diagram_router
 from app.routes.settings import router as settings_router
+from app.routes.videos import router as videos_router
 
 log = logging.getLogger(__name__)
 
@@ -66,3 +67,4 @@ app.include_router(knowledge.router)
 app.include_router(brands_router)
 app.include_router(settings_router)
 app.include_router(admin_router)
+app.include_router(videos_router)
