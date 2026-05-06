@@ -1,6 +1,7 @@
+import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from jose import jwt
 from pydantic import BaseModel
 
@@ -24,6 +25,7 @@ class MeResponse(BaseModel):
     email: str | None = None
     profile: dict | None = None
     onboarded: bool
+    is_admin: bool = False
 
 
 class OnboardResponse(BaseModel):
@@ -86,16 +88,32 @@ async def me(ctx: tuple = Depends(current_user)) -> MeResponse:
                 status_code=400, detail=f"Supabase error (bootstrap): {e}"
             ) from e
 
+    # Check is_admin from public.users
+    is_admin = False
+    try:
+        user_row = (
+            await client.from_("users")
+            .select("is_admin")
+            .eq("id", str(user_id))
+            .maybe_single()
+            .execute()
+        )
+        user_data = getattr(user_row, "data", None) if user_row is not None else None
+        is_admin = bool(user_data and user_data.get("is_admin"))
+    except Exception:
+        pass  # Non-critical — default to false
+
     return MeResponse(
         user_id=str(user_id),
         email=email,
         profile=profile_data,
         onboarded=bool(profile_data and profile_data.get("onboarded_at")),
+        is_admin=is_admin,
     )
 
 
 class ProfileUpdate(BaseModel):
-    """Partial profile fields for inline edit (Library > What I Know)."""
+    """Partial profile fields for inline edit (Library > What I Know) and Settings."""
 
     display_name: str | None = None
     positioning: str | None = None
@@ -103,6 +121,8 @@ class ProfileUpdate(BaseModel):
     voice: str | None = None
     creators_followed: list[str] | None = None
     things_to_avoid: str | None = None
+    theme: str | None = None
+    font_scale: str | None = None
 
 
 @router.patch("/profile", response_model=OnboardResponse)
@@ -171,3 +191,64 @@ async def onboard(
         raise HTTPException(status_code=400, detail=f"Supabase error: {e}") from e
 
     return OnboardResponse(profile=result.data[0] if result.data else None)
+
+
+@router.post("/avatar")
+async def upload_avatar(
+    file: UploadFile, ctx: tuple = Depends(current_user)
+) -> dict:
+    """Upload a profile avatar to Supabase Storage."""
+    user_id, token = ctx
+
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400, detail="Only image files are accepted"
+        )
+
+    raw = await file.read()
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Avatar must be under 5 MB")
+
+    ext = (file.filename or "avatar.png").rsplit(".", 1)[-1]
+    if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
+        ext = "png"
+    storage_path = f"{user_id}/avatar.{ext}"
+
+    # Upload using service client (bypasses RLS on storage)
+    admin_client = await service_client()
+    try:
+        result = (
+            await admin_client.storage
+            .from_("avatars")
+            .upload(
+                storage_path, raw,
+                {"content-type": content_type, "upsert": "true"},
+            )
+        )
+        # supabase-py 2.x returns the dict directly, 1.x wrapped it
+        if hasattr(result, "path"):
+            path = result.path or storage_path
+        else:
+            # result is a Response object or dict
+            path = storage_path
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, detail=f"Storage upload failed: {e}"
+        ) from e
+
+    # Update user_profiles
+    client = await user_client(token)
+    await (
+        client.from_("user_profiles")
+        .update({"avatar_storage_path": path})
+        .eq("user_id", str(user_id))
+        .execute()
+    )
+
+    # Build public URL
+    public_url = (
+        f"{admin_client.supabase_url}/storage/v1/object/public/avatars/{path}"
+    )
+
+    return {"avatar_storage_path": path, "avatar_url": public_url}

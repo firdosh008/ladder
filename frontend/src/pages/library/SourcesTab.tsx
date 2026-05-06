@@ -117,11 +117,13 @@ function SourcesList() {
   const [senderEmail, setSenderEmail] = useState("");
   const [autoExtract, setAutoExtract] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   async function handleAdd() {
     if (!name.trim()) return;
     setSaving(true);
+    setSaveError(null);
     try {
       await createSource({
         name: name.trim(),
@@ -132,8 +134,11 @@ function SourcesList() {
       setName("");
       setSenderEmail("");
       setShowForm(false);
-    } catch {
-      // error surfaced via hook
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : "Failed to create source";
+      setSaveError(msg);
+      console.error("[SourcesTab] createSource failed:", e);
     } finally {
       setSaving(false);
     }
@@ -225,6 +230,11 @@ function SourcesList() {
               Auto-extract ideas from incoming emails (recommended)
             </span>
           </div>
+          {saveError && (
+            <div className="rounded-md bg-sienna/[0.08] border border-sienna/20 px-3 py-2">
+              <p className="text-[12px] text-sienna">{saveError}</p>
+            </div>
+          )}
           <div className="flex items-center gap-2 pt-1">
             <button
               onClick={handleAdd}
@@ -238,6 +248,7 @@ function SourcesList() {
                 setShowForm(false);
                 setName("");
                 setSenderEmail("");
+                setSaveError(null);
               }}
               className="h-8 px-3 rounded-md text-[12.5px] text-mist hover:text-white transition-colors"
             >

@@ -14,6 +14,16 @@ export type Profile = {
   creators_followed: string[] | null;
   things_to_avoid: string | null;
   onboarded_at: string | null;
+  avatar_storage_path: string | null;
+  theme: string | null;
+  font_scale: string | null;
+  youtube_connected: boolean | null;
+  youtube_channel_name: string | null;
+  youtube_subscriber_count: number | null;
+  youtube_last_sync: string | null;
+  notion_token: string | null;
+  gamma_api_key: string | null;
+  nano_banana_api_key: string | null;
 };
 
 type AuthState = {
@@ -21,6 +31,7 @@ type AuthState = {
   user: User | null;
   profile: Profile | null;
   onboarded: boolean;
+  is_admin: boolean;
   loading: boolean;
   recovering: boolean;
   refreshProfile: () => Promise<void>;
@@ -38,14 +49,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [onboarded, setOnboarded] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [recovering, setRecovering] = useState(false);
 
   const refreshProfile = useCallback(async () => {
     try {
-      const r = await api.get<{ profile: Profile | null; onboarded: boolean }>("/auth/me");
+      const r = await api.get<{ profile: Profile | null; onboarded: boolean; is_admin: boolean }>("/auth/me");
       setProfile(r.profile);
       setOnboarded(r.onboarded);
+      setIsAdmin(r.is_admin);
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 404)) {
         setProfile(null);
@@ -93,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: session?.user ?? null,
     profile,
     onboarded,
+    is_admin: isAdmin,
     loading,
     recovering,
     refreshProfile,

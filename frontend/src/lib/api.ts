@@ -15,15 +15,17 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, isFormData?: boolean): Promise<T> {
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     ...(await authHeader()),
   };
+  if (!isFormData) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: isFormData ? (body as FormData) : (body !== undefined ? JSON.stringify(body) : undefined),
   });
   const text = await res.text();
   const parsed = text ? safeJson(text) : null;
@@ -41,8 +43,9 @@ function safeJson(s: string): unknown {
 }
 
 export const api = {
-  get:    <T>(path: string)                => request<T>("GET",    path),
-  post:   <T>(path: string, b?: unknown)   => request<T>("POST",   path, b),
-  patch:  <T>(path: string, b?: unknown)   => request<T>("PATCH",  path, b),
-  delete: <T>(path: string)                => request<T>("DELETE", path),
+  get:    <T>(path: string)                      => request<T>("GET",    path),
+  post:   <T>(path: string, b?: unknown, fd?: boolean) => request<T>("POST",   path, b, fd),
+  patch:  <T>(path: string, b?: unknown)         => request<T>("PATCH",  path, b),
+  put:    <T>(path: string, b?: unknown)         => request<T>("PUT",    path, b),
+  delete: <T>(path: string)                      => request<T>("DELETE", path),
 };

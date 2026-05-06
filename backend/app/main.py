@@ -7,7 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routes import agents, auth, health, ideas, knowledge, studio_sessions
+from app.routes.admin import router as admin_router
+from app.routes.brands import router as brands_router
 from app.routes.diagram import router as diagram_router
+from app.routes.settings import router as settings_router
 
 log = logging.getLogger(__name__)
 
@@ -60,3 +63,6 @@ app.include_router(studio_sessions.router)
 app.include_router(agents.router)
 app.include_router(diagram_router)
 app.include_router(knowledge.router)
+app.include_router(brands_router)
+app.include_router(settings_router)
+app.include_router(admin_router)

@@ -90,6 +90,16 @@ export default function OnboardingPage() {
           creators_followed: [creator],
           things_to_avoid: null,
           onboarded_at: new Date().toISOString(),
+          avatar_storage_path: null,
+          theme: null,
+          font_scale: null,
+          youtube_connected: null,
+          youtube_channel_name: null,
+          youtube_subscriber_count: null,
+          youtube_last_sync: null,
+          notion_token: null,
+          gamma_api_key: null,
+          nano_banana_api_key: null,
         };
       flushSync(() => {
         setProfileAndOnboarded(freshProfile, true);

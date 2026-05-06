@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Landing from "./components/Landing";
 import AuthPage from "./pages/Auth";
@@ -11,9 +12,24 @@ import SettingsPage from "./pages/Settings";
 import StudioPage from "./pages/Studio";
 import { AuthProvider, RequireAuth } from "./lib/auth";
 
+/** Apply theme + font-scale from localStorage before profile loads. */
+function ThemeBootstrap() {
+  useEffect(() => {
+    const theme = localStorage.getItem("theme") ?? "dark";
+    document.documentElement.classList.toggle("light", theme === "light");
+    document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
+
+    const fs = localStorage.getItem("font-scale") ?? "default";
+    const scales: Record<string, string> = { compact: "0.875", default: "1.0", comfortable: "1.125" };
+    document.documentElement.style.setProperty("--font-scale", scales[fs] ?? "1.0");
+  }, []);
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <ThemeBootstrap />
       <AuthProvider>
         <Routes>
           <Route path="/" element={<Landing />} />
