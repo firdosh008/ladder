@@ -1049,6 +1049,21 @@ async def scene_stream(
             await websocket.close(code=_CLOSE_SERVER_ERROR)
         return
 
+    # Mark the session as completed — a scene skeleton exists, so the
+    # session is now "ready to record".  Fire-and-forget; the kanban
+    # reloads from the REST endpoint and will place it in the correct
+    # column regardless of whether this write arrives first.
+    try:
+        client = await user_client(jwt)
+        await (
+            client.from_("studio_sessions")
+            .update({"status": "completed"})
+            .eq("id", session_id)
+            .execute()
+        )
+    except Exception:
+        pass
+
     await _safe_send_json(
         websocket,
         {

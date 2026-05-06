@@ -130,11 +130,15 @@ async def _fetch_in_progress(client, user_id: str) -> list[dict[str, Any]]:
 
 
 async def _fetch_ready(client, user_id: str) -> list[dict[str, Any]]:
-    """Sessions with status='completed' that have an excalidraw artifact."""
+    """Sessions that have an excalidraw artifact — completed or active.
+
+    Includes ``status='active'`` sessions for backward compatibility with
+    sessions created before the scene crew started marking completion.
+    """
     resp = await (
         client.from_("studio_sessions")
         .select("*, ideas!inner(title, idea_type)")
-        .eq("status", "completed")
+        .in_("status", ["completed", "active"])
         .eq("archived", False)
         .order("updated_at", desc=True)
         .limit(200)
