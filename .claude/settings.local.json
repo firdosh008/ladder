@@ -8,11 +8,15 @@
       "Bash(curl -s http://localhost:5173/settings?tab=appearance)",
       "Bash(grep -oP 'text-white\\\\{[^}]*\\\\}|\\\\.text-white[^,{]*color:[^}]*' \"C:\\\\Users\\\\ahmad\\\\.claude\\\\projects\\\\D--Development-Zero-ladder-ladder\\\\78d8a116-79f4-4ecb-ad30-37beab28c74c\\\\tool-results\\\\bbwctwr20.txt\")",
       "Bash(curl -s \"http://localhost:5173/src/index.css\")",
-      "Bash(curl -s \"http://localhost:5173/\")"
+      "Bash(curl -s \"http://localhost:5173/\")",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_console_messages",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -UseBasicParsing -TimeoutSec 2; Write-Output \"$\\($r.StatusCode\\): $\\($r.Content\\)\" } catch { Write-Output \"Backend not reachable: $_\" })"
     ]
   },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "playwright"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

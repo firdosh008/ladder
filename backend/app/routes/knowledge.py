@@ -24,6 +24,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from jose import jwt
 from pydantic import BaseModel, Field
 
 from app.deps import user_client
@@ -409,11 +410,22 @@ async def list_sources(
     return SourcesListResponse(sources=sources)
 
 
+def _derive_alias(email: str | None, user_id: str) -> str:
+    """Derive a forwarding alias from email or user_id."""
+    if email and "@" in email:
+        local = email.split("@")[0].lower()
+        local = "".join(c for c in local if c.isalnum() or c in "._-")
+        if local:
+            return f"{local}@ladder.so"
+    short_id = user_id.replace("-", "")[:8]
+    return f"founder-{short_id}@ladder.so"
+
+
 @router.post("/sources", response_model=SourceResponse, status_code=201)
 async def create_source(
     payload: SourceCreate, ctx: tuple = Depends(current_user)
 ) -> SourceResponse:
-    """Add a new content source."""
+    """Add a new content source. Provisions forwarding alias on first source."""
     user_id, token = ctx
     client = await user_client(token)
 
@@ -428,6 +440,22 @@ async def create_source(
 
     if not result.data:
         raise HTTPException(status_code=400, detail="Insert returned no row")
+
+    # Provision forwarding alias on first newsletter-source addition.
+    try:
+        profile = await client.from_("user_profiles").select("forwarding_alias").eq("user_id", str(user_id)).maybe_single().execute()
+    except Exception:
+        profile = None
+
+    alias = None
+    if profile and profile.data and not profile.data.get("forwarding_alias"):
+        claims = jwt.get_unverified_claims(token)
+        email = claims.get("email")
+        alias = _derive_alias(email, str(user_id))
+        try:
+            await client.from_("user_profiles").update({"forwarding_alias": alias}).eq("user_id", str(user_id)).execute()
+        except Exception:
+            pass  # Non-critical — alias card will show next profile refresh
 
     return SourceResponse(
         id=result.data[0]["id"],
