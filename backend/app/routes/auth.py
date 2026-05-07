@@ -18,6 +18,7 @@ class OnboardPayload(BaseModel):
     voice: str | None = None
     creators_followed: list[str] | None = None
     things_to_avoid: str | None = None
+    linkedin_url: str | None = None
 
 
 class MeResponse(BaseModel):
@@ -121,6 +122,7 @@ class ProfileUpdate(BaseModel):
     voice: str | None = None
     creators_followed: list[str] | None = None
     things_to_avoid: str | None = None
+    linkedin_url: str | None = None
     theme: str | None = None
     font_scale: str | None = None
 

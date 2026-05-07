@@ -1089,6 +1089,11 @@ function IntegrationsTab() {
   const [gammaBusy, setGammaBusy] = useState(false);
   const [nbKey, setNbKey] = useState("");
   const [nbBusy, setNbBusy] = useState(false);
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [linkedinBusy, setLinkedinBusy] = useState(false);
+  const [linkedinResult, setLinkedinResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [linkedinManualText, setLinkedinManualText] = useState("");
+  const [linkedinManualBusy, setLinkedinManualBusy] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
@@ -1326,6 +1331,120 @@ function IntegrationsTab() {
             </Button>
           ) : null}
         </div>
+      </div>
+
+      {/* LinkedIn */}
+      <div className="rounded-xl border border-hairline bg-surface p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-[14px] text-white font-semibold">LinkedIn</h3>
+            <p className="text-[12px] text-mist mt-0.5">Your LinkedIn profile details feed into research and idea generation via the knowledge graph.</p>
+          </div>
+          {profile?.linkedin_url ? (
+            <Badge tone="neutral"><span className="h-1.5 w-1.5 rounded-full bg-cinnabar" />connected</Badge>
+          ) : (
+            <Badge tone="muted">not connected</Badge>
+          )}
+        </div>
+
+        {profile?.linkedin_url ? (
+          <div className="space-y-1.5 mb-3">
+            <p className="text-[13px] text-white truncate">{profile.linkedin_url}</p>
+            {profile?.linkedin_scraped_at ? (
+              <p className="text-[12px] text-mist font-mono">Scraped: {new Date(profile.linkedin_scraped_at).toLocaleString()}</p>
+            ) : (
+              <p className="text-[12px] text-amber-400">Profile not yet scraped — it may be private. Paste your profile text below.</p>
+            )}
+            {linkedinResult ? (
+              <p className={cn("text-[12px]", linkedinResult.ok ? "text-green-400" : "text-sienna")}>{linkedinResult.text}</p>
+            ) : null}
+
+            {/* Manual paste fallback for private profiles */}
+            {!profile?.linkedin_scraped_at ? (
+              <div className="pt-2 space-y-2">
+                <FieldLabel htmlFor="linkedin-manual">Or paste your LinkedIn profile text</FieldLabel>
+                <textarea
+                  id="linkedin-manual"
+                  value={linkedinManualText}
+                  onChange={(e) => setLinkedinManualText(e.target.value)}
+                  placeholder="Paste your LinkedIn About, Experience, Education, etc…"
+                  rows={4}
+                  className="w-full rounded-md border border-hairline bg-card text-[13px] text-white px-3 py-2 placeholder:text-mist/50 focus:outline-none focus:border-cinnabar/50 resize-none"
+                />
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    setLinkedinManualBusy(true);
+                    try {
+                      const res = await api.post("/settings/integrations/linkedin/manual", { token: linkedinManualText });
+                      if (res.ok) {
+                        setLinkedinManualText("");
+                        await refreshProfile();
+                        setLinkedinResult({ ok: true, text: `Profile text stored — ${(res as any).chunks_created || "?"} knowledge chunks created.` });
+                      } else {
+                        setLinkedinResult({ ok: false, text: (res as any).error || "Failed." });
+                      }
+                    } catch (err) {
+                      setLinkedinResult({ ok: false, text: err instanceof ApiError ? err.message : "Failed." });
+                    } finally {
+                      setLinkedinManualBusy(false);
+                    }
+                  }}
+                  disabled={linkedinManualBusy || !linkedinManualText.trim()}
+                >
+                  {linkedinManualBusy ? "Saving…" : "Save Profile Text"}
+                </Button>
+              </div>
+            ) : null}
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => disconnect("linkedin")}
+              disabled={disconnecting === "linkedin"}
+              className="text-sienna hover:text-sienna mt-2"
+            >
+              {disconnecting === "linkedin" ? "Disconnecting…" : "Disconnect"}
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <FieldLabel htmlFor="linkedin-url">LinkedIn profile URL</FieldLabel>
+              <Input
+                id="linkedin-url"
+                value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+                placeholder="https://www.linkedin.com/in/your-profile/"
+              />
+            </div>
+            <Button
+              size="sm"
+              onClick={async () => {
+                setLinkedinBusy(true);
+                setLinkedinResult(null);
+                try {
+                  const res = await api.post("/settings/integrations/linkedin", { token: linkedinUrl });
+                  setLinkedinUrl("");
+                  await refreshProfile();
+                  if (res.ok === false) {
+                    setLinkedinResult({ ok: false, text: (res as any).error || "Scraping failed." });
+                  } else {
+                    const created = (res as any)?.chunks_created;
+                    setLinkedinResult({ ok: true, text: created ? `Profile scraped and stored — ${created} knowledge chunks created.` : "Profile connected." });
+                  }
+                } catch (err) {
+                  setLinkedinResult({ ok: false, text: err instanceof ApiError ? err.message : "Failed to scrape LinkedIn profile." });
+                } finally {
+                  setLinkedinBusy(false);
+                }
+              }}
+              disabled={linkedinBusy || !linkedinUrl.trim()}
+            >
+              <FloppyDisk size={12} />{linkedinBusy ? "Scraping…" : "Connect LinkedIn"}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

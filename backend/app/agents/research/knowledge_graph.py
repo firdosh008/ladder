@@ -92,5 +92,6 @@ def _source_label(source_type: str) -> str:
         "yt_transcript": "transcript",
         "skill_file": "file",
         "extract": "extract",
+        "linkedin": "linkedin",
     }
     return labels.get(source_type, source_type)

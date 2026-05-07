@@ -56,6 +56,12 @@ def _profile_context(profile: UserProfileSlice) -> str:
         )
     if profile.things_to_avoid:
         parts.append(f"Things to avoid: {profile.things_to_avoid}")
+    if profile.linkedin_url:
+        parts.append(
+            f"Founder's LinkedIn: {profile.linkedin_url} "
+            "(full profile details are stored in the knowledge graph — "
+            "cross-reference any linkedin-sourced chunks when they appear)"
+        )
     return "\n".join(parts)
 
 

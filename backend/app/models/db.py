@@ -27,6 +27,7 @@ class UserProfileSlice(BaseModel):
     voice: str | None = None
     creators_followed: list[str] = Field(default_factory=list)
     things_to_avoid: str | None = None
+    linkedin_url: str | None = None
 
 
 class IdeaSlice(BaseModel):

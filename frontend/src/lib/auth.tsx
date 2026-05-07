@@ -24,6 +24,8 @@ export type Profile = {
   notion_token: string | null;
   gamma_api_key: string | null;
   nano_banana_api_key: string | null;
+  linkedin_url: string | null;
+  linkedin_scraped_at: string | null;
 };
 
 type AuthState = {

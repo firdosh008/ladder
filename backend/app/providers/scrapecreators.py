@@ -419,3 +419,67 @@ async def instagram_reels_search(
             )
         )
     return out
+
+
+# ─── LinkedIn ────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class LinkedInProfile:
+    """Structured data returned by /v1/linkedin/profile."""
+
+    name: str | None
+    image: str | None
+    location: str | None
+    followers: int | None
+    about: str | None
+    experience: list[dict]  # {name, url, location, role_description}
+    education: list[dict]   # {name, url, startDate, endDate}
+    articles: list[dict]    # {headline, author, datePublished, articleBody}
+    publications: list[dict]  # {name, url}
+    projects: list[dict]     # {name, url, dateRange, description, contributors}
+    recommendations: list[dict]  # {name, link, image, text}
+    recent_posts: list[dict]    # {title, activityType, link, image}
+    similar_profiles: list[dict]  # {name, link, image}
+
+
+async def linkedin_profile(url: str) -> LinkedInProfile | None:
+    """Fetch a public LinkedIn profile via ScrapeCreators.
+
+    Returns None when the profile can't be fetched (private, not found, etc.).
+    """
+    try:
+        data = await _get("/v1/linkedin/profile", {"url": url})
+    except Exception:
+        logger.exception("LinkedIn profile fetch failed for %s", url)
+        return None
+
+    if not data.get("success"):
+        logger.warning("LinkedIn profile fetch unsuccessful for %s: %s", url, data)
+        return None
+
+    def _list(key: str) -> list[dict]:
+        items = data.get(key) or []
+        return items if isinstance(items, list) else []
+
+    followers = data.get("followers")
+    try:
+        followers = int(followers) if followers else None
+    except (TypeError, ValueError):
+        followers = None
+
+    return LinkedInProfile(
+        name=data.get("name"),
+        image=data.get("image"),
+        location=data.get("location"),
+        followers=followers,
+        about=data.get("about"),
+        experience=_list("experience"),
+        education=_list("education"),
+        articles=_list("articles"),
+        publications=_list("publications"),
+        projects=_list("projects"),
+        recommendations=_list("recommendations"),
+        recent_posts=_list("recentPosts"),
+        similar_profiles=_list("similarProfiles"),
+    )

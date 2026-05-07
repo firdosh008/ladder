@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.deps import service_client, user_client
 from app.middleware.auth import current_user
+from app.services.linkedin import scrape_and_seed, seed_from_text
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -468,6 +469,33 @@ async def save_youtube_creds(
     return {"ok": True, "message": "YouTube credentials saved. OAuth flow not yet implemented."}
 
 
+@router.post("/integrations/linkedin")
+async def save_linkedin(
+    payload: IntegrationToken, ctx: tuple = Depends(current_user)
+) -> dict:
+    user_id, token = ctx
+    url = payload.token.strip()
+
+    client = await user_client(token)
+    await (
+        client.from_("user_profiles")
+        .update({"linkedin_url": url})
+        .eq("user_id", str(user_id))
+        .execute()
+    )
+
+    result = await scrape_and_seed(user_id, url, token)
+    return result
+
+
+@router.post("/integrations/linkedin/manual")
+async def save_linkedin_manual(
+    payload: IntegrationToken, ctx: tuple = Depends(current_user)
+) -> dict:
+    user_id, token = ctx
+    return await seed_from_text(user_id, payload.token, token)
+
+
 @router.delete("/integrations/{provider}", status_code=204)
 async def disconnect_integration(
     provider: str, ctx: tuple = Depends(current_user)
@@ -490,6 +518,8 @@ async def disconnect_integration(
         patch = {"gamma_api_key": None}
     elif provider == "nano-banana":
         patch = {"nano_banana_api_key": None}
+    elif provider == "linkedin":
+        patch = {"linkedin_url": None, "linkedin_scraped_at": None}
     else:
         raise HTTPException(status_code=400, detail="Unknown integration provider")
 
@@ -510,7 +540,7 @@ async def list_integrations(ctx: tuple = Depends(current_user)) -> list[dict]:
         .select(
             "youtube_connected,youtube_channel_name,youtube_subscriber_count,"
             "youtube_last_sync,youtube_client_id,notion_token,gamma_api_key,"
-            "nano_banana_api_key"
+            "nano_banana_api_key,linkedin_url,linkedin_scraped_at"
         )
         .eq("user_id", str(user_id))
         .maybe_single()
@@ -538,5 +568,11 @@ async def list_integrations(ctx: tuple = Depends(current_user)) -> list[dict]:
         {
             "name": "NanoBanana Pro",
             "connected": bool(row.get("nano_banana_api_key")),
+        },
+        {
+            "name": "LinkedIn",
+            "connected": bool(row.get("linkedin_url")),
+            "url": row.get("linkedin_url"),
+            "scraped_at": row.get("linkedin_scraped_at"),
         },
     ]
