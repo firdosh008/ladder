@@ -1,0 +1,872 @@
+[
+  {
+    "id": "ev-001",
+    "query": "Should AI agents be evaluated differently than traditional SaaS for sales workflow automation?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "B2B SaaS founder with 3 years in sales-tech, 12k LinkedIn followers, audience of sales ops managers",
+      "audience": "Sales operations leaders evaluating AI tooling",
+      "knowledge_graph": {
+        "expertise_areas": ["sales automation", "SaaS metrics", "buyer enablement"],
+        "prior_content": ["CRM selection guide", "sales stack consolidation post"],
+        "gaps": ["AI agent evaluation frameworks"]
+      },
+      "constraints": "Audience is skeptical of AI hype; need practical evaluation criteria not buzzwords"
+    },
+    "expected_thesis": "AI agents require workflow-specific evaluation frameworks that measure decision accuracy and escalation rates, not just traditional SaaS metrics like uptime and feature breadth.",
+    "expected_supporting_points": [
+      "decision accuracy metrics",
+      "escalation rate benchmarks",
+      "workflow-specific evaluation",
+      "integration depth measurement",
+      "human-in-the-loop failover"
+    ],
+    "topics_to_avoid": [
+      "generic AI tools listicle",
+      "prompt engineering basics",
+      "AGI safety debates"
+    ]
+  },
+  {
+    "id": "ev-002",
+    "query": "What are the real bottlenecks preventing RAG systems from being trusted in high-stakes enterprise settings?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "ML engineer turned devtools founder, audience of senior backend engineers and CTOs",
+      "audience": "CTOs and engineering leads evaluating RAG for compliance-heavy industries",
+      "knowledge_graph": {
+        "expertise_areas": ["LLM infrastructure", "vector databases", "search systems"],
+        "prior_content": ["chunking strategies deep-dive", "embedding model comparison"],
+        "gaps": ["RAG failure modes in production"]
+      },
+      "constraints": "Audience works in finance/healthcare — regulatory compliance is non-negotiable"
+    },
+    "expected_thesis": "RAG systems fail enterprise trust not because of retrieval quality but because of three systemic gaps: citation provenance chains, real-time knowledge staleness detection, and auditable reasoning trails.",
+    "expected_supporting_points": [
+      "citation provenance chains",
+      "knowledge staleness detection",
+      "auditable reasoning trails",
+      "hallucination rate quantification",
+      "retrieval precision at scale"
+    ],
+    "topics_to_avoid": [
+      "vector database vendor comparisons",
+      "basic RAG architecture tutorials",
+      "ChatGPT plugin ecosystem"
+    ]
+  },
+  {
+    "id": "ev-003",
+    "query": "Fine-tuning vs prompt engineering: which approach actually reduces cost and latency for enterprise chatbots handling 100k+ conversations per day?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "AI infrastructure consultant, audience of engineering managers at mid-market SaaS companies",
+      "audience": "Engineering managers who have shipped LLM features but are hitting cost ceilings",
+      "knowledge_graph": {
+        "expertise_areas": ["LLM deployment", "cost optimization", "API design"],
+        "prior_content": ["API latency optimization guide", "model routing strategies"],
+        "gaps": ["fine-tuning cost-benefit analysis at scale"]
+      },
+      "constraints": "Must address total cost of ownership including data prep, maintenance, and model drift"
+    },
+    "expected_thesis": "Fine-tuning only beats prompt engineering on cost when conversation volume exceeds 50k/day and task specificity is high; below that threshold, dynamic few-shot prompting with cached prefixes is cheaper and easier to maintain.",
+    "expected_supporting_points": [
+      "cost-per-token comparison with real volumes",
+      "prompt caching economics",
+      "fine-tuning maintenance overhead",
+      "model drift detection",
+      "task specificity threshold"
+    ],
+    "topics_to_avoid": [
+      "GPT vs Claude flamewars",
+      "open-source vs proprietary model debates",
+      "fine-tuning tutorial walkthroughs"
+    ]
+  },
+  {
+    "id": "ev-004",
+    "query": "How will the EU AI Act's tiered risk classification impact open-source foundation model releases in 2026?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Policy analyst and open-source advocate, audience of AI researchers and startup founders in EU",
+      "audience": "Open-source AI maintainers and startup founders worried about regulatory exposure",
+      "knowledge_graph": {
+        "expertise_areas": ["AI policy", "EU regulation", "open-source licensing"],
+        "prior_content": ["AI Act summary for startups", "open-source compliance checklist"],
+        "gaps": ["foundation model specific obligations under the Act"]
+      },
+      "constraints": "EU audience; must reference specific Act articles and practical compliance paths"
+    },
+    "expected_thesis": "The EU AI Act's tiered approach creates a compliance cliff for open-source foundation models: models above 10^25 FLOP training compute face systemic-risk obligations that most open-source projects cannot resource, forcing a fork between compliant and non-compliant distribution.",
+    "expected_supporting_points": [
+      "systemic risk tier thresholds",
+      "open-source exemption limitations",
+      "downstream deployer obligations",
+      "compliance cost estimates",
+      "regulatory sandbox pathways"
+    ],
+    "topics_to_avoid": [
+      "US vs EU regulatory superiority arguments",
+      "copyright training data debates",
+      "general GDPR overview"
+    ]
+  },
+  {
+    "id": "ev-005",
+    "query": "Are carbon taxes effective at reducing industrial emissions in developing economies without stalling GDP growth?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Environmental economist, audience of policy professionals and impact investors in Southeast Asia",
+      "audience": "Policy advisors and development finance professionals",
+      "knowledge_graph": {
+        "expertise_areas": ["carbon pricing", "development economics", "climate finance"],
+        "prior_content": ["South Africa carbon tax case study", "border carbon adjustment explainer"],
+        "gaps": ["developing economy specific impact data"]
+      },
+      "constraints": "Must include empirical evidence from at least 3 developing economies; avoid theoretical models only"
+    },
+    "expected_thesis": "Carbon taxes in developing economies work only when paired with targeted revenue recycling into industrial decarbonization subsidies; standalone taxes reduce emissions at the cost of 1.2-2.8% GDP drag within 5 years.",
+    "expected_supporting_points": [
+      "revenue recycling mechanisms",
+      "sectoral GDP impact data",
+      "industrial decarbonization subsidies",
+      "leakage rate evidence",
+      "South Africa and Chile case data"
+    ],
+    "topics_to_avoid": [
+      "climate denial counterpoints",
+      "carbon tax vs cap-and-trade ideology",
+      "OECD-only analysis"
+    ]
+  },
+  {
+    "id": "ev-006",
+    "query": "What does GDPR-style privacy legislation actually cost small e-commerce businesses in terms of compliance overhead and lost marketing capability?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "E-commerce operator with 3 Shopify stores, audience of DTC brand owners doing $1M-$10M revenue",
+      "audience": "DTC brand owners evaluating privacy compliance investment",
+      "knowledge_graph": {
+        "expertise_areas": ["e-commerce operations", "digital marketing", "compliance"],
+        "prior_content": ["cookie consent implementation guide", "email marketing deliverability"],
+        "gaps": ["privacy law cost quantification"]
+      },
+      "constraints": "Must provide actionable numbers and tooling recommendations, not just legal interpretation"
+    },
+    "expected_thesis": "GDPR-aligned privacy compliance for a $5M DTC brand costs $18k-$35k annually in direct costs and permanently reduces addressable retargeting audiences by 40-60%, but the email engagement lift from consent-based lists partially offsets the loss.",
+    "expected_supporting_points": [
+      "direct compliance cost breakdown",
+      "retargeting audience reduction data",
+      "consent-based email engagement lift",
+      "SME-specific tooling options",
+      "enforcement risk quantification"
+    ],
+    "topics_to_avoid": [
+      "privacy absolutism arguments",
+      "ad-tech industry lobbying points",
+      "legal advice disclaimers"
+    ]
+  },
+  {
+    "id": "ev-007",
+    "query": "Open-core vs pure SaaS: which monetization model produces better exit outcomes for developer tools companies?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "Devtools founder with an open-source project at 8k GitHub stars, audience of technical founders",
+      "audience": "Technical founders deciding on monetization strategy for developer tools",
+      "knowledge_graph": {
+        "expertise_areas": ["devtools business models", "open-source strategy", "venture capital"],
+        "prior_content": ["OSS project-to-company playbook", "developer marketing guide"],
+        "gaps": ["exit outcome data by monetization model"]
+      },
+      "constraints": "Must include real exit data; audience is skeptical of VC narratives"
+    },
+    "expected_thesis": "Open-core devtools companies achieve higher revenue multiples on exit (median 12x vs 9x for pure SaaS) but take 2.3 years longer to reach $10M ARR; the tradeoff is liquidity timeline versus terminal valuation.",
+    "expected_supporting_points": [
+      "revenue multiple comparison data",
+      "time-to-scale metrics by model",
+      "community-to-pipeline conversion rates",
+      "defensibility differences",
+      "representative exit examples"
+    ],
+    "topics_to_avoid": [
+      "open source ideology debates",
+      "specific VC firm recommendations",
+      "OSS licensing holy wars"
+    ]
+  },
+  {
+    "id": "ev-008",
+    "query": "How should AI-powered SaaS products price their offerings in 2026 given falling inference costs and rising user expectations?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "SaaS pricing consultant, audience of product leaders at $10M-$50M ARR AI SaaS companies",
+      "audience": "Product and pricing leaders navigating AI feature bundling",
+      "knowledge_graph": {
+        "expertise_areas": ["SaaS pricing", "AI economics", "product strategy"],
+        "prior_content": ["usage-based pricing guide", "pricing page teardown series"],
+        "gaps": ["AI-specific pricing model benchmarks"]
+      },
+      "constraints": "Must address margin preservation as inference costs decline; avoid race-to-zero fatalism"
+    },
+    "expected_thesis": "AI SaaS pricing is bifurcating: commoditized AI features become free-tier table stakes while differentiated workflow-specific AI commands premium outcome-based pricing at 3-5x seat price vs traditional SaaS.",
+    "expected_supporting_points": [
+      "outcome-based pricing models",
+      "inference cost decline curve",
+      "feature commoditization timeline",
+      "willingness-to-pay survey data",
+      "bundling strategy for AI features"
+    ],
+    "topics_to_avoid": [
+      "general SaaS pricing 101",
+      "freemium conversion rate benchmarks (non-AI)",
+      "enterprise sales process advice"
+    ]
+  },
+  {
+    "id": "ev-009",
+    "query": "Does community-led growth actually work for B2B SaaS, or is it just a Silicon Valley narrative for under-monetized products?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "Growth marketing leader at a PLG SaaS company, audience of B2B marketing executives",
+      "audience": "B2B marketing leaders evaluating community investment vs paid acquisition",
+      "knowledge_graph": {
+        "expertise_areas": ["PLG strategy", "community building", "demand generation"],
+        "prior_content": ["PLG metrics dashboard template", "product-qualified lead definition"],
+        "gaps": ["community ROI quantification"]
+      },
+      "constraints": "CFO audience wants hard ROI numbers; must quantify community investment return"
+    },
+    "expected_thesis": "Community-led growth works for B2B SaaS but only in categories with high practitioner identity and ongoing education needs; companies with successful CLG programs see 30% lower CAC but require 18-24 months before community ROI turns positive.",
+    "expected_supporting_points": [
+      "CAC reduction data from CLG companies",
+      "time-to-ROI benchmarks for community programs",
+      "category characteristics for CLG fit",
+      "community-qualified lead conversion rates",
+      "community operations staffing models"
+    ],
+    "topics_to_avoid": [
+      "B2C community playbooks applied to B2B",
+      "Discord-vs-Slack platform debates",
+      "generic 'build in public' advice"
+    ]
+  },
+  {
+    "id": "ev-010",
+    "query": "Can AI diagnostic tools deployed in rural clinics with intermittent internet actually improve patient outcomes without a radiologist on site?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Global health researcher, audience of NGO program directors and health ministry officials in Sub-Saharan Africa",
+      "audience": "Health program directors evaluating AI diagnostic deployment in resource-constrained settings",
+      "knowledge_graph": {
+        "expertise_areas": ["global health delivery", "medical AI", "health systems strengthening"],
+        "prior_content": ["community health worker programs review", "point-of-care testing landscape"],
+        "gaps": ["AI diagnostic field evidence in rural settings"]
+      },
+      "constraints": "Must address real-world constraints: power, connectivity, training, device maintenance"
+    },
+    "expected_thesis": "AI diagnostic tools in rural clinics improve referral accuracy by 35-50% but only when paired with offline-first ML models, task-shifted workflow redesign, and community health worker integration; standalone AI tools without these wrappers fail to change outcomes.",
+    "expected_supporting_points": [
+      "referral accuracy improvement data",
+      "offline-first model requirements",
+      "task-shifting workflow evidence",
+      "community health worker integration",
+      "device maintenance and sustainability"
+    ],
+    "topics_to_avoid": [
+      "AI-vs-doctor narratives",
+      "FDA/CE clearance processes (irrelevant in context)",
+      "urban hospital AI deployments"
+    ]
+  },
+  {
+    "id": "ev-011",
+    "query": "What are the actual barriers to telemedicine adoption that persist in 2026, three years after peak-pandemic usage?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Healthcare operations researcher, audience of health system administrators and digital health investors",
+      "audience": "Health system leaders deciding telemedicine investment post-pandemic",
+      "knowledge_graph": {
+        "expertise_areas": ["telemedicine", "health IT", "provider adoption"],
+        "prior_content": ["telehealth reimbursement policy tracker", "virtual care platform comparison"],
+        "gaps": ["post-pandemic utilization trend analysis"]
+      },
+      "constraints": "Must separate transient pandemic-era patterns from structural barriers"
+    },
+    "expected_thesis": "Post-pandemic telemedicine adoption has plateaued at 22% of ambulatory visits because the three structural barriers — clinical workflow integration, specialist referral handoffs, and diagnostic uncertainty protocols — remain largely unsolved despite better video software.",
+    "expected_supporting_points": [
+      "utilization plateau data",
+      "clinical workflow integration gaps",
+      "specialist referral friction",
+      "diagnostic uncertainty protocols",
+      "reimbursement parity status by state"
+    ],
+    "topics_to_avoid": [
+      "pandemic-era telemedicine statistics only",
+      "consumer-grade video call comparisons",
+      "wearable health gadget trends"
+    ]
+  },
+  {
+    "id": "ev-012",
+    "query": "Mental health apps: do they improve clinical outcomes or just increase engagement metrics that don't correlate with symptom reduction?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Clinical psychologist turned digital health researcher, audience of therapists and health plan executives",
+      "audience": "Health plan executives evaluating mental health app formulary inclusion",
+      "knowledge_graph": {
+        "expertise_areas": ["clinical psychology", "digital therapeutics", "outcomes measurement"],
+        "prior_content": ["CBT effectiveness meta-analysis", "digital therapeutic regulation overview"],
+        "gaps": ["engagement-to-outcome correlation evidence"]
+      },
+      "constraints": "Must cite peer-reviewed RCT evidence; avoid wellness-app conflation with clinical tools"
+    },
+    "expected_thesis": "Only 3 of 22 widely-used mental health apps show RCT-validated symptom reduction; the engagement-outcome correlation is weak (r=0.18) because most apps optimize for session frequency rather than skill practice adherence — the mechanism that actually drives CBT efficacy.",
+    "expected_supporting_points": [
+      "RCT evidence summary for leading apps",
+      "engagement-outcome correlation data",
+      "skill practice vs session frequency",
+      "clinical vs subclinical population differences",
+      "formulary inclusion criteria"
+    ],
+    "topics_to_avoid": [
+      "meditation app reviews",
+      "general wellness and sleep tracking",
+      "self-help book recommendations"
+    ]
+  },
+  {
+    "id": "ev-013",
+    "query": "Which carbon capture technologies have a credible path to commercial viability below $100/tonne by 2030?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Clean energy analyst, audience of climate tech VCs and corporate sustainability officers",
+      "audience": "Climate tech investors and corporate buyers of carbon removal credits",
+      "knowledge_graph": {
+        "expertise_areas": ["carbon removal", "clean energy economics", "technology commercialization"],
+        "prior_content": ["DAC technology landscape", "carbon credit market analysis"],
+        "gaps": ["cost curve projections by technology pathway"]
+      },
+      "constraints": "Must distinguish between Direct Air Capture, bioenergy CCS, mineralization, and ocean-based approaches"
+    },
+    "expected_thesis": "Only bioenergy with CCS (BECCS) and ex-situ mineralization are on track for sub-$100/tonne by 2030; Direct Air Capture remains above $250/tonne due to energy input costs, and ocean-based methods have too much measurement uncertainty for verified credits.",
+    "expected_supporting_points": [
+      "BECCS cost trajectory evidence",
+      "mineralization scalability data",
+      "DAC energy cost floor analysis",
+      "ocean CDR measurement uncertainty",
+      "of-take agreement market data"
+    ],
+    "topics_to_avoid": [
+      "carbon offset (avoidance) vs removal confusion",
+      "tree-planting-as-sole-solution narratives",
+      "general net-zero goal setting"
+    ]
+  },
+  {
+    "id": "ev-014",
+    "query": "Is green hydrogen economically viable for heavy industry decarbonization, or is direct electrification always cheaper?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Industrial decarbonization engineer, audience of manufacturing executives and energy policy makers",
+      "audience": "Industrial plant managers and energy procurement leads evaluating decarbonization pathways",
+      "knowledge_graph": {
+        "expertise_areas": ["industrial energy systems", "hydrogen technology", "electrification"],
+        "prior_content": ["electric arc furnace transition guide", "hydrogen color taxonomy explainer"],
+        "gaps": ["sector-by-sector hydrogen vs electrification cost comparison"]
+      },
+      "constraints": "Must provide sector-specific analysis (steel, cement, chemicals) not generic energy market projections"
+    },
+    "expected_thesis": "Green hydrogen is only the cheaper decarbonization pathway for high-temperature chemical processes (ammonia, methanol) and primary steelmaking; for all other heavy industry, direct electrification is 30-60% cheaper when levelized cost of energy is compared including conversion losses.",
+    "expected_supporting_points": [
+      "sector by sector cost comparison",
+      "conversion loss accounting",
+      "hydrogen storage and transport costs",
+      "electrolyzer capex trajectory",
+      "ammonia and steel specific cases"
+    ],
+    "topics_to_avoid": [
+      "hydrogen fuel cell vehicles (refueling infra debate)",
+      "hydrogen vs battery for light transport",
+      "general renewable energy overview"
+    ]
+  },
+  {
+    "id": "ev-015",
+    "query": "How should coastal cities finance climate adaptation when municipal bond markets haven't priced in climate risk yet?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Municipal finance advisor, audience of city treasurers and infrastructure fund managers in US coastal cities",
+      "audience": "City CFOs and infrastructure investors evaluating adaptation funding mechanisms",
+      "knowledge_graph": {
+        "expertise_areas": ["municipal finance", "climate risk", "infrastructure investment"],
+        "prior_content": ["green bond issuance guide", "FEMA flood insurance reform analysis"],
+        "gaps": ["adaptation finance gap quantification and funding models"]
+      },
+      "constraints": "Must address credit rating implications and intergenerational equity in debt financing"
+    },
+    "expected_thesis": "Coastal cities should use land-value capture districts and resilience bonds with parametric insurance triggers rather than relying on general obligation bonds; this avoids credit rating penalties while aligning repayment with the beneficiaries of adaptation investment.",
+    "expected_supporting_points": [
+      "land value capture district models",
+      "resilience bond structure with parametric triggers",
+      "credit rating agency climate methodology",
+      "municipal bond market climate discount evidence",
+      "intergenerational equity framework for adaptation debt"
+    ],
+    "topics_to_avoid": [
+      "managed retreat as primary strategy",
+      "national-level policy proposals (not municipal focus)",
+      "climate denial engagement"
+    ]
+  },
+  {
+    "id": "ev-016",
+    "query": "Do AI tutoring systems produce measurable learning outcome improvements in K-12, or do they just increase screen time?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Education researcher and former teacher, audience of school district administrators and EdTech procurement officers",
+      "audience": "School district superintendents and curriculum directors evaluating AI tutoring adoption",
+      "knowledge_graph": {
+        "expertise_areas": ["education technology", "learning science", "K-12 policy"],
+        "prior_content": ["personalized learning meta-analysis", "edtech procurement framework"],
+        "gaps": ["AI tutor RCT evidence"]
+      },
+      "constraints": "Must focus on K-12 (not higher ed or corporate training); cite peer-reviewed studies"
+    },
+    "expected_thesis": "AI tutoring systems produce 0.3-0.5 standard deviation learning gains in math but near-zero gains in reading comprehension because current models handle procedural feedback well but fail at the open-ended Socratic dialogue needed for literacy instruction.",
+    "expected_supporting_points": [
+      "subject-specific effect size data",
+      "math vs reading performance differential",
+      "Socratic dialogue limitations of current AI",
+      "implementation fidelity factors",
+      "cost-effectiveness vs human tutoring"
+    ],
+    "topics_to_avoid": [
+      "higher education and MOOC applications",
+      "corporate training and upskilling",
+      "screen time moral panic arguments"
+    ]
+  },
+  {
+    "id": "ev-017",
+    "query": "Are micro-credentials replacing traditional degrees in tech hiring, or are they just supplemental signaling?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "Talent acquisition strategist, audience of HR leaders and engineering managers at tech companies",
+      "audience": "Technical hiring managers deciding degree requirements for engineering roles",
+      "knowledge_graph": {
+        "expertise_areas": ["tech hiring", "talent market dynamics", "credentialing"],
+        "prior_content": ["skills-based hiring guide", "engineering interview process design"],
+        "gaps": ["micro-credential hiring outcome data"]
+      },
+      "constraints": "Must include hiring outcome data, not just credential completion numbers"
+    },
+    "expected_thesis": "Micro-credentials have replaced degrees as a screening filter for 40% of entry-level software engineering roles at companies that have adopted skills-based hiring, but they function as a complement to — not replacement of — traditional degrees for senior and management roles where organizational navigation skills matter more.",
+    "expected_supporting_points": [
+      "degree requirement removal data by company tier",
+      "micro-credential hire performance data",
+      "senior vs junior role divergence",
+      "organizational skill assessment gaps",
+      "salary premium/no-premium for degree holders"
+    ],
+    "topics_to_avoid": [
+      "university vs bootcamp culture wars",
+      "specific credential provider recommendations",
+      "general future-of-work speculation"
+    ]
+  },
+  {
+    "id": "ev-018",
+    "query": "Why do K-12 EdTech products struggle with retention after initial teacher adoption, and what actually improves renewal rates?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "EdTech product leader, audience of EdTech founders and product managers",
+      "audience": "EdTech product teams trying to improve school/district renewal rates",
+      "knowledge_graph": {
+        "expertise_areas": ["EdTech product management", "teacher adoption", "SaaS retention"],
+        "prior_content": ["teacher onboarding best practices", "school sales cycle guide"],
+        "gaps": ["renewal rate benchmarks and drivers"]
+      },
+      "constraints": "Must address both teacher-level and district-level retention dynamics separately"
+    },
+    "expected_thesis": "EdTech retention fails at the teacher-to-district handoff: individual teacher adoption is high but product usage data never reaches district procurement decision-makers in a format they can use to justify renewal, creating a 'silent churn' where satisfied teachers lose access because administrators see no usage evidence.",
+    "expected_supporting_points": [
+      "teacher vs district renewal rate data",
+      "usage reporting gap between teachers and admins",
+      "district procurement decision timelines",
+      "professional development integration as retention driver",
+      "implementation support staffing models"
+    ],
+    "topics_to_avoid": [
+      "consumer app engagement tactics applied to schools",
+      "general B2B SaaS retention benchmarks",
+      "higher education EdTech (different buying dynamics)"
+    ]
+  },
+  {
+    "id": "ev-019",
+    "query": "What are the real risks in DeFi lending protocols that aren't captured by TVL and APY metrics?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Financial risk analyst, audience of institutional investors and fintech product managers exploring DeFi",
+      "audience": "Institutional allocators evaluating DeFi yield as an asset class",
+      "knowledge_graph": {
+        "expertise_areas": ["DeFi protocols", "financial risk modeling", "crypto markets"],
+        "prior_content": ["smart contract audit explainer", "stablecoin risk framework"],
+        "gaps": ["DeFi lending risk quantification beyond smart contract risk"]
+      },
+      "constraints": "Must address institutional-grade risk taxonomy; not retail crypto trading advice"
+    },
+    "expected_thesis": "The three largest under-priced risks in DeFi lending are oracle latency arbitrage during volatility events, governance attack vectors in upgradable contracts, and liquidity cascade risk from multi-protocol leverage loops — none of which are visible in TVL or APY.",
+    "expected_supporting_points": [
+      "oracle latency exploitation mechanics",
+      "governance attack surface analysis",
+      "multi-protocol leverage cascade modeling",
+      "historical liquidation cascade events",
+      "institutional risk monitoring requirements"
+    ],
+    "topics_to_avoid": [
+      "Bitcoin vs Ethereum debates",
+      "NFT and meme coin tangents",
+      "retail DeFi yield farming guides"
+    ]
+  },
+  {
+    "id": "ev-020",
+    "query": "How should AI-driven algorithmic trading be regulated without killing innovation in quantitative finance?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Financial regulation researcher, audience of compliance officers and quant trading desk heads",
+      "audience": "Compliance leaders at trading firms and securities regulators",
+      "knowledge_graph": {
+        "expertise_areas": ["market microstructure", "financial regulation", "algorithmic trading"],
+        "prior_content": ["MiFID III impact analysis", "market manipulation detection frameworks"],
+        "gaps": ["AI-specific trading regulation design principles"]
+      },
+      "constraints": "Must address flash crash risks and model explainability without proposing unrealistic bans"
+    },
+    "expected_thesis": "AI trading regulation should mandate real-time circuit breakers tied to model confidence scores and post-trade explainability reports, not pre-approval of models; this preserves alpha generation speed while creating accountability trails that existing market abuse frameworks can enforce.",
+    "expected_supporting_points": [
+      "model confidence-based circuit breakers",
+      "post-trade explainability requirements",
+      "existing market abuse framework applicability",
+      "cross-venue correlation monitoring",
+      "sandbox testing for new model classes"
+    ],
+    "topics_to_avoid": [
+      "crypto exchange regulation (different market structure)",
+      "retail trading app restrictions",
+      "general AI ethics frameworks"
+    ]
+  },
+  {
+    "id": "ev-021",
+    "query": "Embedded finance for SaaS platforms: real recurring revenue stream or distraction from core product?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "SaaS founder at $3M ARR, audience of SaaS founders and product leaders at vertical SaaS companies",
+      "audience": "Vertical SaaS founders considering adding financial products to their platform",
+      "knowledge_graph": {
+        "expertise_areas": ["SaaS metrics", "payments infrastructure", "platform strategy"],
+        "prior_content": ["pricing model analysis", "platform playbook for vertical SaaS"],
+        "gaps": ["embedded finance unit economics for SaaS"]
+      },
+      "constraints": "Must include unit economics and implementation complexity assessment"
+    },
+    "expected_thesis": "Embedded finance generates meaningful revenue (20-30% ARR uplift) only for vertical SaaS platforms serving SMBs with existing payment flows; for enterprise SaaS or platforms without natural payment moments, the integration complexity and compliance overhead destroy the margin benefit.",
+    "expected_supporting_points": [
+      "ARR uplift data by SaaS vertical",
+      "SMB vs enterprise divergence",
+      "natural payment moment identification",
+      "compliance and bank partnership overhead",
+      "time-to-launch and maintenance cost data"
+    ],
+    "topics_to_avoid": [
+      "neobank and consumer fintech comparisons",
+      "crypto/blockchain-based finance tangents",
+      "general API economy trends"
+    ]
+  },
+  {
+    "id": "ev-022",
+    "query": "Is open-source sustainability beyond GitHub Sponsors actually achievable, or are we just cycling through charity models?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "Open-source maintainer of a 15k-star project, audience of OSS maintainers and foundation directors",
+      "audience": "Open-source maintainers evaluating sustainability models beyond sponsorship",
+      "knowledge_graph": {
+        "expertise_areas": ["open-source economics", "developer communities", "OSS licensing"],
+        "prior_content": ["OSS funding landscape report", "maintainer burnout survey results"],
+        "gaps": ["sponsorship sustainability longitudinal data"]
+      },
+      "constraints": "Must address funding models for projects with 1-5 core maintainers, not foundation-owned projects"
+    },
+    "expected_thesis": "Sponsorship alone plateaus at $3k-$8k/month for most solo-maintainer projects; the projects that break through do it by selling complementary SaaS (managed hosting, enterprise features) or by converting corporate users into support contracts — effectively becoming small B2B companies that happen to have open-source cores.",
+    "expected_supporting_points": [
+      "sponsorship income distribution data",
+      "managed hosting revenue models",
+      "enterprise support contract conversion rates",
+      "maintainer time allocation tradeoffs",
+      "foundation vs solo-maintainer dynamics"
+    ],
+    "topics_to_avoid": [
+      "Linux Foundation and large-firm-funded project models",
+      "venture-funded open source unicorn narratives",
+      "OSS licensing philosophy debates"
+    ]
+  },
+  {
+    "id": "ev-023",
+    "query": "What actually prevents open-source maintainer burnout: better tooling, more funding, or community structure changes?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "Developer experience researcher, audience of open-source maintainers and DevRel professionals",
+      "audience": "OSS project leaders and foundation program managers designing maintainer support programs",
+      "knowledge_graph": {
+        "expertise_areas": ["developer communities", "OSS maintenance", "burnout research"],
+        "prior_content": ["contributor onboarding guide", "OSS governance patterns"],
+        "gaps": ["burnout intervention effectiveness data"]
+      },
+      "constraints": "Must reference actual intervention outcomes, not just problem descriptions"
+    },
+    "expected_thesis": "Funding reduces burnout only when it buys time away from triage; the highest-impact interventions are structured contributor ladders that distribute review load and automated triage that filters 70% of low-quality issues before they reach maintainers — tooling and community structure beat raw funding.",
+    "expected_supporting_points": [
+      "contributor ladder design and impact data",
+      "automated triage effectiveness rates",
+      "review load distribution metrics",
+      "funding-to-burnout correlation evidence",
+      "maintainer time-use studies"
+    ],
+    "topics_to_avoid": [
+      "general mental health advice",
+      "corporate open source program office (OSPO) models",
+      "specific funding platform recommendations"
+    ]
+  },
+  {
+    "id": "ev-024",
+    "query": "How are OSS licenses evolving in response to cloud providers strip-mining open-source projects, and what actually protects a business model?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "IP lawyer and open-source strategist, audience of technical founders and OSS project leaders",
+      "audience": "Devtools founders deciding on license strategy for their open-source project",
+      "knowledge_graph": {
+        "expertise_areas": ["open-source licensing", "IP strategy", "competitive dynamics"],
+        "prior_content": ["AGPL vs SSPL comparison", "BSL adoption case studies"],
+        "gaps": ["license choice impact on adoption and revenue data"]
+      },
+      "constraints": "Must address the adoption penalty of restrictive licenses with real data"
+    },
+    "expected_thesis": "Source-available licenses (BSL, Elastic License v2) protect against cloud strip-mining at a 25-40% adoption penalty vs MIT/Apache 2.0; the penalty is worth it only when the project's primary monetization path is the managed service itself — otherwise the adoption loss kills the community-driven growth engine.",
+    "expected_supporting_points": [
+      "adoption penalty quantification by license type",
+      "managed service revenue correlation",
+      "cloud provider competitive response patterns",
+      "community contribution rate differences by license",
+      "representative company outcomes (Elastic, MongoDB, Sentry)"
+    ],
+    "topics_to_avoid": [
+      "FSF vs OSI definition debates",
+      "GPL enforcement case law details",
+      "non-software open content licensing"
+    ]
+  },
+  {
+    "id": "ev-025",
+    "query": "What does supply chain security actually cost for a 50-person SaaS company, and which investments reduce breach probability the most?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "CISO at a $20M ARR SaaS company, audience of engineering leaders at growth-stage startups",
+      "audience": "Engineering VPs and CTOs at 20-200 person SaaS companies prioritizing security spend",
+      "knowledge_graph": {
+        "expertise_areas": ["application security", "supply chain risk", "SaaS operations"],
+        "prior_content": ["SOC 2 certification guide", "dependency management best practices"],
+        "gaps": ["supply chain security ROI quantification"]
+      },
+      "constraints": "Must provide actionable prioritization, not a compliance checklist; audience has limited security budget"
+    },
+    "expected_thesis": "For a 50-person SaaS company, the three highest-ROI supply chain security investments are: SBOM-based dependency monitoring ($15k/yr, catches 80% of known-vulnerability breaches), build pipeline integrity (SLSA Level 2, $40k one-time), and third-party runtime access scoping ($10k/yr) — together reducing breach probability by ~65% for under 1% of engineering budget.",
+    "expected_supporting_points": [
+      "SBOM monitoring cost and effectiveness data",
+      "SLSA framework level requirements and costs",
+      "third-party access scoping approach",
+      "breach probability reduction per investment",
+      "percentage of engineering budget comparison"
+    ],
+    "topics_to_avoid": [
+      "nation-state threat modeling (not relevant at this scale)",
+      "enterprise security product lists",
+      "general cybersecurity awareness advice"
+    ]
+  },
+  {
+    "id": "ev-026",
+    "query": "Why haven't more mid-market companies adopted zero-trust architecture despite three years of vendor marketing?",
+    "user_id": "eval",
+    "product": "ladderflow",
+    "context": {
+      "creator_background": "Infrastructure architect, audience of IT directors at 500-2000 employee companies",
+      "audience": "IT directors deciding on network security architecture modernization",
+      "knowledge_graph": {
+        "expertise_areas": ["network security", "IT architecture", "technology adoption"],
+        "prior_content": ["VPN replacement guide", "identity provider comparison"],
+        "gaps": ["zero-trust adoption barrier analysis for mid-market"]
+      },
+      "constraints": "Must address mid-market specifically (not enterprise); must include migration cost data"
+    },
+    "expected_thesis": "Mid-market zero-trust adoption stalls because the migration from legacy VPN-and-VLAN architectures requires redesigning 40-60% of existing network policies — a 12-18 month commitment that IT teams can't make while maintaining operations; vendors selling 'zero trust in a box' understate the organizational change required.",
+    "expected_supporting_points": [
+      "network policy migration scope data",
+      "mid-market IT staffing constraints",
+      "legacy application compatibility issues",
+      "vendor product vs organizational change gap",
+      "phased adoption model that works for mid-market"
+    ],
+    "topics_to_avoid": [
+      "enterprise-scale zero trust case studies (Fortune 500)",
+      "specific vendor product evaluations",
+      "government/military zero trust mandates"
+    ]
+  },
+  {
+    "id": "ev-027",
+    "query": "How effective are current defenses against AI-generated phishing emails that use personal context scraped from social media?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Security awareness researcher, audience of security operations leads and CIOs",
+      "audience": "Security leaders evaluating anti-phishing investment against AI-generated threats",
+      "knowledge_graph": {
+        "expertise_areas": ["phishing defense", "AI security", "social engineering"],
+        "prior_content": ["security awareness training ROI analysis", "email security gateway comparison"],
+        "gaps": ["AI-generated phishing detection efficacy data"]
+      },
+      "constraints": "Must compare technical controls vs human training approaches with real detection rate data"
+    },
+    "expected_thesis": "AI-generated phishing with personal context defeats traditional email security gateways at a 3x higher rate (38% bypass vs 13% for generic phishing) and security awareness training shows no statistically significant improvement in detection; the only effective defense layer is hardware-bound phishing-resistant MFA (FIDO2/WebAuthn) combined with anomalous sender behavior detection.",
+    "expected_supporting_points": [
+      "AI vs traditional phishing bypass rate comparison",
+      "security awareness training efficacy data",
+      "phishing-resistant MFA adoption rates",
+      "anomalous sender behavior detection methods",
+      "personal context scraping attack surface"
+    ],
+    "topics_to_avoid": [
+      "generic phishing advice (check the URL, etc.)",
+      "deepfake video/voice attacks (different vector)",
+      "nation-state APT threat modeling"
+    ]
+  },
+  {
+    "id": "ev-028",
+    "query": "Is the open science movement actually reducing the reproducibility crisis, or just adding preprint noise to already overwhelmed peer review?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Meta-science researcher, audience of academic administrators and research funders",
+      "audience": "Research funding agencies and university research offices evaluating open science mandates",
+      "knowledge_graph": {
+        "expertise_areas": ["meta-science", "research methodology", "scholarly communication"],
+        "prior_content": ["reproducibility crisis evidence review", "preprint server landscape"],
+        "gaps": ["open science impact on reproducibility rates"]
+      },
+      "constraints": "Must cite empirical evidence of reproducibility trends, not just advocacy arguments"
+    },
+    "expected_thesis": "Open science practices (pre-registration, data sharing, open code) have improved reproducibility in psychology and preclinical biology by 15-25 percentage points, but in machine learning the effect is neutral because open code without open training data and compute budgets cannot reproduce results — the bottleneck shifted from access to infrastructure.",
+    "expected_supporting_points": [
+      "field-specific reproducibility improvement data",
+      "psychology replication rate changes",
+      "ML reproducibility bottleneck analysis",
+      "pre-registration effect on HARKing",
+      "data-sharing compliance and impact"
+    ],
+    "topics_to_avoid": [
+      "open access publishing business model debates",
+      "specific journal impact factor comparisons",
+      "academic career incentive reform proposals"
+    ]
+  },
+  {
+    "id": "ev-029",
+    "query": "What are the nearest-term commercially valuable applications of quantum computing that don't require fault-tolerant qubits?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Computational scientist, audience of R&D leaders at pharmaceutical and materials companies",
+      "audience": "R&D strategy leads evaluating whether to invest in quantum computing exploration now",
+      "knowledge_graph": {
+        "expertise_areas": ["quantum computing", "computational chemistry", "optimization"],
+        "prior_content": ["quantum computing for executives", "classical-quantum hybrid algorithms overview"],
+        "gaps": ["near-term commercial application evidence"]
+      },
+      "constraints": "Must be realistic about NISQ-era limitations; avoid 'quantum will solve everything' hype"
+    },
+    "expected_thesis": "The only NISQ-era applications with demonstrated commercial advantage over classical methods are molecular simulation for battery electrolyte design and certain portfolio optimization problems with fewer than 100 variables — and even these require hybrid classical-quantum workflows where the quantum step handles only one subroutine.",
+    "expected_supporting_points": [
+      "molecular simulation benchmark results",
+      "portfolio optimization advantage thresholds",
+      "NISQ limitation quantification",
+      "hybrid workflow architecture",
+      "timeline to commercial quantum advantage by application"
+    ],
+    "topics_to_avoid": [
+      "post-quantum cryptography (different problem)",
+      "quantum computing hardware vendor comparisons",
+      "Shor's algorithm and factoring (requires fault tolerance)"
+    ]
+  },
+  {
+    "id": "ev-030",
+    "query": "What is the real bottleneck preventing CRISPR-based therapeutics from moving beyond rare genetic disorders into common diseases?",
+    "user_id": "eval",
+    "product": "ladderbrief",
+    "context": {
+      "creator_background": "Biotech analyst, audience of biotech investors and pharma R&D strategists",
+      "audience": "Biotech investors evaluating CRISPR therapeutic company pipelines",
+      "knowledge_graph": {
+        "expertise_areas": ["gene editing", "drug development", "biotech investment"],
+        "prior_content": ["CRISPR patent landscape analysis", "gene therapy clinical trial tracker"],
+        "gaps": ["delivery and off-target bottleneck analysis"]
+      },
+      "constraints": "Must distinguish between different delivery modalities (LNP, AAV, ex vivo) and their limitations"
+    },
+    "expected_thesis": "Delivery, not editing efficiency, is the bottleneck: current lipid nanoparticle and AAV vectors cannot target enough cell types at therapeutic levels without toxicity, and the ex vivo approaches that work for sickle cell cost $2M+ per patient — common disease applications need in vivo delivery to epithelial and immune cells that current vectors simply cannot achieve.",
+    "expected_supporting_points": [
+      "delivery modality comparison (LNP, AAV, ex vivo)",
+      "cell-type targeting limitations",
+      "cost-per-patient by delivery approach",
+      "toxicity threshold data",
+      "pipeline analysis by delivery modality"
+    ],
+    "topics_to_avoid": [
+      "germline editing ethics debates (somatic focus only)",
+      "CRISPR patent dispute details",
+      "general gene therapy market projections"
+    ]
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "name": "ladder-excalidraw-headless",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.49.1"
+  }
+}

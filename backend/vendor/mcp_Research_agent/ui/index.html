@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Standalone Research Agent</title>
+  <meta name="description" content="Standalone research agent dashboard for testing the MCP research tool">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=export-feature-2">
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect x="2" y="2" width="24" height="24" rx="6" stroke="url(#g1)" stroke-width="2.5"/>
+            <path d="M9 14h10M14 9v10" stroke="url(#g1)" stroke-width="2" stroke-linecap="round"/>
+            <defs><linearGradient id="g1" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#818cf8"/><stop offset="1" stop-color="#c084fc"/></linearGradient></defs>
+          </svg>
+        </div>
+        <span class="logo-text">Research <span class="logo-accent">Agent</span></span>
+      </div>
+      <div class="header-meta">
+        <span class="status-badge" id="globalStatus">Ready</span>
+        <span class="cost-badge" id="globalCost">$0.00</span>
+        <button id="exportBtn" onclick="exportResearch()" disabled class="btn-export">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: text-bottom; margin-right: 4px;">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+          Export JSON
+        </button>
+      </div>
+    </header>
+
+    <!-- Input Section -->
+    <section class="input-section">
+      <div class="input-card">
+        <h1 class="input-title">What should we research?</h1>
+        <p class="input-subtitle">Enter a topic, YouTube URL, or freeform brief. The UI calls the same MCP tool external projects use.</p>
+        <div class="input-row">
+          <div class="input-wrapper">
+            <svg class="input-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <input type="text" id="queryInput" placeholder="e.g. AI agents for content creation, https://youtube.com/..." autocomplete="off">
+          </div>
+          <button id="submitBtn" onclick="startResearch()">
+            <span class="btn-text">Research</span>
+            <svg class="btn-arrow" width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M3.75 9h10.5M10.5 5.25L14.25 9l-3.75 3.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pipeline + Results -->
+    <main class="main-grid" id="mainContent" style="display:none;">
+      <!-- Left: Pipeline -->
+      <section class="pipeline-section">
+        <h2 class="section-title">Pipeline</h2>
+        <div class="pipeline" id="pipeline"></div>
+      </section>
+
+      <!-- Right: Results -->
+      <section class="results-section">
+        <!-- Thesis Result -->
+        <div class="result-card" id="thesisCard" style="display:none;">
+          <div class="result-header">
+            <h2 class="section-title">🏆 Winning Thesis</h2>
+            <span class="lens-badge" id="winnerLens"></span>
+          </div>
+          <p class="thesis-statement" id="thesisStatement"></p>
+          <div class="thesis-points" id="thesisPoints"></div>
+          <div class="thesis-rationale" id="thesisRationale"></div>
+        </div>
+
+        <!-- Rejected Candidates -->
+        <div class="result-card" id="rejectedCard" style="display:none;">
+          <h2 class="section-title">Other Candidates</h2>
+          <div class="rejected-list" id="rejectedList"></div>
+        </div>
+
+        <!-- Sources -->
+        <div class="result-card" id="sourcesCard" style="display:none;">
+          <h2 class="section-title">Sources</h2>
+          <div class="sources-list" id="sourcesList"></div>
+        </div>
+
+        <!-- Unmet Asks -->
+        <div class="result-card" id="unmetCard" style="display:none;">
+          <h2 class="section-title">💡 Audience Unmet Asks</h2>
+          <div class="unmet-list" id="unmetList"></div>
+        </div>
+
+        <!-- Cost Breakdown -->
+        <div class="result-card" id="costCard" style="display:none;">
+          <h2 class="section-title">Cost Breakdown</h2>
+          <div class="cost-grid" id="costGrid"></div>
+        </div>
+      </section>
+    </main>
+  <!-- Scripts -->
+  <script src="/static/app.js?v=export-feature-2"></script>
+</body>
+</html>
